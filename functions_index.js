@@ -3,8 +3,7 @@
  * ║           KAFFI PAY — CLOUD FUNCTIONS v2.1                  ║
  * ║  • Détection fraude & doublons (Gemini AI)                  ║
  * ║  • Validation automatique des ordres                        ║
- * ║  • Notification WhatsApp admin (alertes fraude only)        ║
- * ║  • WhatsApp Bot clients (Gemini)                            ║
+ * ║  • Notification WhatsApp admin (Meta API — à configurer)    ║
  * ║  • Analyse admin Gemini (résumé, prédictions)               ║
  * ║  • Vérification preuves paiement (Gemini Vision)            ║
  * ╚══════════════════════════════════════════════════════════════╝
@@ -21,32 +20,7 @@ initializeApp();
 const db = getFirestore();
 
 // ── Secrets ───────────────────────────────────────────────────
-const TWILIO_SID   = defineSecret("TWILIO_SID");
-const TWILIO_TOKEN = defineSecret("TWILIO_TOKEN");
-const TWILIO_FROM  = defineSecret("TWILIO_FROM");
-const WHATSAPP_TO  = defineSecret("WHATSAPP_TO");  // votre numéro admin
 const GEMINI_KEY   = defineSecret("GEMINI_KEY");
-
-// ══════════════════════════════════════════════════════════════
-// HELPER — Envoyer WhatsApp via Twilio
-// ══════════════════════════════════════════════════════════════
-async function sendWhatsApp(sid, token, from, to, message) {
-  const fetch = (await import("node-fetch")).default;
-  const url   = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
-  const body  = new URLSearchParams({
-    From: `whatsapp:${from}`,
-    To:   `whatsapp:${to}`,
-    Body: message,
-  });
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: "Basic " + Buffer.from(`${sid}:${token}`).toString("base64"),
-    },
-    body: body.toString(),
-  });
-}
 
 function getGemini(key) {
   const genAI = new GoogleGenerativeAI(key);
@@ -57,7 +31,7 @@ function getGemini(key) {
 // 1. NOUVEL ORDRE → Fraude + Doublons + Alerte WhatsApp admin
 // ══════════════════════════════════════════════════════════════
 exports.onNouvelOrdre = onDocumentCreated(
-  { document: "orders/{docId}", region: "europe-west1", secrets: [TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM, WHATSAPP_TO, GEMINI_KEY] },
+  { document: "orders/{docId}", region: "europe-west1", secrets: [GEMINI_KEY] },
   async (event) => {
     const tx        = event.data.data();
     const docId     = event.params.docId;
@@ -80,11 +54,6 @@ exports.onNouvelOrdre = onDocumentCreated(
         });
 
         // Alerte WhatsApp admin
-        await sendWhatsApp(
-          TWILIO_SID.value(), TWILIO_TOKEN.value(),
-          TWILIO_FROM.value(), WHATSAPP_TO.value(),
-          `🚨 *DOUBLON DÉTECTÉ*\nOrdre: ${ref}\nTransfer ID: ${transferId}\nMontant: ${tx.montant} DJF\n→ Rejeté automatiquement`
-        );
         return;
       }
     }
@@ -135,12 +104,6 @@ Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numér
         status:     "Rejeté",
         flagRaison: "IA Fraude: " + fraud.raisons.join(", "),
       });
-
-      await sendWhatsApp(
-        TWILIO_SID.value(), TWILIO_TOKEN.value(),
-        TWILIO_FROM.value(), WHATSAPP_TO.value(),
-        `🤖 *FRAUDE DÉTECTÉE — IA*\nOrdre: ${ref}\nScore: ${fraud.score_fraude}/100\nRisque: ${fraud.risque.toUpperCase()}\nRaisons: ${fraud.raisons.join(" | ")}\n→ Rejeté automatiquement`
-      );
     }
   }
 );
@@ -149,7 +112,7 @@ Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numér
 // 2. ORDRE CONFIRMÉ → Notification WhatsApp client
 // ══════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
-  { document: "transactions/{docId}", secrets: [TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM] },
+  { document: "transactions/{docId}", secrets: [] },
   async (event) => {
     const before = event.data.before.data();
     const after  = event.data.after.data();
@@ -174,55 +137,9 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     try {
       const clientTel = tel.startsWith("+") ? tel : `+253${tel}`;
-      await sendWhatsApp(
-        TWILIO_SID.value(), TWILIO_TOKEN.value(),
-        TWILIO_FROM.value(), clientTel, msg
-      );
     } catch (e) {
       console.warn("WhatsApp client error:", e.message);
     }
-  }
-);
-
-// ══════════════════════════════════════════════════════════════
-// 3. WHATSAPP BOT — Réponses auto clients (Gemini)
-// ══════════════════════════════════════════════════════════════
-exports.whatsappWebhook = onRequest(
-  { region: "europe-west1", secrets: [TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM, GEMINI_KEY] },
-  async (req, res) => {
-    const from  = req.body.From?.replace("whatsapp:", "") || "";
-    const body  = req.body.Body?.trim() || "";
-    const model = getGemini(GEMINI_KEY.value());
-
-    // Chercher le dernier ordre du client
-    const snap = await db.collection("orders")
-      .where("numeroPayment", "==", from.replace("+253", ""))
-      .orderBy("date", "desc")
-      .limit(1).get();
-
-    const dernierOrdre = snap.empty ? null : snap.docs[0].data();
-
-    const prompt = `
-Tu es l'assistant WhatsApp de Kaffi Pay (plateforme d'échange 1xBet↔Waafi à Djibouti).
-Réponds en français, court et professionnel (max 3 phrases).
-Ne divulgue JAMAIS d'infos sur d'autres clients.
-
-Client: ${from}
-Dernier ordre: ${dernierOrdre
-  ? `${dernierOrdre.type} — ${dernierOrdre.montant} DJF — Statut: ${dernierOrdre.status}`
-  : "Aucun ordre trouvé"}
-Message: "${body}"
-`;
-
-    const aiResp = await model.generateContent(prompt);
-    const reply  = aiResp.response.text().trim();
-
-    await sendWhatsApp(
-      TWILIO_SID.value(), TWILIO_TOKEN.value(),
-      TWILIO_FROM.value(), from, reply
-    );
-
-    res.sendStatus(200);
   }
 );
 
@@ -347,7 +264,7 @@ Transfer ID attendu: ${transferIdAttendu}
 //   → envoie WhatsApp au client
 //
 exports.autoConfirmation = onDocumentCreated(
-  { document: "waafi_notifications/{docId}", region: "europe-west1", secrets: [TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM, WHATSAPP_TO] },
+  { document: "waafi_notifications/{docId}", region: "europe-west1", secrets: [] },
   async (event) => {
     const sms   = event.data.data();
     const docId = event.params.docId;
@@ -422,14 +339,6 @@ exports.autoConfirmation = onDocumentCreated(
         status:    "non_matché",
         erreurMsg: `Aucun ordre en attente pour Transfer ID ${transferId} / ${montantSMS} DJF`,
       });
-
-      try {
-        await sendWhatsApp(
-          TWILIO_SID.value(), TWILIO_TOKEN.value(),
-          TWILIO_FROM.value(), WHATSAPP_TO.value(),
-          `⚠️ *Kaffi Pay — Paiement Non Matché*\n\nTransfer ID: ${transferId}\nMontant: ${montantSMS} DJF\nExpéditeur: ${numClient || "?"}\n\nAucun ordre trouvé — vérifiez manuellement.`
-        );
-      } catch (e) { console.warn("WhatsApp error:", e.message); }
       return;
     }
 
@@ -447,14 +356,6 @@ exports.autoConfirmation = onDocumentCreated(
         erreurMsg: `Montant SMS (${montantSMS}) ≠ Montant ordre (${montantOrdre})`,
         ordreRef:  ordreRef,
       });
-
-      try {
-        await sendWhatsApp(
-          TWILIO_SID.value(), TWILIO_TOKEN.value(),
-          TWILIO_FROM.value(), WHATSAPP_TO.value(),
-          `⚠️ *Kaffi Pay — Montant Incorrect*\n\nOrdre: ${ordreRef}\nMontant attendu: ${montantOrdre} DJF\nMontant reçu: ${montantSMS} DJF\nDifférence: ${diff} DJF\n\nVérifiez manuellement.`
-        );
-      } catch (e) { console.warn("WhatsApp error:", e.message); }
       return;
     }
 
@@ -477,7 +378,6 @@ exports.autoConfirmation = onDocumentCreated(
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
     if (id1xbet) {
       try {
-        const fetch = (await import("node-fetch")).default;
         const webhookUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=KaffiPay2026&id1xbet=${id1xbet}&montant=${montantSMS}&ref=${ordreRef}`;
         const resp = await fetch(webhookUrl, { signal: AbortSignal.timeout(10000) });
         await ordreDoc.ref.update({
@@ -494,11 +394,6 @@ exports.autoConfirmation = onDocumentCreated(
     if (tel) {
       try {
         const clientTel = tel.startsWith("+") ? tel : `+253${tel}`;
-        await sendWhatsApp(
-          TWILIO_SID.value(), TWILIO_TOKEN.value(),
-          TWILIO_FROM.value(), clientTel,
-          `✅ *Kaffi Pay — Ordre Confirmé !*\n\nRéf: ${ordreRef}\nMontant: ${montantSMS.toLocaleString()} DJF\n\nVotre compte 1xBet va être crédité dans quelques instants. Merci 🙏`
-        );
       } catch (e) { console.warn("WhatsApp client error:", e.message); }
     }
   }
