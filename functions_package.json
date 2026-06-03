@@ -1,10 +1,8 @@
 {
   "name": "kaffi-pay-functions",
-  "description": "Kaffi Pay Cloud Functions — Gemini AI + Telegram + WhatsApp",
+  "description": "Kaffi Pay Cloud Functions",
   "scripts": {
-    "serve": "firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "deploy": "firebase deploy --only functions"
   },
   "engines": {
     "node": "20"
@@ -15,9 +13,6 @@
     "firebase-functions": "^5.0.0",
     "@google/generative-ai": "^0.15.0",
     "node-fetch": "^3.3.2"
-  },
-  "devDependencies": {
-    "firebase-functions-test": "^3.1.0"
   },
   "private": true
 }
