@@ -346,6 +346,28 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
 
+/* ── SUIVI TIMELINE ── */
+.tl-step{display:flex;gap:10px;align-items:flex-start;padding:9px 0;}
+.tl-step+.tl-step{border-top:1px solid rgba(255,255,255,.05);}
+.tl-dot{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.72rem;flex-shrink:0;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);}
+.tl-dot.done{background:rgba(0,212,160,.1);border-color:rgba(0,212,160,.25);}
+.tl-dot.active{background:rgba(255,170,0,.1);border-color:rgba(255,170,0,.25);animation:blink 1.5s infinite;}
+.tl-dot.wait{opacity:.35;}
+.tl-title{font-size:.79rem;font-weight:600;margin-bottom:2px;}
+.tl-desc{font-size:.65rem;color:var(--muted);line-height:1.4;}
+
+/* ── ORDER DETAIL MODAL ROWS ── */
+.odm-row{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;}
+.odm-row+.odm-row{border-top:1px solid rgba(255,255,255,.04);}
+.odm-label{font-size:.68rem;color:var(--muted);}
+.odm-val-wrap{display:flex;align-items:center;gap:6px;max-width:62%;text-align:right;}
+.odm-val{font-size:.8rem;font-weight:600;color:var(--text);word-break:break-all;}
+.odm-copy{background:transparent;border:1px solid rgba(255,215,0,.2);border-radius:6px;padding:3px 8px;font-size:.62rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;flex-shrink:0;}
+
+/* ── CORRECTION PRESETS ── */
+.corr-preset{width:100%;background:rgba(255,64,96,.05);border:1px solid rgba(255,64,96,.15);border-radius:10px;padding:9px 12px;font-family:'DM Sans',sans-serif;font-size:.78rem;color:var(--text);cursor:pointer;text-align:left;transition:background .2s;}
+.corr-preset:hover{background:rgba(255,64,96,.1);}
+
 </style>
 </head>
 <body>
@@ -716,6 +738,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
     <div style="display:flex;align-items:center;justify-content:space-between;">
       <div id="suivi-ref" style="font-family:'Playfair Display',serif;font-size:1.6rem;font-weight:900;color:var(--gold);letter-spacing:4px;">—</div>
       <button id="suivi-copy-btn" onclick="copySuiviRef()" style="background:transparent;border:1px solid rgba(255,215,0,0.25);border-radius:999px;padding:5px 12px;font-size:0.65rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;">📋 Copier</button>
+  </div>
   </div>
 
   <div style="border-radius:14px;padding:11px 14px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">
@@ -1240,7 +1263,7 @@ function setLoading(type,on){
   const btn=document.getElementById(type+'-btn');
   const txt=document.getElementById(type+'-btn-text');
   const sp=document.getElementById(type+'-spinner');
-  btn.disabled=on; txt.textContent=on?'Envoi en cours...':'⚡ Soumettre'; sp.style.display=on?'block':'none';
+  btn.disabled=on; txt.textContent=on?'⏳ Envoi en cours...':"⚡ Soumettre l'Ordre"; sp.style.display=on?'block':'none';
 }
 
 // ═══════════════════════════════════════════════════
@@ -1256,7 +1279,8 @@ function updateStats(){
   document.getElementById('stat-retrait').textContent=ret.reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
   document.getElementById('stat-retrait-sub').textContent=ret.length+' confirmés';
   document.getElementById('stat-pending').textContent=pending.length;
-  const today=new Date().toLocaleDateString('fr-FR');
+  const _now=new Date();
+  const today=_now.getFullYear()+'-'+String(_now.getMonth()+1).padStart(2,'0')+'-'+String(_now.getDate()).padStart(2,'0');
   document.getElementById('stat-today').textContent=
     t.filter(x=>x.date&&x.date.startsWith(today)&&x.status==='Confirmé').reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
 }
@@ -1461,12 +1485,15 @@ function openOrderDetail(ref){
   // Actions
   var actDiv=document.getElementById('odm-actions');
   currentOdmRef=tx.ref;
-  if(tx.status==='En attente'){
+  if(tx.status==='En attente'||tx.status==='Correction'||tx.status==='Argent Reçu'){
     var payBtn = !isDepot ?
-      `<button onclick="executerPaiementWaafi('${tx.waafiNumber||tx.tel||''}',${tx.montant||0})" style="width:100%;padding:10px;border-radius:999px;border:none;background:linear-gradient(135deg,#e91e8c,#8b1a5e);color:#fff;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;margin-bottom:8px;">💸 Payer via Waafi USSD</button>` : '';
+      '<button onclick="executerPaiementWaafi(\''+encodeURIComponent(tx.waafiNumber||tx.tel||'')+'\','+Number(tx.montant||0)+')" style="width:100%;padding:10px;border-radius:999px;border:none;background:linear-gradient(135deg,#e91e8c,#8b1a5e);color:#fff;font-family:\'DM Sans\',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;margin-bottom:8px;">💸 Payer via Waafi USSD</button>' : '';
+    var ref=tx.ref.replace(/'/g,"\\'");
     actDiv.innerHTML=
-      (payBtn ? payBtn : '')
-      +'<div style="padding:10px;text-align:center;color:var(--success);font-size:0.8rem;width:100%;">🤖 Traitement automatique en cours...</div>';
+      (payBtn||'')
+      +'<button onclick="updateStatus(\''+ref+'\',\'Confirmé\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(0,212,160,0.12);color:var(--success);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(0,212,160,0.25);">✅ Confirmer</button>'
+      +'<button onclick="openCorrection(\''+ref+'\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(255,170,0,0.08);color:var(--warning);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(255,170,0,0.2);">✏️ Correction</button>'
+      +'<button onclick="updateStatus(\''+ref+'\',\'Rejeté\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(255,64,96,0.08);color:var(--error);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(255,64,96,0.15);">❌ Rejeter</button>';
   } else {
     actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
   }
@@ -1811,8 +1838,8 @@ function goCorrection(){
   if(tx.type==='Dépôt'){
     showScreen('client');
     switchTab('depot');
-    if(tx.id1x) document.getElementById('depot-id').value = tx.id1x;
-    if(tx.hash) document.getElementById('depot-hash').value = tx.hash;
+    var v1x=tx.userId1xBet||tx.id1x; if(v1x) document.getElementById('depot-id').value=v1x;
+    var vHash=tx.waafitranfertID||tx.hash; if(vHash) document.getElementById('depot-hash').value=vHash;
     showToast('✏️ Corrigez les informations et resoumettez','warning');
   } else {
     showScreen('client');
