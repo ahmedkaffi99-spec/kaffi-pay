@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>Kaffi Pay</title>
+<meta name="theme-color" content="#07101e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kaffi Pay">
+<meta name="description" content="Kaffi Pay — Plateforme d'échange 1xBet & Waafi">
+<link rel="manifest" href="manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 
@@ -13,8 +20,6 @@
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getFirestore, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
-import { getAuth, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCILUjQPp_wO-IJrp6WwckMRDN5ISbcexU",
@@ -27,26 +32,15 @@ const firebaseConfig = {
   measurementId: "G-ZM25GET36B"
 };
 
-let app, db, functions, auth;
+let app, db;
 try {
   app = initializeApp(firebaseConfig);
   db = getFirestore(app);
-  functions = getFunctions(app, "europe-west1");
-  auth = getAuth(app);
-} catch(e) {}
-
-// ── Expose Auth ──
-window.auth = auth;
-window.fsSignIn = signInWithEmailAndPassword;
-window.fsSignInGoogle = signInWithPopup;
-window.fsGoogleProvider = new GoogleAuthProvider();
-window.fsSignOut = signOut;
-window.fsOnAuthStateChanged = onAuthStateChanged;
+} catch(e) {
+}
 
 // ── Expose to global scope ──
 window.db = db;
-window.fsFunctions = functions;
-window.fsCallable = httpsCallable;
 window.fsCollection = collection;
 window.fsDoc = doc;
 window.fsAddDoc = addDoc;
@@ -60,23 +54,15 @@ window.fsLimit = limit;
 window.fsSetDoc = setDoc;
 window.fsEnableNetwork = enableNetwork;
   window.fsDeleteDoc = deleteDoc;
-  // Attendre DOM avant d'appeler les fonctions
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', function(){
-      if(typeof updateUSSD === 'function') updateUSSD();
-      setTimeout(function(){
-        if(typeof loadAgentsFromFirestore === 'function') loadAgentsFromFirestore();
-        if(typeof loadReservesFromFirestore === 'function') loadReservesFromFirestore();
-      }, 2000);
-    });
-  } else {
-    if(typeof updateUSSD === 'function') updateUSSD();
-    setTimeout(function(){
-      if(typeof loadAgentsFromFirestore === 'function') loadAgentsFromFirestore();
-      if(typeof loadReservesFromFirestore === 'function') loadReservesFromFirestore();
-    }, 2000);
-  }
 window.fsDisableNetwork = disableNetwork;
+// Appeler updateUSSD et charger données après que le DOM soit prêt
+window.addEventListener('DOMContentLoaded', function(){
+  if(typeof updateUSSD === 'function') updateUSSD();
+});
+setTimeout(function(){
+  if(typeof loadAgentsFromFirestore === 'function') loadAgentsFromFirestore();
+  if(typeof loadReservesFromFirestore === 'function') loadReservesFromFirestore();
+}, 2000);
 window._firebaseReady = true;
 window.firebaseReady = true;
 
@@ -365,7 +351,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 <body>
 
 <!-- ══ ÉCRAN LOGIN ══ -->
-<div class="screen active" id="screen-login" style="opacity:0;transition:opacity 0.2s;">
+<div class="screen" id="screen-login" style="opacity:1;transition:opacity 0.2s;">
   <div id="login-screen">
     <div class="login-box">
       <div class="login-logo-area">
@@ -386,7 +372,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 </div>
 
 <!-- ══ ÉCRAN CLIENT ══ -->
-<div class="screen active" id="screen-client">
+<div class="screen" id="screen-client">
 <div class="wrap">
   <div class="client-header">
     <div class="logo-area" id="client-logo-tap" onclick="clientLogoTap()" style="cursor:default;">
@@ -577,7 +563,6 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
     <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>🔔</span>Notifs<div class="notif-dot" id="notif-bell-dot"></div></button>
-    <button class="nav-tab" onclick="showPage('ia')" id="ntab-ia"><span>🤖</span>IA</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -689,79 +674,6 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
     </div>
     <div class="agent-list" id="agent-list"></div>
   </div>
-
-  <!-- IA PANEL -->
-  <div class="page-section" id="page-ia">
-
-    <!-- Score santé + bouton analyse -->
-    <div style="border-radius:18px;padding:16px;border:1px solid rgba(255,215,0,.12);background:linear-gradient(135deg,rgba(255,215,0,.04),transparent);margin-bottom:14px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div style="font-family:'Playfair Display',serif;font-size:.95rem;font-weight:700;">🤖 Analyse IA Gemini</div>
-        <button onclick="lancerAnalyseIA()" id="btn-ia-analyse" style="background:linear-gradient(135deg,var(--gold),var(--gold2));color:#07101e;border:none;border-radius:999px;padding:8px 16px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">⚡ Analyser</button>
-      </div>
-      <div id="ia-score-bar" style="display:none;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-          <div style="font-size:.68rem;color:var(--muted);">Score santé</div>
-          <div id="ia-score-val" style="font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:var(--gold);">—</div>
-          <div style="font-size:.68rem;color:var(--muted);">/100</div>
-        </div>
-        <div style="height:6px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;">
-          <div id="ia-score-fill" style="height:100%;background:linear-gradient(90deg,var(--gold),var(--success));border-radius:999px;transition:width .8s ease;width:0%;"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Résumé IA -->
-    <div id="ia-resume-card" style="display:none;border-radius:16px;padding:14px;border:1px solid rgba(0,212,160,.15);background:rgba(0,212,160,.03);margin-bottom:10px;">
-      <div style="font-size:.65rem;color:var(--success);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:7px;">📋 Résumé</div>
-      <div id="ia-resume-text" style="font-size:.8rem;line-height:1.6;color:var(--text);"></div>
-    </div>
-
-    <!-- Alerte IA -->
-    <div id="ia-alerte-card" style="display:none;border-radius:16px;padding:14px;border:1px solid rgba(255,64,96,.2);background:rgba(255,64,96,.04);margin-bottom:10px;">
-      <div style="font-size:.65rem;color:var(--error);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:7px;">🚨 Alerte</div>
-      <div id="ia-alerte-text" style="font-size:.8rem;line-height:1.6;color:var(--text);"></div>
-    </div>
-
-    <!-- Prédictions -->
-    <div id="ia-predictions" style="display:none;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-      <div style="border-radius:14px;padding:12px;border:1px solid rgba(255,215,0,.08);background:rgba(255,255,255,.02);">
-        <div style="font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📈 Prédiction demain</div>
-        <div id="ia-pred-vol" style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:700;color:var(--gold);">—</div>
-        <div style="font-size:.62rem;color:var(--muted);">DJF estimé</div>
-      </div>
-      <div style="border-radius:14px;padding:12px;border:1px solid rgba(255,215,0,.08);background:rgba(255,255,255,.02);">
-        <div style="font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">⏰ Heure de pic</div>
-        <div id="ia-pred-heure" style="font-family:'Playfair Display',serif;font-size:1rem;font-weight:700;color:var(--gold);">—</div>
-        <div style="font-size:.62rem;color:var(--muted);">activité max</div>
-      </div>
-    </div>
-
-    <!-- Conseil IA -->
-    <div id="ia-conseil-card" style="display:none;border-radius:16px;padding:14px;border:1px solid rgba(91,156,255,.15);background:rgba(91,156,255,.03);margin-bottom:14px;">
-      <div style="font-size:.65rem;color:#5b9cff;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:7px;">💡 Conseil</div>
-      <div id="ia-conseil-text" style="font-size:.8rem;line-height:1.6;color:var(--text);"></div>
-    </div>
-
-    <!-- Vérification preuve paiement -->
-    <div style="border-radius:18px;padding:16px;border:1px solid rgba(255,215,0,.08);background:rgba(255,255,255,.02);margin-bottom:14px;">
-      <div style="font-family:'Playfair Display',serif;font-size:.9rem;font-weight:700;margin-bottom:10px;">🔍 Vérifier une Preuve</div>
-      <div style="font-size:.72rem;color:var(--muted);margin-bottom:10px;">Uploadez un screenshot SMS Waafi — Gemini l'analyse automatiquement</div>
-      <input type="text" id="ia-verifRef" placeholder="Référence ordre (ex: KFP-123)" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:10px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:.82rem;padding:9px 12px;outline:none;margin-bottom:8px;">
-      <input type="number" id="ia-verifMontant" placeholder="Montant attendu (DJF)" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:10px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:.82rem;padding:9px 12px;outline:none;margin-bottom:8px;">
-      <input type="text" id="ia-verifTransferId" placeholder="Transfer ID attendu" style="width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:10px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:.82rem;padding:9px 12px;outline:none;margin-bottom:10px;">
-      <label style="display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(255,215,0,.08);border:1px dashed rgba(255,215,0,.25);border-radius:12px;padding:14px;cursor:pointer;margin-bottom:10px;">
-        <span style="font-size:1.3rem;">📸</span>
-        <span style="font-size:.78rem;color:var(--gold);font-weight:600;">Choisir une image</span>
-        <input type="file" id="ia-preuve-input" accept="image/*" style="display:none;" onchange="previewPreuve(this)">
-      </label>
-      <img id="ia-preuve-preview" style="display:none;width:100%;border-radius:10px;margin-bottom:10px;max-height:160px;object-fit:cover;">
-      <button onclick="verifierPreuve()" id="btn-verifPreuve" style="width:100%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#07101e;border:none;border-radius:999px;padding:12px;font-family:'DM Sans',sans-serif;font-size:.85rem;font-weight:700;cursor:pointer;">🔍 Analyser avec Gemini</button>
-      <div id="ia-verifResult" style="display:none;margin-top:12px;border-radius:12px;padding:12px;font-size:.78rem;line-height:1.6;"></div>
-    </div>
-
-  </div>
-
 </div>
 </div>
 
@@ -875,8 +787,10 @@ var _smsListener=null, _smsDejaTrait=new Set();
 // NAVIGATION ÉCRANS
 // ═══════════════════════════════════════════════════
 function showScreen(id){
-  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
-  document.getElementById('screen-'+id).classList.add('active');
+  document.querySelectorAll('.screen').forEach(s=>{ s.classList.remove('active'); s.style.opacity='1'; });
+  var el = document.getElementById('screen-'+id);
+  el.classList.add('active');
+  el.style.opacity='1';
   window.scrollTo(0,0);
 }
 
@@ -926,6 +840,8 @@ function checkURLAdmin(){
     showScreen('client');
   }
 }
+// Assurer que l'écran login est toujours visible si affiché
+document.querySelectorAll('.screen').forEach(function(s){ s.style.opacity='1'; });
 window.addEventListener('DOMContentLoaded', function(){
   checkURLAdmin();
   // Démarrer écoute Firebase dès le chargement (pour suivi client)
@@ -1004,8 +920,8 @@ function loginSuccess(u){
     }
   }catch(e){}
   // Démarrer l'écoute SMS Waafi automatique
-  // SMS listener désactivé — Cloud Function autoConfirmation gère tout côté serveur 24h/24
-  // if(window._firebaseReady || window.firebaseReady){ startSmsListener(); }
+  if(window._firebaseReady || window.firebaseReady){ startSmsListener(); }
+  else{ window.addEventListener('firebase-ready', startSmsListener, {once:true}); }
   showToast('✅ Connecté : '+u.role,'success');
 }
 
@@ -2569,161 +2485,16 @@ try {
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
 } catch(e) {}
+
+// ── Service Worker PWA ──
+// Fonctionne sur kaffi-pay.com (Firebase Hosting sert sw.js)
+if('serviceWorker' in navigator && location.hostname !== 'claudeusercontent.com'){
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('/sw.js', {scope:'/'})
+      .then(function(reg){ console.log('✅ SW Kaffi Pay actif'); })
+      .catch(function(e){ /* sw.js absent en preview — normal */ });
+  });
+}
 </script>
 </body>
-</html><!-- ══ IA CLOUD FUNCTIONS SCRIPT ══ -->
-<script>
-// ══════════════════════════════════════════════════════════════
-// KAFFI PAY — IA & CLOUD FUNCTIONS CLIENT
-// ══════════════════════════════════════════════════════════════
-
-// ── Analyse admin Gemini ──────────────────────────────────────
-async function lancerAnalyseIA() {
-  var btn = document.getElementById('btn-ia-analyse');
-  btn.textContent = '⏳ Analyse...';
-  btn.disabled = true;
-
-  try {
-    var analyseAdmin = httpsCallable(window.fsFunctions, 'geminiAnalyseAdmin');
-    var result = await analyseAdmin();
-    var d = result.data;
-
-    if (d.success && d.data) {
-      var data = d.data;
-
-      // Score santé
-      var scoreBar = document.getElementById('ia-score-bar');
-      scoreBar.style.display = 'block';
-      document.getElementById('ia-score-val').textContent = data.score_sante || '—';
-      var fill = document.getElementById('ia-score-fill');
-      fill.style.width = (data.score_sante || 0) + '%';
-      var scoreColor = data.score_sante >= 70 ? 'var(--success)' : data.score_sante >= 40 ? 'var(--warning)' : 'var(--error)';
-      fill.style.background = 'linear-gradient(90deg,' + scoreColor + ', var(--gold))';
-
-      // Résumé
-      if (data.resume) {
-        document.getElementById('ia-resume-card').style.display = 'block';
-        document.getElementById('ia-resume-text').textContent = data.resume;
-      }
-
-      // Alerte
-      if (data.alerte && data.alerte !== 'null') {
-        document.getElementById('ia-alerte-card').style.display = 'block';
-        document.getElementById('ia-alerte-text').textContent = data.alerte;
-      }
-
-      // Prédictions
-      if (data.prediction_demain || data.heure_pic) {
-        document.getElementById('ia-predictions').style.display = 'grid';
-        document.getElementById('ia-pred-vol').textContent = data.prediction_demain ? Number(data.prediction_demain).toLocaleString() : '—';
-        document.getElementById('ia-pred-heure').textContent = data.heure_pic || '—';
-      }
-
-      // Conseil
-      if (data.conseil) {
-        document.getElementById('ia-conseil-card').style.display = 'block';
-        document.getElementById('ia-conseil-text').textContent = data.conseil;
-      }
-
-      showToast('✅ Analyse IA terminée', 'success');
-    }
-  } catch (e) {
-    console.error('IA error:', e);
-    showToast('❌ Erreur IA — vérifiez la connexion', 'error');
-  }
-
-  btn.textContent = '⚡ Analyser';
-  btn.disabled = false;
-}
-
-// ── Preview image preuve ──────────────────────────────────────
-function previewPreuve(input) {
-  var file = input.files[0];
-  if (!file) return;
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    var img = document.getElementById('ia-preuve-preview');
-    img.src = e.target.result;
-    img.style.display = 'block';
-  };
-  reader.readAsDataURL(file);
-}
-
-// ── Vérification preuve Gemini Vision ────────────────────────
-async function verifierPreuve() {
-  var input     = document.getElementById('ia-preuve-input');
-  var ref       = document.getElementById('ia-verifRef').value.trim();
-  var montant   = document.getElementById('ia-verifMontant').value.trim();
-  var transferId= document.getElementById('ia-verifTransferId').value.trim();
-  var resultDiv = document.getElementById('ia-verifResult');
-  var btn       = document.getElementById('btn-verifPreuve');
-
-  if (!input.files[0]) { showToast('⚠️ Choisissez une image', 'error'); return; }
-
-  btn.textContent = '⏳ Analyse Gemini...';
-  btn.disabled = true;
-  resultDiv.style.display = 'none';
-
-  // Convertir image en base64
-  var file = input.files[0];
-  var base64 = await new Promise(function(res, rej) {
-    var reader = new FileReader();
-    reader.onload = function(e) { res(e.target.result.split(',')[1]); };
-    reader.onerror = rej;
-    reader.readAsDataURL(file);
-  });
-
-  try {
-    var verif = httpsCallable(window.fsFunctions, 'geminiVerifPreuve');
-    var result = await verif({
-      imageBase64: base64,
-      mimeType: file.type,
-      ordreRef: ref,
-      montantAttendu: Number(montant),
-      transferIdAttendu: transferId
-    });
-
-    var d = result.data;
-    if (d.success && d.data) {
-      var r = d.data;
-      var isValid = r.est_valide;
-      var color = isValid ? 'var(--success)' : 'var(--error)';
-      var icon  = isValid ? '✅' : '❌';
-
-      resultDiv.style.display = 'block';
-      resultDiv.style.border  = '1px solid ' + color;
-      resultDiv.style.background = isValid ? 'rgba(0,212,160,.06)' : 'rgba(255,64,96,.06)';
-      resultDiv.innerHTML =
-        '<div style="font-weight:700;color:' + color + ';margin-bottom:6px;font-size:.85rem;">' + icon + ' ' + (isValid ? 'Preuve VALIDE' : 'Preuve INVALIDE') + '</div>' +
-        '<div style="color:var(--muted);font-size:.72rem;margin-bottom:4px;">Confiance: ' + (r.confiance || '—') + '%</div>' +
-        (r.transfer_id_detecte ? '<div style="font-size:.72rem;">Transfer ID détecté: <b>' + r.transfer_id_detecte + '</b></div>' : '') +
-        (r.montant_detecte ? '<div style="font-size:.72rem;">Montant détecté: <b>' + r.montant_detecte + ' DJF</b></div>' : '') +
-        '<div style="font-size:.72rem;color:var(--muted);margin-top:4px;">' + (r.raison || '') + '</div>';
-
-      showToast(icon + ' ' + (isValid ? 'Preuve valide' : 'Preuve invalide'), isValid ? 'success' : 'error');
-    }
-  } catch (e) {
-    showToast('❌ Erreur analyse image', 'error');
-    console.error(e);
-  }
-
-  btn.textContent = '🔍 Analyser avec Gemini';
-  btn.disabled = false;
-}
-
-// ── Badge IA sur les ordres suspects ─────────────────────────
-function renderIABadge(tx) {
-  if (!tx.ia_risque) return '';
-  var colors = { faible: 'var(--success)', moyen: 'var(--warning)', élevé: 'var(--error)' };
-  var icons  = { faible: '✅', moyen: '⚠️', élevé: '🚨' };
-  var c = colors[tx.ia_risque] || 'var(--muted)';
-  var i = icons[tx.ia_risque] || '🤖';
-  return '<span style="font-size:.58rem;padding:2px 7px;border-radius:999px;background:' + c.replace(')', ',.12)').replace('var(', 'rgba(') + ';color:' + c + ';border:1px solid ' + c.replace(')', ',.25)').replace('var(', 'rgba(') + ';margin-left:5px;">' + i + ' IA ' + (tx.ia_score_fraude || 0) + '</span>';
-}
-
-// Exposer globalement
-window.lancerAnalyseIA = lancerAnalyseIA;
-window.previewPreuve   = previewPreuve;
-window.verifierPreuve  = verifierPreuve;
-window.renderIABadge   = renderIABadge;
-</script>
+</html>
