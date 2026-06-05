@@ -621,6 +621,8 @@ input:-webkit-autofill:active {
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
     <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>🔔</span>Notifs<div class="notif-dot" id="notif-bell-dot"></div></button>
+    <button class="nav-tab" onclick="showPage('sms')" id="ntab-sms"><span>📡</span>SMS</button>
+    <button class="nav-tab" onclick="showPage('callbacks')" id="ntab-callbacks"><span>📲</span>Callbacks</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -741,6 +743,24 @@ input:-webkit-autofill:active {
       </div>
       <button class="add-agent-btn" onclick="changeAdminPass()">✅ Mettre à jour</button>
     </div>
+  </div>
+
+  <!-- PAGE SMS WAAFI -->
+  <div class="page-section" id="page-sms">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div class="section-title">📡 SMS Waafi</div>
+      <button class="action-btn" onclick="loadSmsPage()" style="font-size:.7rem;padding:6px 12px;">🔄 Actualiser</button>
+    </div>
+    <div id="sms-page-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+  </div>
+
+  <!-- PAGE CALLBACKS -->
+  <div class="page-section" id="page-callbacks">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div class="section-title">📲 Callbacks Recharge</div>
+      <button class="action-btn" onclick="loadCallbacksPage()" style="font-size:.7rem;padding:6px 12px;">🔄 Actualiser</button>
+    </div>
+    <div id="callbacks-page-list" style="display:flex;flex-direction:column;gap:8px;"></div>
   </div>
 
 </div>
@@ -1008,7 +1028,7 @@ function loginSuccess(u){
     var h = window.location.hash;
     if(h && h.startsWith('#admin-')){
       var page = h.replace('#admin-','');
-      var validPages = ['dashboard','orders','reserves','agents'];
+      var validPages = ['dashboard','orders','reserves','agents','sms','callbacks'];
       if(validPages.indexOf(page)>=0){ setTimeout(function(){ showPage(page); },300); }
     }
   }catch(e){}
@@ -1660,7 +1680,7 @@ window.addEventListener('popstate', function(){
   if(!currentUser) return;
   if(hash.startsWith('#admin-')){
     var page = hash.replace('#admin-','');
-    var valid = ['dashboard','orders','reserves','agents','notifs'];
+    var valid = ['dashboard','orders','reserves','agents','notifs','sms','callbacks'];
     if(valid.indexOf(page) >= 0) showPage(page);
   }
 });
@@ -1678,6 +1698,8 @@ function showPage(p){
   if(p==='reserves') calcAndUpdateReserves();
   if(p==='dashboard'){ updateStats(); renderRecentTx(); }
   if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); renderNotifs(); }
+  if(p==='sms') loadSmsPage();
+  if(p==='callbacks') loadCallbacksPage();
 }
 
 function initDashboard(){
@@ -2870,6 +2892,8 @@ try {
   if(typeof setAdminPage!=="undefined") window.setAdminPage=setAdminPage;
   if(typeof setCorr!=="undefined") window.setCorr=setCorr;
 
+  if(typeof loadSmsPage!=="undefined") window.loadSmsPage=loadSmsPage;
+  if(typeof loadCallbacksPage!=="undefined") window.loadCallbacksPage=loadCallbacksPage;
   if(typeof showPage!=="undefined") window.showPage=showPage;
   if(typeof showScreen!=="undefined") window.showScreen=showScreen;
   if(typeof startFirebaseListeners!=="undefined") window.startFirebaseListeners=startFirebaseListeners;
@@ -2880,6 +2904,97 @@ try {
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
 } catch(e) {}
+
+// ══════════════════════════════════════════════════════════════
+// PAGE SMS — waafi_notifications triés par createdAt desc
+// ══════════════════════════════════════════════════════════════
+var SMS_STATUS_COLOR = {
+  'matché':                    '#4caf50',
+  'non_matché':                '#e91e8c',
+  'bloqué_2sur3':              '#ff9800',
+  'en_cours':                  '#5b9cff',
+  'ignoré_format':             '#888',
+  'ignoré_non_waafi':          '#888',
+  'ignoré_champs_manquants':   '#ff9800',
+  'erreur_parsing':            '#f44336',
+  'nouveau':                   '#5b9cff',
+};
+
+function loadSmsPage(){
+  var el = document.getElementById('sms-page-list');
+  if(!el || !window.db) return;
+  el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:.78rem;">Chargement…</div>';
+  var q = window.fsQuery(
+    window.fsCollection(window.db, 'waafi_notifications'),
+    window.fsOrderBy('createdAt', 'desc'),
+    window.fsLimit(80)
+  );
+  window.fsGetDocs(q).then(function(snap){
+    if(snap.empty){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted);">Aucun SMS enregistré</div>'; return; }
+    el.innerHTML = snap.docs.map(function(d){
+      var s = d.data();
+      var st    = s.status || 'nouveau';
+      var color = SMS_STATUS_COLOR[st] || '#888';
+      var texte = (s.notification || s.notificationText || s.texte || s.message || '—').substring(0,100);
+      var date  = s.createdAt && s.createdAt.seconds ? new Date(s.createdAt.seconds*1000).toLocaleString('fr-FR') : '—';
+      var tid   = s.transferIdSMS || '—';
+      var mt    = s.montantSMS != null ? Number(s.montantSMS).toLocaleString()+' DJF' : '—';
+      var num   = s.numSMS || '—';
+      var ref   = s.ordreRef ? ' → <b style="color:var(--gold);">#'+s.ordreRef+'</b>' : '';
+      var err   = s.erreurMsg ? '<div style="font-size:.63rem;color:#f44336;margin-top:3px;">⚠️ '+s.erreurMsg+'</div>' : '';
+      return '<div style="border-radius:12px;padding:11px 13px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">'
+        +'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+        +'<span style="font-size:.66rem;font-weight:700;color:'+color+';text-transform:uppercase;">'+st+'</span>'
+        +'<span style="font-size:.58rem;color:var(--muted);">'+date+'</span></div>'
+        +'<div style="font-size:.71rem;color:var(--text);word-break:break-all;margin-bottom:4px;">'+texte+'</div>'
+        +'<div style="font-size:.63rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;">'
+        +'<span>Transfer ID: <b style="color:var(--text);">'+tid+'</b></span>'
+        +'<span>Montant: <b style="color:var(--text);">'+mt+'</b></span>'
+        +'<span>N°: <b style="color:var(--text);">'+num+'</b></span>'+ref+'</div>'+err+'</div>';
+    }).join('');
+  }).catch(function(e){ el.innerHTML='<div style="color:#f44336;padding:16px;font-size:.75rem;">Erreur: '+e.message+'</div>'; });
+}
+
+// ══════════════════════════════════════════════════════════════
+// PAGE CALLBACKS — callbacks triés par createdAt desc
+// ══════════════════════════════════════════════════════════════
+var CB_COLOR = { succes:'#4caf50', retry:'#ff9800', echec_manuel:'#f44336' };
+var CB_ICON  = { succes:'✅', retry:'⏳', echec_manuel:'🚨' };
+
+function loadCallbacksPage(){
+  var el = document.getElementById('callbacks-page-list');
+  if(!el || !window.db) return;
+  el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:.78rem;">Chargement…</div>';
+  var q = window.fsQuery(
+    window.fsCollection(window.db, 'callbacks'),
+    window.fsOrderBy('createdAt', 'desc'),
+    window.fsLimit(80)
+  );
+  window.fsGetDocs(q).then(function(snap){
+    if(snap.empty){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted);">Aucun callback enregistré</div>'; return; }
+    el.innerHTML = snap.docs.map(function(d){
+      var s    = d.data();
+      var type = s.type || 'inconnu';
+      var col  = CB_COLOR[type] || '#888';
+      var ico  = CB_ICON[type]  || '🔔';
+      var date = s.createdAt && s.createdAt.seconds ? new Date(s.createdAt.seconds*1000).toLocaleString('fr-FR') : '—';
+      var mt   = s.montant != null ? Number(s.montant).toLocaleString()+' DJF' : '—';
+      var tent = s.tentative != null ? s.tentative+'/3' : '—';
+      var ecr  = s.ecranTexte ? '<div style="font-size:.62rem;color:var(--muted);margin-top:3px;word-break:break-all;">📱 '+s.ecranTexte.substring(0,120)+'</div>' : '';
+      return '<div style="border-radius:12px;padding:11px 13px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">'
+        +'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
+        +'<span style="font-size:.66rem;font-weight:700;color:'+col+';text-transform:uppercase;">'+ico+' '+type+'</span>'
+        +'<span style="font-size:.58rem;color:var(--muted);">'+date+'</span></div>'
+        +'<div style="font-size:.63rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-bottom:2px;">'
+        +'<span>Ordre: <b style="color:var(--gold);">#'+(s.ordreRef||'—')+'</b></span>'
+        +'<span>1xBet: <b style="color:var(--text);">'+(s.id1xbet||'—')+'</b></span>'
+        +'<span>Montant: <b style="color:var(--text);">'+mt+'</b></span>'
+        +'<span>Tentative: <b style="color:var(--text);">'+tent+'</b></span></div>'
+        +'<div style="font-size:.62rem;color:var(--muted);">IA: '+(s.ia_statut||'—')+' — '+(s.ia_raison||'—')+'</div>'
+        +ecr+'</div>';
+    }).join('');
+  }).catch(function(e){ el.innerHTML='<div style="color:#f44336;padding:16px;font-size:.75rem;">Erreur: '+e.message+'</div>'; });
+}
 
 // ── PWA Install Prompt ──
 var _pwaPrompt = null;
