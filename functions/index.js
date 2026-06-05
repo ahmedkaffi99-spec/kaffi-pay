@@ -10,6 +10,7 @@
 
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest }                    = require("firebase-functions/v2/https");
+const { onSchedule }                           = require("firebase-functions/v2/scheduler");
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
@@ -256,14 +257,14 @@ exports.onNouvelOrdre = onDocumentCreated(
         const numOrdre  = tx.numeroPayment || tx.waafiNumber || "";
         if (numSMS && numOrdre && numSMS !== numOrdre) continue; // expéditeur différent
 
-        // ✅ Match rétroactif trouvé — confirmer l'ordre
+        // ✅ Match rétroactif trouvé
         const ordreRef = tx.orderId || tx.ref || docId;
         const id1xbet  = tx.userId1xBet || tx.id1x || tx.idUser || "";
 
         await Promise.all([
           db.collection("orders").doc(docId).update({
-            status:          "Confirmé",
-            confirmedAt:     FieldValue.serverTimestamp(),
+            status:          "Argent Reçu",
+            paiementRecuAt:  FieldValue.serverTimestamp(),
             confirmedBy:     "auto_waafi_retroactif",
             montantRecu:     montantSMS,
           }),
@@ -287,10 +288,10 @@ exports.onNouvelOrdre = onDocumentCreated(
 );
 
 // ══════════════════════════════════════════════════════════════
-// 2. ORDRE MODIFIÉ → Notification statut client
+// 2. ORDRE MODIFIÉ → Notification statut client (temps réel)
 // ══════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
-  { document: "transactions/{docId}", secrets: [] },
+  { document: "orders/{docId}", region: "europe-west1", secrets: [] },
   async (event) => {
     const before = event.data.before.data();
     const after  = event.data.after.data();
@@ -299,20 +300,41 @@ exports.onOrdreUpdated = onDocumentUpdated(
     const ref     = after.orderId || after.ref || event.params.docId;
     const montant = Number(after.montant || 0).toLocaleString();
     const tel     = after.waafiNumber || after.tel || after.numeroPayment || "";
+    const newStatus = after.status;
 
     let msg = "";
-    if (after.status === "Confirmé") {
-      msg = `✅ *Kaffi-Pay* — Ordre Confirmé !\n\nRéf: ${ref}\nMontant: ${montant} DJF\n\nVotre compte 1xBet a été crédité. Merci 🙏`;
-    } else if (after.status === "Rejeté") {
-      msg = `❌ *Kaffi-Pay* — Ordre Rejeté\n\nRéf: ${ref}\n${after.flagRaison || ""}\n\nContactez le support pour aide.`;
-    } else if (after.status === "Correction") {
-      msg = `✏️ *Kaffi-Pay* — Correction Requise\n\nRéf: ${ref}\n${after.correctionMsg || "Veuillez corriger votre ordre."}`;
-    } else if (after.status === "Argent Reçu") {
-      msg = `💰 *Kaffi-Pay* — Paiement Reçu !\n\nRéf: ${ref}\nMontant: ${montant} DJF\nCrédit en cours...`;
+    let type = "";
+
+    if (newStatus === "Argent Reçu") {
+      type = "paiement_recu";
+      msg  = `💰 *Kaffi-Pay* — Paiement reçu !\n\nOrdre #${ref}\nMontant: ${montant} DJF\n\nVotre compte 1xBet est en cours de recharge...`;
+    } else if (newStatus === "Rechargé ✅" || newStatus === "Confirmé") {
+      type = "ordre_confirme";
+      msg  = `✅ *Kaffi-Pay* — Ordre confirmé !\n\nOrdre #${ref}\nMontant: ${montant} DJF\n\nVotre compte 1xBet a été crédité avec succès. Merci 🙏`;
+    } else if (newStatus === "Rejeté") {
+      type = "ordre_rejete";
+      const raison = after.rejetRaison || after.flagRaison || "";
+      msg  = `❌ *Kaffi-Pay* — Ordre rejeté\n\nOrdre #${ref}\n${raison ? "Motif: "+raison : "Contactez le support pour assistance."}`;
+    } else if (newStatus === "Correction") {
+      type = "correction_requise";
+      msg  = `✏️ *Kaffi-Pay* — Correction requise\n\nOrdre #${ref}\n${after.correctionMsg || "Veuillez corriger les informations de votre ordre."}`;
+    } else if (newStatus === "Intervention Manuelle 🚨") {
+      type = "intervention_manuelle";
+      msg  = `🚨 *Kaffi-Pay* — Intervention requise\n\nOrdre #${ref}\nVotre paiement a été reçu mais la recharge a échoué. Notre équipe intervient.`;
     }
 
-    if (!msg || !tel) return;
-    console.log(`[Notification] ${tel} → ${after.status}: ${msg.substring(0, 60)}`);
+    if (!msg) return;
+
+    // Écrire dans Firestore pour que MacroDroid/client puisse lire
+    await db.collection("notifications_client").add({
+      ref, tel, type, msg,
+      status:    newStatus,
+      montant:   Number(after.montant || 0),
+      createdAt: FieldValue.serverTimestamp(),
+      envoyé:    false,
+    });
+
+    console.log(`[Notification] ${ref} → ${newStatus} | tel: ${tel || "inconnu"}`);
   }
 );
 
@@ -486,17 +508,18 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ✅ Toutes les vérifications passées — Confirmer automatiquement
+    // ✅ Toutes les vérifications passées
     // Transfer ID ✓ | Expéditeur ✓ | Montant ✓
-    // Paralléliser : confirmer ordre + marquer SMS traité en même temps
+    // Étape 1 : "Argent Reçu" → notifie le client que le paiement est confirmé
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
     await Promise.all([
       ordreDoc.ref.update({
-        status:          "Confirmé",
-        confirmedAt:     FieldValue.serverTimestamp(),
+        status:          "Argent Reçu",
+        paiementRecuAt:  FieldValue.serverTimestamp(),
         confirmedBy:     "auto_waafi_sms",
         waafitranfertID: transferId,
         montantRecu:     montantSMS,
+        numSMSConfirme:  numClient,
       }),
       db.collection("waafi_notifications").doc(docId).update({
         status: "traité", ordreRef,
@@ -549,7 +572,36 @@ exports.smsWebhook = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════
-// 7. CALLBACK MacroDroid → Résultat recharge 1xBet
+// 7. AUTO-REJET SERVEUR — Ordres "En attente" depuis > 3 min
+// ══════════════════════════════════════════════════════════════
+exports.autoRejetServeur = onSchedule(
+  { schedule: "every 2 minutes", region: "europe-west1", timeoutSeconds: 60 },
+  async () => {
+    const cutoff = new Date(Date.now() - 3 * 60 * 1000); // 3 minutes
+    const snap   = await db.collection("orders")
+      .where("status", "==", "En attente")
+      .where("createdAt", "<", cutoff)
+      .limit(20)
+      .get();
+
+    if (snap.empty) return;
+
+    const batch = db.batch();
+    snap.docs.forEach(doc => {
+      batch.update(doc.ref, {
+        status:      "Rejeté",
+        rejetRaison: "Paiement Waafi non reçu dans le délai imparti (3 minutes). Vérifiez votre Transfer ID et réessayez.",
+        rejetedAt:   FieldValue.serverTimestamp(),
+        rejetBy:     "auto_serveur",
+      });
+    });
+    await batch.commit();
+    console.log(`[AutoRejet] ${snap.size} ordre(s) rejeté(s) après 3 min sans paiement`);
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// 8. CALLBACK MacroDroid → Résultat recharge 1xBet
 // ══════════════════════════════════════════════════════════════
 // MacroDroid lit l'écran MobCash et envoie le texte brut ici.
 // Gemini analyse le texte et décide succes ou echec.
