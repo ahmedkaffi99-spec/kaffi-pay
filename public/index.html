@@ -359,6 +359,9 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .tl-dot.done{background:rgba(0,212,160,.1);border-color:rgba(0,212,160,.25);}
 .tl-dot.active{background:rgba(255,170,0,.1);border-color:rgba(255,170,0,.25);animation:blink 1.5s infinite;}
 .tl-dot.wait{opacity:.35;}
+.tl-dot.error{background:rgba(255,64,96,.12);border-color:rgba(255,64,96,.3);}
+.tl-dot.warn{background:rgba(255,170,0,.1);border-color:rgba(255,170,0,.3);}
+.tl-dot.muted{background:rgba(150,150,150,.08);border-color:rgba(150,150,150,.2);opacity:.6;}
 .tl-title{font-size:.79rem;font-weight:600;margin-bottom:2px;}
 .tl-desc{font-size:.65rem;color:var(--muted);line-height:1.4;}
 
@@ -785,11 +788,23 @@ input:-webkit-autofill:active {
     <div id="suivi-timeline"></div>
   </div>
 
+  <!-- Carte motif / raison — visible uniquement si anomalie -->
+  <div id="suivi-raison-card" style="display:none;border-radius:14px;padding:13px 14px;margin-bottom:8px;border:1px solid rgba(255,170,0,0.25);background:rgba(255,170,0,0.04);">
+    <div style="font-size:0.6rem;color:var(--warning);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-weight:700;">⚠️ Motif</div>
+    <div id="suivi-raison-txt" style="font-size:0.83rem;color:var(--text);line-height:1.6;"></div>
+  </div>
+
   <button id="suivi-corr-btn" onclick="goCorrection()" style="display:none;width:100%;margin-bottom:10px;padding:13px;border-radius:999px;border:none;background:linear-gradient(135deg,var(--warning),#ffcc00);color:#07101e;font-family:'DM Sans',sans-serif;font-size:0.9rem;font-weight:700;cursor:pointer;box-sizing:border-box;">✏️ Corriger mon ordre</button>
-  <a id="suivi-wa-btn" href="https://wa.me/25377275572" target="_blank"
-    style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.25);background:rgba(37,211,102,0.05);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;text-decoration:none;box-sizing:border-box;margin-bottom:8px;">
-    Support WhatsApp
-  </a>
+
+  <!-- Bouton WhatsApp support -->
+  <div id="suivi-wa-card" style="display:flex;flex-direction:column;gap:5px;width:100%;padding:13px 16px;border-radius:14px;border:1px solid rgba(37,211,102,0.15);background:rgba(37,211,102,0.03);box-sizing:border-box;margin-bottom:8px;">
+    <a id="suivi-wa-btn" href="https://wa.me/25377275572" target="_blank"
+      style="display:flex;align-items:center;justify-content:center;gap:8px;color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:700;text-decoration:none;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+      <span id="suivi-wa-label">Support WhatsApp</span>
+    </a>
+    <div id="suivi-wa-note" style="display:none;font-size:0.71rem;color:var(--muted);text-align:center;line-height:1.5;"></div>
+  </div>
 </div>
 </div>
 
@@ -1871,9 +1886,19 @@ function renderSuivi(){
   var peutAnnuler = (status==='En attente');
   if(retourBtn) retourBtn.style.display = peutAnnuler ? 'none' : '';
   if(annulerBtn) annulerBtn.style.display = peutAnnuler ? '' : 'none';
-  // Reset correction button visibility
+  // Reset état par défaut
   var corrBtnEl=document.getElementById('suivi-corr-btn');
   if(corrBtnEl) corrBtnEl.style.display='none';
+  var raisonReset=document.getElementById('suivi-raison-card');
+  if(raisonReset) raisonReset.style.display='none';
+
+  // ── Raison/motif ─────────────────────────────────
+  var raisonCard = document.getElementById('suivi-raison-card');
+  var raisonTxt  = document.getElementById('suivi-raison-txt');
+  var waCard     = document.getElementById('suivi-wa-card');
+  var waBtn      = document.getElementById('suivi-wa-btn');
+  var anomalie   = false;
+  var waMsg      = 'Bonjour, mon ordre #'+(tx.ref||tx.orderId)+' - '+tx.type+' '+Number(tx.montant).toLocaleString()+' DJF';
 
   if(status==='En attente'){
     card.style.borderColor='rgba(255,170,0,0.2)';
@@ -1881,16 +1906,16 @@ function renderSuivi(){
     icon.textContent='⏳';
     stxt.textContent='En attente de traitement';
     stxt.style.color='var(--warning)';
-    sdesc.textContent='Votre ordre est en cours de traitement. Vous serez crédité très rapidement.';
-    prog.style.width='30%';
+    sdesc.textContent='Votre ordre est enregistré. Envoyez votre paiement Waafi maintenant pour qu\'il soit traité automatiquement.';
+    prog.style.width='25%';
     prog.style.background='linear-gradient(90deg,var(--warning),#ffcc00)';
-  } else if(status==='Confirmé'){
+  } else if(status==='Confirmé'||status==='Rechargé ✅'){
     card.style.borderColor='rgba(0,212,160,0.25)';
     card.style.background='linear-gradient(160deg,rgba(0,212,160,0.06),rgba(7,16,30,0.8))';
     icon.textContent=isDepot?'✅':'💸';
     stxt.textContent=isDepot?'Dépôt confirmé !':'Retrait effectué !';
     stxt.style.color='var(--success)';
-    sdesc.textContent=isDepot?'Votre compte 1xBet a été crédité avec succès.':'Votre argent a été envoyé sur votre numéro Waafi.';
+    sdesc.textContent=isDepot?'Votre compte 1xBet a été crédité avec succès. Merci d\'avoir utilisé Kaffi-Pay !':'Votre argent a été envoyé sur votre numéro Waafi avec succès.';
     prog.style.width='100%';
     prog.style.background='linear-gradient(90deg,var(--success),#00ffcc)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
@@ -1900,20 +1925,23 @@ function renderSuivi(){
     icon.textContent='✏️';
     stxt.textContent='Correction requise';
     stxt.style.color='var(--warning)';
-    var corrMsg = tx.correctionMsg || 'Veuillez corriger les informations de votre ordre.';
-    sdesc.textContent=corrMsg;
-    prog.style.width='60%';
+    sdesc.textContent='Une information de votre ordre doit être corrigée. Lisez le motif ci-dessous.';
+    prog.style.width='50%';
     prog.style.background='linear-gradient(90deg,var(--warning),#ffcc00)';
-    // Afficher bouton corriger
     var corrBtn = document.getElementById('suivi-corr-btn');
     if(corrBtn) corrBtn.style.display='flex';
+    var raison = tx.correctionMsg||'Veuillez corriger les informations de votre ordre.';
+    if(raisonCard) raisonCard.style.display='block';
+    if(raisonTxt)  raisonTxt.textContent=raison;
+    anomalie=true;
+    waMsg+=' — Correction requise: '+raison;
   } else if(status==='Argent Reçu'){
     card.style.borderColor='rgba(91,156,255,0.25)';
     card.style.background='linear-gradient(160deg,rgba(91,156,255,0.06),rgba(7,16,30,0.8))';
     icon.textContent='💳';
     stxt.textContent='Paiement reçu — Crédit en cours';
     stxt.style.color='#5b9cff';
-    sdesc.textContent='Votre paiement a été reçu et validé. Votre compte va être crédité dans quelques instants.';
+    sdesc.textContent='Votre paiement Waafi a été reçu et validé. Votre compte 1xBet sera crédité dans quelques instants.';
     prog.style.width='75%';
     prog.style.background='linear-gradient(90deg,#5b9cff,#00d4a0)';
   } else if(status==='Rejeté'){
@@ -1922,10 +1950,47 @@ function renderSuivi(){
     icon.textContent='❌';
     stxt.textContent='Ordre rejeté';
     stxt.style.color='var(--error)';
-    sdesc.textContent='Votre ordre a été rejeté. Contactez le support pour assistance.';
+    var raison = tx.rejetRaison||tx.rejectionReason||'Votre ordre a été rejeté.';
+    sdesc.textContent='Votre ordre n\'a pas pu être traité. Voir le motif ci-dessous.';
+    if(raisonCard) raisonCard.style.display='block';
+    if(raisonTxt)  raisonTxt.textContent=raison;
     prog.style.width='100%';
     prog.style.background='linear-gradient(90deg,var(--error),#ff8a9a)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+    anomalie=true;
+    waMsg+=' — Ordre rejeté, motif: '+raison;
+  } else if(status==='Annulé'){
+    card.style.borderColor='rgba(150,150,150,0.2)';
+    card.style.background='linear-gradient(160deg,rgba(150,150,150,0.04),rgba(7,16,30,0.8))';
+    icon.textContent='🚫';
+    stxt.textContent='Ordre annulé';
+    stxt.style.color='var(--muted)';
+    sdesc.textContent='Cet ordre a été annulé. Vous pouvez soumettre un nouvel ordre.';
+    prog.style.width='100%';
+    prog.style.background='rgba(150,150,150,0.3)';
+    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+  }
+
+  // ── WhatsApp : prominant si anomalie, discret sinon ─
+  if(waBtn) waBtn.href='https://wa.me/25377275572?text='+encodeURIComponent(waMsg);
+  if(waCard){
+    if(anomalie){
+      waCard.style.borderColor='rgba(37,211,102,0.5)';
+      waCard.style.background='rgba(37,211,102,0.08)';
+      waCard.style.display='flex';
+      var waLabel=document.getElementById('suivi-wa-label');
+      if(waLabel) waLabel.textContent='Contacter le support';
+      var waNote=document.getElementById('suivi-wa-note');
+      if(waNote){ waNote.textContent='Un problème avec votre ordre ? Notre équipe vous aide.'; waNote.style.display='block'; }
+    } else {
+      waCard.style.borderColor='rgba(37,211,102,0.15)';
+      waCard.style.background='rgba(37,211,102,0.03)';
+      waCard.style.display='flex';
+      var waLabel=document.getElementById('suivi-wa-label');
+      if(waLabel) waLabel.textContent='Support WhatsApp';
+      var waNote=document.getElementById('suivi-wa-note');
+      if(waNote) waNote.style.display='none';
+    }
   }
 
   const rows=isDepot?[
@@ -1956,23 +2021,42 @@ function renderSuivi(){
       +'</div>';
   }).join('');
 
-  var argentRecu = (status==='Argent Reçu'||status==='Confirmé');
+  var argentRecu = (status==='Argent Reçu'||status==='Confirmé'||status==='Rechargé ✅');
+  var isRejete   = (status==='Rejeté');
+  var isAnnule   = (status==='Annulé');
+  var isCorr     = (status==='Correction');
+  var fmtDate    = function(d){ if(!d) return ''; try{ var dt=d.toDate?d.toDate():new Date(d); return dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+' · '+dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}); }catch(e){return '';} };
+
   const steps=isDepot?[
-    {icon:'📝',title:'Ordre soumis',desc:'Demande enregistrée dans le système',done:true,active:false},
-    {icon:'👁',title:'En cours de traitement',desc:'Traitement en cours',done:argentRecu||status==='Confirmé',active:status==='En attente'},
-    {icon:'💳',title:'Paiement reçu',desc:'Votre virement Waafi a été validé',done:status==='Confirmé',active:status==='Argent Reçu'},
-    {icon:'💰',title:'Compte 1xBet crédité',desc:'Votre solde a été mis à jour',done:status==='Confirmé',active:false}
+    {icon:'📝', title:'Ordre soumis',          desc:'Demande enregistrée',               done:true,      active:false,  ts:tx.createdAt},
+    {icon:'🔍', title:'En cours de traitement', desc:'Vérification du paiement Waafi',    done:argentRecu||isRejete,  active:status==='En attente', ts:null},
+    {icon:'💳', title:'Paiement reçu',          desc:'Virement Waafi validé',             done:argentRecu, active:status==='Argent Reçu', ts:tx.paiementRecuAt||null},
+    {icon:'💰', title:'Compte 1xBet crédité',   desc:'Solde mis à jour',                 done:status==='Confirmé'||status==='Rechargé ✅', active:false, ts:tx.confirmedAt||null},
+    ...(isRejete?[{icon:'❌', title:'Ordre rejeté', desc:tx.rejetRaison||'Ordre rejeté', done:false, active:true, ts:tx.rejetedAt||null, error:true}]:[]),
+    ...(isAnnule?[{icon:'🚫', title:'Ordre annulé', desc:'Annulé par le client', done:false, active:true, ts:tx.canceledAt||tx.annuleAt||null, muted:true}]:[]),
+    ...(isCorr?[{icon:'✏️', title:'Correction requise', desc:tx.correctionMsg||'Informations à corriger', done:false, active:true, ts:tx.correctionAt||null, warn:true}]:[])
   ]:[
-    {icon:'📝',title:'Ordre soumis',desc:'Demande enregistrée dans le système',done:true,active:false},
-    {icon:'👁',title:'En cours de traitement',desc:'Traitement en cours',done:argentRecu||status==='Confirmé',active:status==='En attente'},
-    {icon:'📱',title:'Envoi Waafi',desc:'Argent envoyé sur votre numéro',done:status==='Confirmé',active:status==='Argent Reçu'}
+    {icon:'📝', title:'Ordre soumis',          desc:'Demande enregistrée',               done:true,      active:false,  ts:tx.createdAt},
+    {icon:'🔍', title:'En cours de traitement', desc:'Vérification en cours',             done:argentRecu||isRejete,  active:status==='En attente', ts:null},
+    {icon:'📱', title:'Envoi Waafi',            desc:'Argent envoyé sur votre numéro',    done:status==='Confirmé'||status==='Rechargé ✅', active:status==='Argent Reçu', ts:tx.confirmedAt||null},
+    ...(isRejete?[{icon:'❌', title:'Ordre rejeté', desc:tx.rejetRaison||'Ordre rejeté', done:false, active:true, ts:tx.rejetedAt||null, error:true}]:[]),
+    ...(isAnnule?[{icon:'🚫', title:'Ordre annulé', desc:'Annulé par le client', done:false, active:true, ts:tx.canceledAt||null, muted:true}]:[]),
+    ...(isCorr?[{icon:'✏️', title:'Correction requise', desc:tx.correctionMsg||'Informations à corriger', done:false, active:true, ts:tx.correctionAt||null, warn:true}]:[])
   ];
 
   document.getElementById('suivi-timeline').innerHTML=steps.map(function(s){
-    var dc=s.done?'done':s.active?'active':'wait';
-    var em=s.done?'✅':s.active?'⏳':'○';
-    var col=s.done?'var(--success)':s.active?'var(--warning)':'var(--muted)';
-    return '<div class="tl-step"><div class="tl-dot '+dc+'">'+em+'</div><div style="flex:1"><div class="tl-title" style="color:'+col+'">'+s.title+'</div><div class="tl-desc">'+s.desc+'</div></div></div>';
+    var dc = s.error?'error': s.muted?'muted': s.warn?'warn': s.done?'done': s.active?'active':'wait';
+    var em = s.error?'❌': s.muted?'🚫': s.warn?'✏️': s.done?'✅': s.active?'⏳':'○';
+    var col= s.error?'var(--error)': s.muted?'var(--muted)': s.warn?'var(--warning)': s.done?'var(--success)': s.active?'var(--warning)':'var(--muted)';
+    var ts = fmtDate(s.ts);
+    return '<div class="tl-step">'
+      +'<div class="tl-dot '+dc+'">'+em+'</div>'
+      +'<div style="flex:1;min-width:0;">'
+        +'<div class="tl-title" style="color:'+col+'">'+s.title+'</div>'
+        +'<div class="tl-desc" style="line-height:1.5">'+s.desc+'</div>'
+        +(ts?'<div style="font-size:.6rem;color:var(--muted);margin-top:2px;">🕐 '+ts+'</div>':'')
+      +'</div>'
+      +'</div>';
   }).join('');
 
   document.getElementById('suivi-wa-btn').href=
