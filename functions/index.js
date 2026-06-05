@@ -372,8 +372,8 @@ exports.autoConfirmation = onDocumentCreated(
       processedAt: FieldValue.serverTimestamp(),
     });
 
-    // ── Parser SMS Waafi (même logique que indexfinal22) ──────────
-    const texte = sms.notification || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
+    // ── Parser SMS Waafi ───────────────────────────────────────
+    const texte = sms.notification || sms.notificationText || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
 
     if (!texte || texte === "{not_title}{notification}") {
       await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_format" });
