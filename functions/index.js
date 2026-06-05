@@ -399,23 +399,17 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ── Chercher l'ordre correspondant ────────────────────────
+    // ── Chercher l'ordre correspondant — Transfer ID UNIQUEMENT ──
+    // Pas de fallback numéro de téléphone : trop risqué (faux match)
     let ordreSnap = await db.collection("orders")
       .where("waafitranfertID", "==", transferId)
       .where("status", "==", "En attente")
       .limit(1).get();
 
-    if (ordreSnap.empty && numClient) {
-      ordreSnap = await db.collection("orders")
-        .where("numeroPayment", "==", numClient)
-        .where("status", "==", "En attente")
-        .limit(1).get();
-    }
-
     if (ordreSnap.empty) {
       await db.collection("waafi_notifications").doc(docId).update({
         status:    "non_matché",
-        erreurMsg: `Aucun ordre en attente pour Transfer ID ${transferId} / ${montantSMS} DJF`,
+        erreurMsg: `Aucun ordre en attente pour Transfer ID ${transferId}`,
       });
       return;
     }
@@ -493,7 +487,6 @@ exports.smsWebhook = onRequest(
       notification,
       not_title:  not_title || "Waafi SMS",
       source:     "macrodroid_http",
-      secret,
       createdAt:  FieldValue.serverTimestamp(),
       status:     "nouveau",
     });
@@ -537,7 +530,7 @@ exports.rechargeCallback = onRequest(
           raison:    z.string(),
           confiance: z.number().describe("0-100"),
         });
-        const { flows } = getFlows();
+        getFlows();
         const ai = _ai;
         const { output } = await ai.generate({
           model: gemini20Flash,
@@ -634,7 +627,7 @@ Mots qui indiquent échec : failed, error, erreur, échec, insufficient, invalid
       status:           "Intervention Manuelle 🚨",
       rechargeStatus:   "manuel_requis",
       rechargeRetries:  nouvelleTentative,
-      rechargeMessage:  message || "3 tentatives échouées",
+      rechargeMessage:  texteEcran || "3 tentatives échouées",
       manuelRequis:     true,
       manuelRequsAt:    FieldValue.serverTimestamp(),
     });
@@ -645,7 +638,7 @@ Mots qui indiquent échec : failed, error, erreur, échec, insufficient, invalid
       ordreRef:  ref,
       id1xbet:   id1xbet || ordre.userId1xBet || "",
       montant:   montant || ordre.montant || "",
-      message:   message || "3 tentatives échouées",
+      message:   texteEcran || "3 tentatives échouées",
       createdAt: FieldValue.serverTimestamp(),
       traité:    false,
     });
