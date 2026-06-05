@@ -744,7 +744,8 @@ input:-webkit-autofill:active {
         <div class="logo-slogan">Suivi de votre ordre</div>
       </div>
     </div>
-    <button onclick="var r=suiviRef;currentSuiviTx=null;suiviRef=null;if(suiviInterval){clearInterval(suiviInterval);suiviInterval=null;}try{// suivi clearedwindow.history.pushState(null,'','/');  }catch(e){}showScreen('client')" style="background:transparent;border:1px solid rgba(255,215,0,0.2);border-radius:999px;padding:6px 14px;font-size:0.72rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;">← Retour</button>
+    <button id="suivi-retour-btn" onclick="retourSuivi()" style="background:transparent;border:1px solid rgba(255,215,0,0.2);border-radius:999px;padding:6px 14px;font-size:0.72rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;">← Retour</button>
+    <button id="suivi-annuler-btn" onclick="annulerOrdre()" style="display:none;background:rgba(255,64,96,0.1);border:1px solid rgba(255,64,96,0.35);border-radius:999px;padding:6px 14px;font-size:0.72rem;color:#ff4060;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;">❌ Annuler</button>
   </div>
 
   <div id="suivi-status-card" style="border-radius:16px;padding:14px 16px;margin:10px 0 10px;text-align:center;border:1px solid rgba(255,215,0,0.1);background:linear-gradient(160deg,rgba(255,255,255,0.03),rgba(7,16,30,0.8));">
@@ -1763,6 +1764,12 @@ function renderSuivi(){
   const stxt=document.getElementById('suivi-status-text');
   const sdesc=document.getElementById('suivi-status-desc');
   const prog=document.getElementById('suivi-progress');
+  // Boutons header : Annuler si "En attente", Retour sinon
+  var retourBtn=document.getElementById('suivi-retour-btn');
+  var annulerBtn=document.getElementById('suivi-annuler-btn');
+  var peutAnnuler = (status==='En attente');
+  if(retourBtn) retourBtn.style.display = peutAnnuler ? 'none' : '';
+  if(annulerBtn) annulerBtn.style.display = peutAnnuler ? '' : 'none';
   // Reset correction button visibility
   var corrBtnEl=document.getElementById('suivi-corr-btn');
   if(corrBtnEl) corrBtnEl.style.display='none';
@@ -1879,6 +1886,30 @@ function pasteField(id){
 }
 
 function updateUSSD(){}
+
+function retourSuivi(){
+  currentSuiviTx=null; suiviRef=null;
+  if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+  try{ window.history.pushState(null,'','/'); }catch(e){}
+  showScreen('client');
+}
+
+function annulerOrdre(){
+  if(!currentSuiviTx || currentSuiviTx.status !== 'En attente') return;
+  var ref = currentSuiviTx.orderId || currentSuiviTx.ref;
+  if(!confirm('Voulez-vous vraiment annuler l\'ordre #'+ref+' ?')) return;
+  var btn = document.getElementById('suivi-annuler-btn');
+  if(btn){ btn.disabled=true; btn.textContent='Annulation…'; }
+  updateTxFirebase(ref, { status:'Annulé', cancelledAt: new Date().toISOString(), cancelledBy:'client' })
+    .then(function(){
+      showToast('🚫 Ordre annulé','error');
+      retourSuivi();
+    })
+    .catch(function(e){
+      if(btn){ btn.disabled=false; btn.textContent='❌ Annuler'; }
+      showToast('❌ Impossible d\'annuler — '+e.message,'error');
+    });
+}
 
 function copyOrderRef(){
   var ref=document.getElementById('suivi-ref').textContent;
