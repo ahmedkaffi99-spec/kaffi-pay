@@ -2556,7 +2556,11 @@ function extraireNumeroExp(texte){
 function startSmsListener(){
   if(!window.db || _smsListener) return;
   try{
-    var col = window.fsCollection(window.db, 'waafi_notifications');
+    var col = window.fsQuery(
+      window.fsCollection(window.db, 'waafi_notifications'),
+      window.fsOrderBy('createdAt', 'desc'),
+      window.fsLimit(50)
+    );
     _smsListener = window.fsOnSnapshot(col, function(snap){
       snap.docChanges().forEach(function(change){
         if(change.type === 'added'){
