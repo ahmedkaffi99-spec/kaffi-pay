@@ -99,8 +99,7 @@ Règles strictes :
 1. Montant > 50 000 DJF → suspect
 2. Transfer ID < 6 chiffres → invalide
 3. Numéro ne commence pas par 77 → suspect
-4. Montant < 50 DJF → invalide
-5. Soumission entre 00h et 05h → risque élevé`,
+4. Montant < 50 DJF → invalide`,
         output: { schema: FraudeSchema },
       });
       return output || { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
