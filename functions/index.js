@@ -245,7 +245,7 @@ exports.onNouvelOrdre = onDocumentCreated(
 
       for (const smsDoc of smsSnap.docs) {
         const smsData   = smsDoc.data();
-        const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date(0);
+        const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date(); // sans createdAt → traiter comme récent
         if (createdAt < cutoff) continue; // SMS trop ancien (> 24h)
 
         const montantSMS   = Number(smsData.montantSMS || 0);
@@ -454,6 +454,7 @@ exports.autoConfirmation = onDocumentCreated(
         transferIdSMS: transferId,
         numSMS:        numClient,
         montantSMS:    montantSMS,
+        createdAt:     FieldValue.serverTimestamp(), // ajouté si MacroDroid écrit directement via REST
       });
       return;
     }
