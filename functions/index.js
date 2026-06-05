@@ -372,12 +372,6 @@ exports.autoConfirmation = onDocumentCreated(
 
     if (sms.status === "traité" || sms.status === "en_cours") return;
 
-    // ── Vérifier secret ────────────────────────────────────────
-    if (sms.secret && sms.secret !== "f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2") {
-      await db.collection("waafi_notifications").doc(docId).update({ status: "rejeté_secret_invalide" });
-      return;
-    }
-
     await db.collection("waafi_notifications").doc(docId).update({
       status:      "en_cours",
       processedAt: FieldValue.serverTimestamp(),
@@ -487,14 +481,7 @@ exports.smsWebhook = onRequest(
       return;
     }
 
-    const { secret, notification, not_title } = req.body;
-
-    // Vérifier secret
-    if (secret !== "f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2") {
-      console.warn("[smsWebhook] Secret invalide");
-      res.status(401).json({ error: "Secret invalide" });
-      return;
-    }
+    const { notification, not_title } = req.body;
 
     if (!notification) {
       res.status(400).json({ error: "Champ 'notification' requis" });
@@ -531,15 +518,8 @@ exports.rechargeCallback = onRequest(
       return;
     }
 
-    const { secret, ref, ecran, id1xbet, montant } = req.body;
-    // support ancien champ "message" aussi
+    const { ref, ecran, id1xbet, montant } = req.body;
     const texteEcran = ecran || req.body.message || "";
-
-    // Vérifier secret
-    if (secret !== "f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2") {
-      res.status(401).json({ error: "Secret invalide" });
-      return;
-    }
 
     if (!ref) {
       res.status(400).json({ error: "Champ 'ref' requis" });
