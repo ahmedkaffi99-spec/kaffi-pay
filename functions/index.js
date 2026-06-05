@@ -250,11 +250,11 @@ exports.onNouvelOrdre = onDocumentCreated(
 
         const montantSMS   = Number(smsData.montantSMS || 0);
         const montantOrdre = Number(tx.montant || 0);
-        if (Math.abs(montantOrdre - montantSMS) > 5) continue; // montant incompatible
+        if (montantSMS && Math.abs(montantOrdre - montantSMS) > 5) continue; // montant incompatible
 
         // Vérifier expéditeur si disponible
-        const numSMS    = smsData.numSMS || "";
-        const numOrdre  = tx.numeroPayment || tx.waafiNumber || "";
+        const numSMS   = smsData.numSMS || "";
+        const numOrdre = tx.numeroPayment || tx.waafiNumber || "";
         if (numSMS && numOrdre && numSMS !== numOrdre) continue; // expéditeur différent
 
         // ✅ Match rétroactif trouvé
@@ -263,18 +263,18 @@ exports.onNouvelOrdre = onDocumentCreated(
 
         await Promise.all([
           db.collection("orders").doc(docId).update({
-            status:          "Argent Reçu",
-            paiementRecuAt:  FieldValue.serverTimestamp(),
-            confirmedBy:     "auto_waafi_retroactif",
-            montantRecu:     montantSMS,
+            status:         "Argent Reçu",
+            paiementRecuAt: FieldValue.serverTimestamp(),
+            confirmedBy:    "auto_waafi_retroactif",
+            montantRecu:    montantSMS,
           }),
-          smsDoc.ref.update({ status: "traité_retroactif", ordreRef }),
+          smsDoc.ref.update({ status: "matché", ordreRef, matchType: "retroactif" }),
         ]);
 
-        console.log(`[RetroMatch] ✅ Ordre ${ordreRef} confirmé via SMS ${smsDoc.id}`);
+        console.log(`[RetroMatch] ✅ Ordre ${ordreRef} matché via SMS ${smsDoc.id}`);
 
         if (id1xbet) {
-          const url = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+          const url = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
           fetch(url, { signal: AbortSignal.timeout(8000) })
             .then(r => db.collection("orders").doc(docId).update({ webhookStatus: r.ok?"ok":"erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
             .catch(() => db.collection("orders").doc(docId).update({ webhookStatus:"erreur_timeout" }));
@@ -423,35 +423,65 @@ exports.geminiVerifPreuve = onCall(
 
 // ══════════════════════════════════════════════════════════════
 // 5. AUTO-CONFIRMATION — SMS Waafi → Ordre confirmé → 1xBet
+//    Logique identique à indexfinal22 (version qui marchait parfaitement)
 // ══════════════════════════════════════════════════════════════
+const OWN_NUMBER = "77275572"; // numéro Kaffi-Pay à exclure lors extraction expéditeur
+
+function extraireTransferId(texte) {
+  const m = texte.match(/Transfer-Id:\s*([0-9]+)/i);
+  return m ? m[1].trim() : null;
+}
+
+function extraireMontant(texte) {
+  const m = texte.match(/(?:transferred|received|transfer|amount|reçu)\s+DJF\s*([0-9][0-9,\.]*)/i);
+  return m ? Number(m[1].replace(/,/g, "")) : null;
+}
+
+function extraireNumeroExp(texte) {
+  // Trouver tous les numéros 8 chiffres, exclure le numéro propre
+  const all = texte.match(/\(?\b(\d{8})\b\)?/g) || [];
+  const nums = all.map(s => s.replace(/[()]/g, ""));
+  const others = nums.filter(n => n !== OWN_NUMBER);
+  return others.length > 0 ? others[0] : (nums[0] || null);
+}
+
 exports.autoConfirmation = onDocumentCreated(
   { document: "waafi_notifications/{docId}", region: "europe-west1", secrets: [], minInstances: 1, concurrency: 80 },
   async (event) => {
     const sms   = event.data.data();
     const docId = event.params.docId;
 
-    if (sms.status === "traité" || sms.status === "en_cours") return;
+    if (sms.status === "traité" || sms.status === "en_cours" || sms.status === "matché") return;
 
     await db.collection("waafi_notifications").doc(docId).update({
       status:      "en_cours",
       processedAt: FieldValue.serverTimestamp(),
     });
 
-    // ── Parser SMS Waafi ───────────────────────────────────────
-    const notification = sms.notification || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
+    // ── Parser SMS Waafi (même logique que indexfinal22) ──────────
+    const texte = sms.notification || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
 
-    const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i);
-    const transferId    = transferMatch ? transferMatch[1].trim() : null;
+    if (!texte || texte === "{not_title}{notification}") {
+      await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_format" });
+      return;
+    }
 
-    const montantMatch = notification.match(/Received\s+DJF\s+([\d,]+)/i);
-    const montantSMS   = montantMatch ? Number(montantMatch[1].replace(/,/g, "")) : null;
+    // Vérifier que c'est bien un SMS Waafi
+    const isWaafi = texte.includes("Transfer-Id") || texte.includes("DJF")
+                 || texte.includes("Waafi")        || texte.includes("transferred")
+                 || texte.includes("received")     || texte.includes("Evc-Plus");
+    if (!isWaafi) {
+      await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_non_waafi" });
+      return;
+    }
 
-    const numMatch  = notification.match(/\((\d{8})\)/);
-    const numClient = numMatch ? numMatch[1] : null;
+    const transferId = extraireTransferId(texte);
+    const montantSMS = extraireMontant(texte);
+    const numClient  = extraireNumeroExp(texte);
 
     console.log(`[AutoConfirm] TransferID: ${transferId}, Montant: ${montantSMS} DJF, N°: ${numClient}`);
 
-    if (!transferId || !montantSMS) {
+    if (!transferId && !montantSMS) {
       await db.collection("waafi_notifications").doc(docId).update({
         status:    "erreur_parsing",
         erreurMsg: "Impossible d'extraire Transfer ID ou Montant du SMS",
@@ -459,47 +489,53 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ── Chercher l'ordre par Transfer ID (clé principale) ────────
-    // L'ordre doit avoir été soumis avec ce Transfer ID exact
-    let ordreSnap = await db.collection("orders")
-      .where("waafitranfertID", "==", transferId)
-      .where("status", "==", "En attente")
-      .limit(1).get();
+    // ── Chercher ordre correspondant (même logique que indexfinal22) ──
+    // Transfer ID seul suffit, OU montant + numéro ensemble
+    let ordreDoc  = null;
+    let matchType = "";
 
-    if (ordreSnap.empty) {
-      // Stocker les données parsées pour correspondance rétroactive
-      // quand le client soumettra son ordre plus tard
+    // Priorité 1 : Transfer ID exact
+    if (transferId) {
+      const snap = await db.collection("orders")
+        .where("waafitranfertID", "==", transferId)
+        .where("status", "==", "En attente")
+        .limit(1).get();
+      if (!snap.empty) { ordreDoc = snap.docs[0]; matchType = "transferId"; }
+    }
+
+    // Priorité 2 : Montant + Numéro expéditeur (si pas de match Transfer ID)
+    if (!ordreDoc && montantSMS && numClient) {
+      const snap = await db.collection("orders")
+        .where("status", "==", "En attente")
+        .where("montant", "==", String(montantSMS))
+        .limit(10).get();
+      for (const d of snap.docs) {
+        const o = d.data();
+        const tel = o.numeroPayment || o.waafiNumber || "";
+        if (tel && tel === numClient) { ordreDoc = d; matchType = "montant+num"; break; }
+      }
+    }
+
+    if (!ordreDoc) {
+      // Aucun ordre — stocker pour rétro-match quand client soumettra plus tard
       await db.collection("waafi_notifications").doc(docId).update({
         status:        "non_matché",
-        erreurMsg:     `Aucun ordre soumis avec Transfer ID ${transferId}`,
+        erreurMsg:     `Aucun ordre En attente pour Transfer-Id ${transferId || "?"} / ${montantSMS} DJF / ${numClient}`,
         transferIdSMS: transferId,
         numSMS:        numClient,
         montantSMS:    montantSMS,
-        createdAt:     FieldValue.serverTimestamp(), // ajouté si MacroDroid écrit directement via REST
+        createdAt:     FieldValue.serverTimestamp(),
       });
       return;
     }
 
-    const ordreDoc     = ordreSnap.docs[0];
     const ordre        = ordreDoc.data();
     const ordreRef     = ordre.orderId || ordre.ref || ordreDoc.id;
     const montantOrdre = Number(ordre.montant || 0);
+    const id1xbet      = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
 
-    // ── Vérifier numéro expéditeur correspond à l'ordre ──────────
-    // Si le client a fourni son numéro et que le SMS contient l'expéditeur,
-    // ils doivent correspondre — sinon Transfer ID usurpé
-    const numeroOrdre = ordre.numeroPayment || ordre.waafiNumber || "";
-    if (numClient && numeroOrdre && numClient !== numeroOrdre) {
-      await db.collection("waafi_notifications").doc(docId).update({
-        status:    "expediteur_mismatch",
-        erreurMsg: `N° expéditeur SMS (${numClient}) ≠ N° ordre (${numeroOrdre}) — Transfer ID ${transferId}`,
-        ordreRef,
-      });
-      return;
-    }
-
-    // ── Vérifier montant (±5 DJF tolérance) ──────────────────────
-    if (Math.abs(montantOrdre - montantSMS) > 5) {
+    // ── Vérifier montant (±5 DJF tolérance) ─────────────────────
+    if (montantSMS && Math.abs(montantOrdre - montantSMS) > 5) {
       await db.collection("waafi_notifications").doc(docId).update({
         status:    "montant_incorrect",
         erreurMsg: `Montant SMS (${montantSMS} DJF) ≠ Montant ordre (${montantOrdre} DJF)`,
@@ -508,32 +544,46 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ✅ Toutes les vérifications passées
-    // Transfer ID ✓ | Expéditeur ✓ | Montant ✓
-    // Étape 1 : "Argent Reçu" → notifie le client que le paiement est confirmé
-    const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
+    // ✅ Match confirmé — Transfer ID ✓ | Montant ✓ | (Expéditeur ✓)
+    console.log(`[AutoConfirm] ✅ Match [${matchType}] Ordre ${ordreRef} · ${montantSMS} DJF · ${numClient}`);
+
     await Promise.all([
       ordreDoc.ref.update({
         status:          "Argent Reçu",
         paiementRecuAt:  FieldValue.serverTimestamp(),
         confirmedBy:     "auto_waafi_sms",
-        waafitranfertID: transferId,
+        matchType,
+        waafitranfertID: transferId || ordre.waafitranfertID,
         montantRecu:     montantSMS,
         numSMSConfirme:  numClient,
       }),
       db.collection("waafi_notifications").doc(docId).update({
-        status: "traité", ordreRef,
+        status: "matché", ordreRef, matchType,
       }),
     ]);
 
-    // ── Déclencher MacroDroid → Recharge 1xBet (fire & update en parallèle) ──
-    if (id1xbet) {
-      const webhookUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
-      fetch(webhookUrl, { signal: AbortSignal.timeout(8000) })
-        .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
-        .catch(e => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
-      // Ne pas await → retourner immédiatement, MacroDroid est déclenché en arrière-plan
+    // ── Déclencher MacroDroid → Recharge 1xBet ───────────────────
+    if (!id1xbet) {
+      console.warn(`[AutoConfirm] ⚠️ ID 1xBet absent pour ordre ${ordreRef} — recharge manuelle`);
+      await ordreDoc.ref.update({ webhookStatus: "manque_id1xbet" });
+      return;
     }
+
+    const webhookUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet`
+      + `?id1xbet=${encodeURIComponent(id1xbet)}`
+      + `&montant=${montantSMS}`
+      + `&ref=${encodeURIComponent(ordreRef)}`;
+
+    fetch(webhookUrl, { signal: AbortSignal.timeout(15000) })
+      .then(r => {
+        ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() });
+        if (r.ok) console.log(`[AutoConfirm] 🤖 MacroDroid déclenché — ${id1xbet} · ${montantSMS} DJF`);
+        else      console.warn(`[AutoConfirm] ⚠️ MacroDroid HTTP ${r.status}`);
+      })
+      .catch(e => {
+        ordreDoc.ref.update({ webhookStatus: "erreur_timeout" });
+        console.error(`[AutoConfirm] ❌ MacroDroid injoignable: ${e.message}`);
+      });
   }
 );
 
@@ -719,7 +769,7 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
       });
       try {
         const id1xbetOrdre = id1xbet || ordre.userId1xBet || ordre.id1x || "";
-        const retryUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${id1xbetOrdre}&montant=${montant || ordre.montant}&ref=${ref}&retry=${nouvelleTentative}`;
+        const retryUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?id1xbet=${id1xbetOrdre}&montant=${montant || ordre.montant}&ref=${ref}&retry=${nouvelleTentative}`;
         await fetch(retryUrl, { signal: AbortSignal.timeout(8000) });
       } catch (e) {
         console.error("[rechargeCallback] Retry webhook erreur:", e.message);
