@@ -464,7 +464,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
         <label>💵 Montant (min. 50 DJF)</label>
         <div class="amount-wrap">
           <span class="currency-sym">DJF</span>
-          <input type="number" id="depot-montant" placeholder="Ex: 1000" min="50" inputmode="numeric" oninput="updateUSSD()">
+          <input type="number" id="depot-montant" placeholder="Ex: 1000" min="50" inputmode="numeric">
         </div>
       </div>
       <div class="field">
@@ -1821,11 +1821,7 @@ function pasteField(id){
   }else{input.focus();showToast('📋 Appuyez longuement sur le champ','info');}
 }
 
-function updateUSSD(){
-  var m=document.getElementById('depot-montant')?document.getElementById('depot-montant').value:'0';
-  var a=parseInt(m)||0;var l=document.getElementById('ussd-link');var d=document.getElementById('ussd-amount-display');
-  if(l){if(a>0){l.href='tel:*200*77275572*'+a+'%23';if(d)d.textContent=a.toLocaleString()+' DJF';l.style.opacity='1';l.style.pointerEvents='auto';}else{l.onclick=null;if(d)d.textContent='';l.style.opacity='0.45';l.style.pointerEvents='none';}}
-}
+function updateUSSD(){}
 
 function copyOrderRef(){
   var ref=document.getElementById('suivi-ref').textContent;

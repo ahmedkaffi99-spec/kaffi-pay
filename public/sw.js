@@ -1,5 +1,5 @@
-// Kaffi-Pay — Service Worker v3.0
-const CACHE = 'kaffipay-v3';
+// Kaffi-Pay — Service Worker v4.0
+const CACHE = 'kaffipay-v4';
 
 self.addEventListener('install', function(e){
   e.waitUntil(
