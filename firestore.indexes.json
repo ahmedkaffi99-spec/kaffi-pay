@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "waafi_notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "transferIdSMS", "order": "ASCENDING" },
+        { "fieldPath": "status",        "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "waafitranfertID", "order": "ASCENDING" },
+        { "fieldPath": "status",          "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
