@@ -202,14 +202,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date(); // sans createdAt → traiter comme récent
         if (createdAt < cutoff) continue; // SMS trop ancien (> 24h)
 
-        const montantSMS   = Number(smsData.montantSMS || 0);
-        const montantOrdre = Number(tx.montant || 0);
-        if (montantSMS && Math.abs(montantOrdre - montantSMS) > 5) continue; // montant incompatible
-
-        // Vérifier expéditeur si disponible
-        const numSMS   = smsData.numSMS || "";
-        const numOrdre = tx.numeroPayment || tx.waafiNumber || "";
-        if (numSMS && numOrdre && numSMS !== numOrdre) continue; // expéditeur différent
+        const montantSMS = Number(smsData.montantSMS || 0);
 
         // ✅ Match rétroactif trouvé
         const ordreRef = tx.orderId || tx.ref || docId;
@@ -432,20 +425,9 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    const ordre        = ordreDoc.data();
-    const ordreRef     = ordre.orderId || ordre.ref || ordreDoc.id;
-    const montantOrdre = Number(ordre.montant || 0);
-    const id1xbet      = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
-
-    // ── Vérifier montant (±5 DJF tolérance) ─────────────────────
-    if (montantSMS && Math.abs(montantOrdre - montantSMS) > 5) {
-      await db.collection("waafi_notifications").doc(docId).update({
-        status:    "montant_incorrect",
-        erreurMsg: `Montant SMS (${montantSMS} DJF) ≠ Montant ordre (${montantOrdre} DJF)`,
-        ordreRef,
-      });
-      return;
-    }
+    const ordre    = ordreDoc.data();
+    const ordreRef = ordre.orderId || ordre.ref || ordreDoc.id;
+    const id1xbet  = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
 
     // ✅ Match confirmé — Transfer ID ✓ | Montant ✓ | (Expéditeur ✓)
     console.log(`[AutoConfirm] ✅ Match [${matchType}] Ordre ${ordreRef} · ${montantSMS} DJF · ${numClient}`);
