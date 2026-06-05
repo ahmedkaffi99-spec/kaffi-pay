@@ -9,7 +9,7 @@
  */
 
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { onCall }                               = require("firebase-functions/v2/https");
+const { onCall, onRequest }                    = require("firebase-functions/v2/https");
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
@@ -471,5 +471,47 @@ exports.autoConfirmation = onDocumentCreated(
         console.error("[MacroDroid] timeout:", e.message);
       }
     }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// 6. ENDPOINT HTTP — MacroDroid envoie SMS ici
+// ══════════════════════════════════════════════════════════════
+// MacroDroid appelle : POST https://europe-west1-kaffi-pay.cloudfunctions.net/smsWebhook
+// Body JSON : { secret, notification, not_title }
+exports.smsWebhook = onRequest(
+  { region: "europe-west1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Méthode non autorisée" });
+      return;
+    }
+
+    const { secret, notification, not_title } = req.body;
+
+    // Vérifier secret
+    if (secret !== "f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2") {
+      console.warn("[smsWebhook] Secret invalide");
+      res.status(401).json({ error: "Secret invalide" });
+      return;
+    }
+
+    if (!notification) {
+      res.status(400).json({ error: "Champ 'notification' requis" });
+      return;
+    }
+
+    // Écrire dans Firestore → déclenche autoConfirmation automatiquement
+    const docRef = await db.collection("waafi_notifications").add({
+      notification,
+      not_title:  not_title || "Waafi SMS",
+      source:     "macrodroid_http",
+      secret,
+      createdAt:  FieldValue.serverTimestamp(),
+      status:     "nouveau",
+    });
+
+    console.log(`[smsWebhook] SMS reçu → doc ${docRef.id}`);
+    res.json({ success: true, docId: docRef.id });
   }
 );
