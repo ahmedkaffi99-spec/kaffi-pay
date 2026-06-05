@@ -1,11 +1,9 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║         KAFFI PAY — CLOUD FUNCTIONS v3.0 (Genkit 100%)      ║
- * ║  • Genkit flows avec output structuré (Zod schemas)         ║
- * ║  • Détection fraude & doublons (Gemini 2.0 Flash)           ║
- * ║  • Validation automatique des ordres                        ║
- * ║  • Analyse admin (résumé, prédictions, score santé)         ║
- * ║  • Vérification preuves paiement (Gemini Vision)            ║
+ * ║      KAFFI PAY — CLOUD FUNCTIONS v3.1 (Genkit + Firebase)   ║
+ * ║  • Genkit flows nommés → visibles dans Firebase Console     ║
+ * ║  • Télémétrie Firebase → traces + logs dans le dashboard    ║
+ * ║  • Output structuré Zod (fraude, admin, vision)             ║
  * ║  • Auto-confirmation SMS Waafi → MacroDroid 1xBet           ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
@@ -17,6 +15,10 @@ const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
 const { genkit, z }                            = require("genkit");
 const { googleAI, gemini20Flash }              = require("@genkit-ai/googleai");
+const { enableFirebaseTelemetry }              = require("@genkit-ai/firebase");
+
+// ── Télémétrie Firebase — active les traces dans Firebase Console → Genkit
+enableFirebaseTelemetry();
 
 initializeApp();
 const db = getFirestore();
@@ -24,64 +26,94 @@ const db = getFirestore();
 // ── Secret Firebase ────────────────────────────────────────────
 const GEMINI_KEY = defineSecret("GEMINI_KEY");
 
-// ── Instance Genkit — initialisée au premier appel runtime ────
-let _ai = null;
-function getAI() {
-  if (!_ai) {
-    _ai = genkit({
-      plugins: [googleAI({ apiKey: GEMINI_KEY.value() })],
-      model: gemini20Flash,
-    });
-  }
-  return _ai;
-}
+// ── Instance Genkit + Flows — initialisés au premier appel ────
+let _ai    = null;
+let _flows = null;
 
-// ══════════════════════════════════════════════════════════════
-// SCHEMAS ZOD — Output structuré garanti par Genkit
-// ══════════════════════════════════════════════════════════════
+function getFlows() {
+  if (_ai && _flows) return _flows;
 
-const FraudeSchema = z.object({
-  score_fraude: z.number().describe("Score de fraude de 0 à 100"),
-  risque:       z.enum(["faible", "moyen", "élevé"]),
-  raisons:      z.array(z.string()).describe("Liste des raisons du score"),
-  action:       z.enum(["valider", "vérifier", "rejeter"]),
-});
-
-const AnalyseAdminSchema = z.object({
-  resume:             z.string().describe("Résumé en 2 phrases"),
-  alerte:             z.string().nullable().describe("Problème urgent ou null"),
-  conseil:            z.string().describe("1 conseil actionnable"),
-  prediction_demain:  z.number().describe("Volume prédit en DJF"),
-  heure_pic:          z.string().describe("Heure de pointe ex: 14h-16h"),
-  score_sante:        z.number().describe("Score santé de 0 à 100"),
-});
-
-const PreuveSchema = z.object({
-  est_valide:                  z.boolean(),
-  transfer_id_detecte:         z.string().nullable(),
-  montant_detecte:             z.number().nullable(),
-  expediteur_detecte:          z.string().nullable(),
-  correspondance_montant:      z.boolean(),
-  correspondance_transfer_id:  z.boolean(),
-  confiance:                   z.number().describe("Niveau de confiance 0 à 100"),
-  raison:                      z.string().describe("Explication courte"),
-});
-
-// ══════════════════════════════════════════════════════════════
-// FLOWS GENKIT — Logique AI réutilisable et observable
-// ══════════════════════════════════════════════════════════════
-
-async function flowAnalyseFraude(ai, tx, transferId) {
-  const { output } = await ai.generate({
+  _ai = genkit({
+    plugins: [googleAI({ apiKey: GEMINI_KEY.value() })],
     model: gemini20Flash,
-    prompt: `Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
+  });
+
+  // ── Schemas Zod ───────────────────────────────────────────────
+  const FraudeSchema = z.object({
+    score_fraude: z.number().describe("Score de fraude 0-100"),
+    risque:       z.enum(["faible", "moyen", "élevé"]),
+    raisons:      z.array(z.string()),
+    action:       z.enum(["valider", "vérifier", "rejeter"]),
+  });
+
+  const AnalyseAdminSchema = z.object({
+    resume:            z.string(),
+    alerte:            z.string().nullable(),
+    conseil:           z.string(),
+    prediction_demain: z.number(),
+    heure_pic:         z.string(),
+    score_sante:       z.number(),
+  });
+
+  const PreuveSchema = z.object({
+    est_valide:                 z.boolean(),
+    transfer_id_detecte:        z.string().nullable(),
+    montant_detecte:            z.number().nullable(),
+    expediteur_detecte:         z.string().nullable(),
+    correspondance_montant:     z.boolean(),
+    correspondance_transfer_id: z.boolean(),
+    confiance:                  z.number(),
+    raison:                     z.string(),
+  });
+
+  const InputFraudeSchema = z.object({
+    type:          z.string(),
+    montant:       z.number(),
+    transferId:    z.string(),
+    numeroPayment: z.string(),
+    heure:         z.number(),
+  });
+
+  const InputAdminSchema = z.object({
+    confirmes: z.number(),
+    attente:   z.number(),
+    rejetes:   z.number(),
+    volume:    z.number(),
+    taux:      z.number(),
+    moyenne:   z.number(),
+    derniersTx: z.array(z.object({
+      type:    z.string(),
+      montant: z.number(),
+      status:  z.string(),
+      date:    z.string(),
+    })),
+  });
+
+  const InputPreuveSchema = z.object({
+    imageBase64:         z.string(),
+    mimeType:            z.string(),
+    montantAttendu:      z.number(),
+    transferIdAttendu:   z.string(),
+  });
+
+  // ── Flow 1 : Analyse Fraude ────────────────────────────────────
+  const analyseFraude = _ai.defineFlow(
+    {
+      name:         "analyseFraude",
+      inputSchema:  InputFraudeSchema,
+      outputSchema: FraudeSchema,
+    },
+    async (input) => {
+      const { output } = await _ai.generate({
+        model: gemini20Flash,
+        prompt: `Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
 
 Transaction à analyser :
-- Type: ${tx.type || "?"}
-- Montant: ${tx.montant} DJF
-- Transfer ID: ${transferId || "?"}
-- N° Expéditeur: ${tx.numeroPayment || "?"}
-- Heure soumission: ${new Date().getHours()}h
+- Type: ${input.type}
+- Montant: ${input.montant} DJF
+- Transfer ID: ${input.transferId || "?"}
+- N° Expéditeur: ${input.numeroPayment || "?"}
+- Heure soumission: ${input.heure}h
 
 Règles strictes :
 1. Montant > 50 000 DJF → suspect
@@ -89,51 +121,72 @@ Règles strictes :
 3. Numéro ne commence pas par 77 → suspect
 4. Montant < 50 DJF → invalide
 5. Soumission entre 00h et 05h → risque élevé`,
-    output: { schema: FraudeSchema },
-  });
-  return output || { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
-}
+        output: { schema: FraudeSchema },
+      });
+      return output || { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
+    }
+  );
 
-async function flowAnalyseAdmin(ai, stats, derniersTx) {
-  const { output } = await ai.generate({
-    model: gemini20Flash,
-    prompt: `Tu es l'assistant IA de Kaffi Pay (Djibouti, plateforme d'échange 1xBet↔Waafi).
+  // ── Flow 2 : Analyse Admin ─────────────────────────────────────
+  const analyseAdmin = _ai.defineFlow(
+    {
+      name:         "analyseAdmin",
+      inputSchema:  InputAdminSchema,
+      outputSchema: AnalyseAdminSchema,
+    },
+    async (input) => {
+      const { output } = await _ai.generate({
+        model: gemini20Flash,
+        prompt: `Tu es l'assistant IA de Kaffi Pay (Djibouti, plateforme 1xBet↔Waafi).
 
 Données des 100 dernières transactions :
-- Confirmées: ${stats.confirmes} — Volume: ${stats.volume.toLocaleString()} DJF
-- En attente: ${stats.attente}
-- Rejetées: ${stats.rejetes}
-- Taux confirmation: ${stats.taux}%
-- Montant moyen: ${stats.moyennne} DJF
+- Confirmées: ${input.confirmes} — Volume: ${input.volume.toLocaleString()} DJF
+- En attente: ${input.attente}
+- Rejetées: ${input.rejetes}
+- Taux confirmation: ${input.taux}%
+- Montant moyen: ${input.moyenne} DJF
 
 5 dernières transactions :
-${derniersTx.map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} — ${t.date}`).join("\n")}
+${input.derniersTx.map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} — ${t.date}`).join("\n")}
 
-Analyse la situation et donne des insights actionnables.`,
-    output: { schema: AnalyseAdminSchema },
-  });
-  return output;
-}
+Donne un résumé, une alerte si nécessaire, un conseil et des prédictions.`,
+        output: { schema: AnalyseAdminSchema },
+      });
+      return output;
+    }
+  );
 
-async function flowVerifPreuve(ai, imageBase64, mimeType, montantAttendu, transferIdAttendu) {
-  const { output } = await ai.generate({
-    model: gemini20Flash,
-    prompt: [
-      {
-        text: `Tu vérifies une capture d'écran de paiement Waafi pour Kaffi Pay (Djibouti).
+  // ── Flow 3 : Vérification Preuve (Vision) ─────────────────────
+  const verifPreuve = _ai.defineFlow(
+    {
+      name:         "verifPreuve",
+      inputSchema:  InputPreuveSchema,
+      outputSchema: PreuveSchema,
+    },
+    async (input) => {
+      const { output } = await _ai.generate({
+        model: gemini20Flash,
+        prompt: [
+          {
+            text: `Tu vérifies une capture d'écran de paiement Waafi pour Kaffi Pay (Djibouti).
 
-Montant attendu: ${montantAttendu} DJF
-Transfer ID attendu: ${transferIdAttendu}
+Montant attendu: ${input.montantAttendu} DJF
+Transfer ID attendu: ${input.transferIdAttendu}
 
-Analyse l'image et vérifie si le paiement correspond.`,
-      },
-      {
-        media: { url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}` },
-      },
-    ],
-    output: { schema: PreuveSchema },
-  });
-  return output;
+Analyse l'image et vérifie si le paiement correspond exactement.`,
+          },
+          {
+            media: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
+          },
+        ],
+        output: { schema: PreuveSchema },
+      });
+      return output;
+    }
+  );
+
+  _flows = { analyseFraude, analyseAdmin, verifPreuve };
+  return _flows;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -164,12 +217,18 @@ exports.onNouvelOrdre = onDocumentCreated(
     }
 
     // ── 1b. Flow Genkit — Analyse fraude ──────────────────────
-    const ai = getAI();
+    const { analyseFraude } = getFlows();
     let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
     try {
-      fraud = await flowAnalyseFraude(ai, tx, transferId);
+      fraud = await analyseFraude({
+        type:          tx.type || "?",
+        montant:       Number(tx.montant || 0),
+        transferId:    transferId,
+        numeroPayment: tx.numeroPayment || "",
+        heure:         new Date().getHours(),
+      });
     } catch (e) {
-      console.error("[Genkit] flowAnalyseFraude error:", e.message);
+      console.error("[Genkit] analyseFraude error:", e.message);
     }
 
     await db.collection("orders").doc(docId).update({
@@ -180,7 +239,6 @@ exports.onNouvelOrdre = onDocumentCreated(
       ia_analysedAt:   FieldValue.serverTimestamp(),
     });
 
-    // ── 1c. Rejet auto si fraude élevée ───────────────────────
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
       await db.collection("orders").doc(docId).update({
         status:     "Rejeté",
@@ -216,7 +274,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
     }
 
     if (!msg || !tel) return;
-    console.log(`[Notification] ${tel} → ${after.status}`);
+    console.log(`[Notification] ${tel} → ${after.status}: ${msg.substring(0, 60)}`);
   }
 );
 
@@ -235,22 +293,31 @@ exports.geminiAnalyseAdmin = onCall(
     const rejetes   = txs.filter((t) => t.status === "Rejeté");
     const volume    = confirmes.reduce((s, t) => s + Number(t.montant || 0), 0);
     const taux      = txs.length ? Math.round((confirmes.length / txs.length) * 100) : 0;
-    const moyennne  = confirmes.length ? Math.round(volume / confirmes.length) : 0;
+    const moyenne   = confirmes.length ? Math.round(volume / confirmes.length) : 0;
 
-    const ai = getAI();
+    const { analyseAdmin } = getFlows();
     try {
-      const data = await flowAnalyseAdmin(
-        ai,
-        { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume, taux, moyennne },
-        txs.slice(0, 5)
-      );
+      const data = await analyseAdmin({
+        confirmes: confirmes.length,
+        attente:   attente.length,
+        rejetes:   rejetes.length,
+        volume,
+        taux,
+        moyenne,
+        derniersTx: txs.slice(0, 5).map((t) => ({
+          type:    t.type || "?",
+          montant: Number(t.montant || 0),
+          status:  t.status || "?",
+          date:    t.date || "?",
+        })),
+      });
       return {
         success: true,
         data,
         stats: { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume },
       };
     } catch (e) {
-      console.error("[Genkit] flowAnalyseAdmin error:", e.message);
+      console.error("[Genkit] analyseAdmin error:", e.message);
       return { success: false, error: "Erreur analyse IA" };
     }
   }
@@ -265,9 +332,14 @@ exports.geminiVerifPreuve = onCall(
     const { imageBase64, mimeType, ordreRef, montantAttendu, transferIdAttendu } = request.data;
     if (!imageBase64) throw new Error("Image requise");
 
-    const ai = getAI();
+    const { verifPreuve } = getFlows();
     try {
-      const parsed = await flowVerifPreuve(ai, imageBase64, mimeType, montantAttendu, transferIdAttendu);
+      const parsed = await verifPreuve({
+        imageBase64,
+        mimeType:          mimeType || "image/jpeg",
+        montantAttendu:    Number(montantAttendu || 0),
+        transferIdAttendu: transferIdAttendu || "",
+      });
 
       if (ordreRef && parsed) {
         const snap = await db.collection("orders")
@@ -283,7 +355,7 @@ exports.geminiVerifPreuve = onCall(
       }
       return { success: true, data: parsed };
     } catch (e) {
-      console.error("[Genkit] flowVerifPreuve error:", e.message);
+      console.error("[Genkit] verifPreuve error:", e.message);
       return { success: false, error: "Impossible d'analyser l'image" };
     }
   }

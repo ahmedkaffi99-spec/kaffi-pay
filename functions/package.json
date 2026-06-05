@@ -1,6 +1,6 @@
 {
   "name": "kaffi-pay-functions",
-  "description": "Kaffi Pay Cloud Functions — Genkit 100% + Gemini AI",
+  "description": "Kaffi Pay Cloud Functions — Genkit 100% + Firebase Console",
   "scripts": {
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
@@ -16,6 +16,7 @@
     "firebase-functions": "^5.0.0",
     "genkit": "^1.0.0",
     "@genkit-ai/googleai": "^1.0.0",
+    "@genkit-ai/firebase": "^1.0.0",
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
