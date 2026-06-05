@@ -2566,11 +2566,9 @@ function extraireNumeroExp(texte){
 function startSmsListener(){
   if(!window.db || _smsListener) return;
   try{
-    var col = window.fsQuery(
-      window.fsCollection(window.db, 'waafi_notifications'),
-      window.fsOrderBy('createdAt', 'desc'),
-      window.fsLimit(50)
-    );
+    // Pas de orderBy ici — MacroDroid crée des docs sans createdAt,
+    // orderBy les exclurait et le listener ne les verrait jamais.
+    var col = window.fsCollection(window.db, 'waafi_notifications');
     _smsListener = window.fsOnSnapshot(col, function(snap){
       snap.docChanges().forEach(function(change){
         if(change.type === 'added'){

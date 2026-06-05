@@ -370,13 +370,14 @@ exports.autoConfirmation = onDocumentCreated(
     await db.collection("waafi_notifications").doc(docId).update({
       status:      "en_cours",
       processedAt: FieldValue.serverTimestamp(),
+      createdAt:   FieldValue.serverTimestamp(),
     });
 
     // ── Parser SMS Waafi ───────────────────────────────────────
     const texte = sms.notification || sms.notificationText || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
 
     if (!texte || texte === "{not_title}{notification}") {
-      await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_format" });
+      await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_format", createdAt: FieldValue.serverTimestamp() });
       return;
     }
 
@@ -385,7 +386,7 @@ exports.autoConfirmation = onDocumentCreated(
                  || texte.includes("Waafi")        || texte.includes("transferred")
                  || texte.includes("received")     || texte.includes("Evc-Plus");
     if (!isWaafi) {
-      await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_non_waafi" });
+      await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_non_waafi", createdAt: FieldValue.serverTimestamp() });
       return;
     }
 
