@@ -199,12 +199,20 @@ exports.onNouvelOrdre = onDocumentCreated(
 
       for (const smsDoc of smsSnap.docs) {
         const smsData   = smsDoc.data();
-        const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date(); // sans createdAt → traiter comme récent
-        if (createdAt < cutoff) continue; // SMS trop ancien (> 24h)
+        const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date();
+        if (createdAt < cutoff) continue;
 
-        const montantSMS = Number(smsData.montantSMS || 0);
+        const montantSMS   = Number(smsData.montantSMS || 0);
+        const montantOrdre = Number(tx.montant || 0);
+        const numSMS       = smsData.numSMS || "";
+        const numOrdre     = tx.numeroPayment || tx.waafiNumber || "";
 
-        // ✅ Match rétroactif trouvé
+        // Règle 3/3 : Transfer ID ✓ (déjà filtré) + Montant + Numéro
+        const matchMontant = montantSMS && Math.abs(montantOrdre - montantSMS) <= 5;
+        const matchNumero  = numSMS && numOrdre && numSMS === numOrdre;
+        if (!matchMontant || !matchNumero) continue; // 2/3 → bloqué
+
+        // ✅ Match rétroactif 3/3 trouvé
         const ordreRef = tx.orderId || tx.ref || docId;
         const id1xbet  = tx.userId1xBet || tx.id1x || tx.idUser || "";
 
@@ -391,11 +399,17 @@ exports.autoConfirmation = onDocumentCreated(
 
     console.log(`[AutoConfirm] TransferID: ${transferId}, Montant: ${montantSMS} DJF, N°: ${numClient}`);
 
-    // Transfer ID strict — sans Transfer ID, aucune confirmation automatique
-    if (!transferId) {
+    // Les 3 champs sont obligatoires dans le SMS
+    const champsManquants = [];
+    if (!transferId) champsManquants.push("Transfer ID");
+    if (!montantSMS) champsManquants.push("Montant");
+    if (!numClient)  champsManquants.push("Numéro expéditeur");
+
+    if (champsManquants.length > 0) {
       await db.collection("waafi_notifications").doc(docId).update({
-        status:    "ignoré_sans_transferId",
-        erreurMsg: "Transfer ID absent du SMS — confirmation automatique impossible",
+        status:    "ignoré_champs_manquants",
+        erreurMsg: `Champs absents du SMS : ${champsManquants.join(", ")}`,
+        transferIdSMS: transferId,
         montantSMS,
         numSMS:    numClient,
         createdAt: FieldValue.serverTimestamp(),
@@ -403,34 +417,57 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ── Chercher ordre par Transfer ID strict uniquement ──────────
+    // ── Chercher ordre par Transfer ID ───────────────────────────
     const snap = await db.collection("orders")
       .where("waafitranfertID", "==", transferId)
       .where("status", "==", "En attente")
       .limit(1).get();
 
-    let ordreDoc  = snap.empty ? null : snap.docs[0];
-    let matchType = "transferId";
-
-    if (!ordreDoc) {
-      // Transfer ID reçu mais aucun ordre correspondant — stocker pour rétro-match
+    if (snap.empty) {
       await db.collection("waafi_notifications").doc(docId).update({
         status:        "non_matché",
         erreurMsg:     `Aucun ordre En attente pour Transfer-Id ${transferId}`,
         transferIdSMS: transferId,
         numSMS:        numClient,
-        montantSMS:    montantSMS,
+        montantSMS,
         createdAt:     FieldValue.serverTimestamp(),
       });
       return;
     }
 
-    const ordre    = ordreDoc.data();
-    const ordreRef = ordre.orderId || ordre.ref || ordreDoc.id;
-    const id1xbet  = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
+    const ordreDoc     = snap.docs[0];
+    const ordre        = ordreDoc.data();
+    const ordreRef     = ordre.orderId || ordre.ref || ordreDoc.id;
+    const montantOrdre = Number(ordre.montant || 0);
+    const numOrdre     = ordre.numeroPayment || ordre.waafiNumber || "";
+    const id1xbet      = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
 
-    // ✅ Match confirmé — Transfer ID ✓ | Montant ✓ | (Expéditeur ✓)
-    console.log(`[AutoConfirm] ✅ Match [${matchType}] Ordre ${ordreRef} · ${montantSMS} DJF · ${numClient}`);
+    // ── Vérification 3/3 : Transfer ID ✓ + Montant + Numéro expéditeur ──
+    const matchTransferId = true; // déjà confirmé par la requête Firestore
+    const matchMontant    = Math.abs(montantOrdre - montantSMS) <= 5;
+    const matchNumero     = numOrdre && numClient === numOrdre;
+
+    const score = [matchTransferId, matchMontant, matchNumero].filter(Boolean).length;
+
+    if (score < 3) {
+      const raisons = [];
+      if (!matchMontant) raisons.push(`Montant SMS ${montantSMS} DJF ≠ Ordre ${montantOrdre} DJF`);
+      if (!matchNumero)  raisons.push(`Numéro SMS ${numClient} ≠ Ordre ${numOrdre || "absent"}`);
+      await db.collection("waafi_notifications").doc(docId).update({
+        status:    "bloqué_2sur3",
+        erreurMsg: `Match incomplet (${score}/3) : ${raisons.join(" | ")}`,
+        transferIdSMS: transferId,
+        montantSMS,
+        numSMS:    numClient,
+        ordreRef,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      console.warn(`[AutoConfirm] ⛔ Bloqué ${score}/3 — Ordre ${ordreRef} : ${raisons.join(" | ")}`);
+      return;
+    }
+
+    // ✅ 3/3 confirmé
+    console.log(`[AutoConfirm] ✅ 3/3 Match — Ordre ${ordreRef} · ${montantSMS} DJF · ${numClient}`);
 
     await Promise.all([
       ordreDoc.ref.update({
