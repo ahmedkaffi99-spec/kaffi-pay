@@ -621,6 +621,7 @@ input:-webkit-autofill:active {
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
     <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>🔔</span>Notifs<div class="notif-dot" id="notif-bell-dot"></div></button>
+    <button class="nav-tab" onclick="showPage('sms')" id="ntab-sms"><span>📡</span>SMS</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -740,6 +741,17 @@ input:-webkit-autofill:active {
         <div class="mini-field"><label>Confirmer</label><input type="password" id="admin-new-pass2" placeholder="••••••••"></div>
       </div>
       <button class="add-agent-btn" onclick="changeAdminPass()">✅ Mettre à jour</button>
+    </div>
+  </div>
+
+  <!-- SMS WAAFI NOTIFICATIONS -->
+  <div class="page-section" id="page-sms">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div class="section-title">📡 Notifications SMS Waafi</div>
+      <button class="action-btn" onclick="loadWaafiNotifs()" style="font-size:.7rem;padding:6px 12px;">🔄 Actualiser</button>
+    </div>
+    <div id="sms-notifs-list" style="display:flex;flex-direction:column;gap:8px;">
+      <div style="text-align:center;padding:32px;color:var(--muted);font-size:0.78rem;">Chargement…</div>
     </div>
   </div>
 </div>
@@ -1007,7 +1019,7 @@ function loginSuccess(u){
     var h = window.location.hash;
     if(h && h.startsWith('#admin-')){
       var page = h.replace('#admin-','');
-      var validPages = ['dashboard','orders','reserves','agents'];
+      var validPages = ['dashboard','orders','reserves','agents','sms'];
       if(validPages.indexOf(page)>=0){ setTimeout(function(){ showPage(page); },300); }
     }
   }catch(e){}
@@ -1659,7 +1671,7 @@ window.addEventListener('popstate', function(){
   if(!currentUser) return;
   if(hash.startsWith('#admin-')){
     var page = hash.replace('#admin-','');
-    var valid = ['dashboard','orders','reserves','agents','notifs'];
+    var valid = ['dashboard','orders','reserves','agents','notifs','sms'];
     if(valid.indexOf(page) >= 0) showPage(page);
   }
 });
@@ -1676,7 +1688,8 @@ function showPage(p){
   if(p==='agents') renderAgents();
   if(p==='reserves') calcAndUpdateReserves();
   if(p==='dashboard'){ updateStats(); renderRecentTx(); }
-  if(p==='sms'||p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); renderNotifs(); }
+  if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); renderNotifs(); }
+  if(p==='sms') loadWaafiNotifs();
 }
 
 function initDashboard(){
@@ -2864,6 +2877,7 @@ try {
   if(typeof sendCorrection!=="undefined") window.sendCorrection=sendCorrection;
   if(typeof setAdminPage!=="undefined") window.setAdminPage=setAdminPage;
   if(typeof setCorr!=="undefined") window.setCorr=setCorr;
+  if(typeof loadWaafiNotifs!=="undefined") window.loadWaafiNotifs=loadWaafiNotifs;
   if(typeof showPage!=="undefined") window.showPage=showPage;
   if(typeof showScreen!=="undefined") window.showScreen=showScreen;
   if(typeof startFirebaseListeners!=="undefined") window.startFirebaseListeners=startFirebaseListeners;
@@ -2874,6 +2888,69 @@ try {
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
 } catch(e) {}
+
+// ── SMS Waafi Notifications — page admin ──────────────────────────
+function loadWaafiNotifs(){
+  var el = document.getElementById('sms-notifs-list');
+  if(!el || !window.db) return;
+  el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:0.78rem;">Chargement…</div>';
+
+  var STATUS_COLOR = {
+    'matché':               '#4caf50',
+    'non_matché':           '#e91e8c',
+    'bloqué_2sur3':         '#ff9800',
+    'en_cours':             '#5b9cff',
+    'ignoré_format':        'var(--muted)',
+    'ignoré_non_waafi':     'var(--muted)',
+    'ignoré_champs_manquants': '#ff9800',
+    'erreur_parsing':       '#f44336',
+    'nouveau':              '#5b9cff',
+  };
+
+  var q = window.fsQuery(
+    window.fsCollection(window.db, 'waafi_notifications'),
+    window.fsOrderBy('createdAt', 'desc'),
+    window.fsLimit(50)
+  );
+
+  window.fsGetDocs(q).then(function(snap){
+    if(snap.empty){
+      el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:0.78rem;">Aucune notification SMS</div>';
+      return;
+    }
+    el.innerHTML = snap.docs.map(function(d){
+      var s = d.data();
+      var status  = s.status || 'nouveau';
+      var color   = STATUS_COLOR[status] || 'var(--muted)';
+      var texte   = s.notification || s.notificationText || s.texte || s.message || '';
+      var preview = texte.length > 80 ? texte.substring(0,80)+'…' : texte;
+      var date    = s.createdAt && s.createdAt.seconds
+        ? new Date(s.createdAt.seconds*1000).toLocaleString('fr-FR')
+        : (s.createdAt || '—');
+      var transferId = s.transferIdSMS || '—';
+      var montant    = s.montantSMS != null ? Number(s.montantSMS).toLocaleString()+' DJF' : '—';
+      var numero     = s.numSMS || '—';
+      var ordreRef   = s.ordreRef ? '<span style="color:var(--gold);font-size:.65rem;"> → Ordre #'+s.ordreRef+'</span>' : '';
+      var erreur     = s.erreurMsg ? '<div style="font-size:.64rem;color:#f44336;margin-top:3px;">⚠️ '+s.erreurMsg+'</div>' : '';
+      return '<div style="border-radius:13px;padding:11px 14px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">'
+        +   '<span style="font-size:.67rem;font-weight:700;color:'+color+';text-transform:uppercase;letter-spacing:.5px;">'+status+'</span>'
+        +   '<span style="font-size:.58rem;color:var(--muted);">'+date+'</span>'
+        + '</div>'
+        + '<div style="font-size:.72rem;color:var(--text);line-height:1.5;word-break:break-all;margin-bottom:4px;">'+preview+'</div>'
+        + '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:.64rem;color:var(--muted);">'
+        +   '<span>Transfer ID: <b style="color:var(--text);">'+transferId+'</b></span>'
+        +   '<span>Montant: <b style="color:var(--text);">'+montant+'</b></span>'
+        +   '<span>N°: <b style="color:var(--text);">'+numero+'</b></span>'
+        +   ordreRef
+        + '</div>'
+        + erreur
+        + '</div>';
+    }).join('');
+  }).catch(function(e){
+    el.innerHTML = '<div style="text-align:center;padding:24px;color:#f44336;font-size:0.75rem;">Erreur : '+e.message+'</div>';
+  });
+}
 
 // ── PWA Install Prompt ──
 var _pwaPrompt = null;
