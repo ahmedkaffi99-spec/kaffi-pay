@@ -12,7 +12,11 @@ service cloud.firestore {
     match /orders/{doc} {
       allow create: if true;
       allow read: if true;
-      allow update, delete: if request.auth != null;
+      // Client peut annuler ou rejeter (timer) uniquement si l'ordre est encore "En attente"
+      allow update: if resource.data.status == 'En attente'
+                    && (request.resource.data.status == 'Annulé'
+                        || request.resource.data.status == 'Rejeté');
+      allow delete: if request.auth != null;
     }
 
     // Tout le reste nécessite une authentification admin
