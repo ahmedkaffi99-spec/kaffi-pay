@@ -1559,7 +1559,7 @@ function openOrderDetail(ref){
   // IA Analyse Gemini
   var iaDiv=document.getElementById('odm-ia');
   var iaHtml='';
-  var hasIa=tx.ia_score_fraude!=null||tx.ia_ecran_statut||tx.ia_preuve_valide!=null;
+  var hasIa=tx.ia_score_fraude!=null||tx.ia_ecran_statut!=null;
   if(hasIa){
     var risqueColor=tx.ia_risque==='élevé'?'var(--error)':tx.ia_risque==='moyen'?'var(--warning)':'var(--success)';
     var risqueIcon=tx.ia_risque==='élevé'?'🔴':tx.ia_risque==='moyen'?'🟡':'🟢';
@@ -1598,33 +1598,14 @@ function openOrderDetail(ref){
       if(tx.ia_ecran_raison) iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-top:3px;">'+tx.ia_ecran_raison+'</div>';
       iaHtml+='</div>';
     }
-    if(tx.ia_preuve_valide!=null){
-      var pColor=tx.ia_preuve_valide?'var(--success)':'var(--error)';
-      var pIcon=tx.ia_preuve_valide?'✅':'❌';
-      iaHtml+='<div style="padding-top:8px;border-top:1px solid rgba(255,255,255,0.05);margin-top:2px;">';
-      iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-bottom:4px;">Vérification preuve</div>';
-      iaHtml+='<div style="font-size:0.72rem;">'+pIcon+' Preuve : <strong style="color:'+pColor+';'+(tx.ia_preuve_valide?'':'')+'">'+( tx.ia_preuve_valide?'Valide':'Invalide')+'</strong>';
-      if(tx.ia_preuve_confiance!=null) iaHtml+=' &nbsp;·&nbsp; Confiance : <strong>'+Math.round(tx.ia_preuve_confiance*100)+'%</strong>';
-      iaHtml+='</div>';
-      if(tx.ia_preuve_raison) iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-top:3px;">'+tx.ia_preuve_raison+'</div>';
-      iaHtml+='</div>';
-    }
     iaHtml+='</div>';
     iaDiv.innerHTML=iaHtml; iaDiv.style.display='block';
   } else { iaDiv.style.display='none'; iaDiv.innerHTML=''; }
 
-  // Actions
+  // Statut seul — pas d'actions manuelles
   var actDiv=document.getElementById('odm-actions');
   currentOdmRef=tx.ref;
-  if(tx.status==='En attente'||tx.status==='Correction'||tx.status==='Argent Reçu'){
-    var ref=tx.ref.replace(/'/g,"\\'");
-    actDiv.innerHTML=
-      +'<button onclick="updateStatus(\''+ref+'\',\'Confirmé\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(0,212,160,0.12);color:var(--success);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(0,212,160,0.25);">✅ Confirmer</button>'
-      +'<button onclick="openCorrection(\''+ref+'\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(255,170,0,0.08);color:var(--warning);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(255,170,0,0.2);">✏️ Correction</button>'
-      +'<button onclick="updateStatus(\''+ref+'\',\'Rejeté\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(255,64,96,0.08);color:var(--error);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(255,64,96,0.15);">❌ Rejeter</button>';
-  } else {
-    actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
-  }
+  actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
 
   modal.classList.add('show');
 }

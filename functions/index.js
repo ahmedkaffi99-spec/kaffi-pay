@@ -52,17 +52,6 @@ function getFlows() {
     score_sante:       z.number(),
   });
 
-  const PreuveSchema = z.object({
-    est_valide:                 z.boolean(),
-    transfer_id_detecte:        z.string().nullable(),
-    montant_detecte:            z.number().nullable(),
-    expediteur_detecte:         z.string().nullable(),
-    correspondance_montant:     z.boolean(),
-    correspondance_transfer_id: z.boolean(),
-    confiance:                  z.number(),
-    raison:                     z.string(),
-  });
-
   const InputFraudeSchema = z.object({
     type:          z.string(),
     montant:       z.number(),
@@ -86,12 +75,6 @@ function getFlows() {
     })),
   });
 
-  const InputPreuveSchema = z.object({
-    imageBase64:         z.string(),
-    mimeType:            z.string(),
-    montantAttendu:      z.number(),
-    transferIdAttendu:   z.string(),
-  });
 
   // ── Flow 1 : Analyse Fraude ────────────────────────────────────
   const analyseFraude = _ai.defineFlow(
@@ -153,36 +136,7 @@ Donne un résumé, une alerte si nécessaire, un conseil et des prédictions.`,
     }
   );
 
-  // ── Flow 3 : Vérification Preuve (Vision) ─────────────────────
-  const verifPreuve = _ai.defineFlow(
-    {
-      name:         "verifPreuve",
-      inputSchema:  InputPreuveSchema,
-      outputSchema: PreuveSchema,
-    },
-    async (input) => {
-      const { output } = await _ai.generate({
-        model: gemini20Flash,
-        prompt: [
-          {
-            text: `Tu vérifies une capture d'écran de paiement Waafi pour Kaffi Pay (Djibouti).
-
-Montant attendu: ${input.montantAttendu} DJF
-Transfer ID attendu: ${input.transferIdAttendu}
-
-Analyse l'image et vérifie si le paiement correspond exactement.`,
-          },
-          {
-            media: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
-          },
-        ],
-        output: { schema: PreuveSchema },
-      });
-      return output;
-    }
-  );
-
-  _flows = { analyseFraude, analyseAdmin, verifPreuve };
+  _flows = { analyseFraude, analyseAdmin };
   return _flows;
 }
 
@@ -383,43 +337,6 @@ exports.geminiAnalyseAdmin = onCall(
   }
 );
 
-// ══════════════════════════════════════════════════════════════
-// 4. GENKIT VISION — Vérification preuve paiement (image)
-// ══════════════════════════════════════════════════════════════
-exports.geminiVerifPreuve = onCall(
-  { secrets: [GEMINI_KEY] },
-  async (request) => {
-    const { imageBase64, mimeType, ordreRef, montantAttendu, transferIdAttendu } = request.data;
-    if (!imageBase64) throw new Error("Image requise");
-
-    const { verifPreuve } = getFlows();
-    try {
-      const parsed = await verifPreuve({
-        imageBase64,
-        mimeType:          mimeType || "image/jpeg",
-        montantAttendu:    Number(montantAttendu || 0),
-        transferIdAttendu: transferIdAttendu || "",
-      });
-
-      if (ordreRef && parsed) {
-        const snap = await db.collection("orders")
-          .where("orderId", "==", ordreRef).limit(1).get();
-        if (!snap.empty) {
-          await snap.docs[0].ref.update({
-            ia_preuve_valide:    parsed.est_valide,
-            ia_preuve_confiance: parsed.confiance,
-            ia_preuve_raison:    parsed.raison,
-            ia_preuve_checkedAt: FieldValue.serverTimestamp(),
-          });
-        }
-      }
-      return { success: true, data: parsed };
-    } catch (e) {
-      console.error("[Genkit] verifPreuve error:", e.message);
-      return { success: false, error: "Impossible d'analyser l'image" };
-    }
-  }
-);
 
 // ══════════════════════════════════════════════════════════════
 // 5. AUTO-CONFIRMATION — SMS Waafi → Ordre confirmé → 1xBet
