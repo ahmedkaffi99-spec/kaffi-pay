@@ -374,9 +374,10 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .corr-preset{width:100%;background:rgba(255,64,96,.05);border:1px solid rgba(255,64,96,.15);border-radius:10px;padding:9px 12px;font-family:'DM Sans',sans-serif;font-size:.78rem;color:var(--text);cursor:pointer;text-align:left;transition:background .2s;}
 .corr-preset:hover{background:rgba(255,64,96,.1);}
 
-/* ── PWA INSTALL BUTTON ── */
-#pwa-install-btn{display:none;align-items:center;gap:5px;background:rgba(255,215,0,.1);border:1px solid rgba(255,215,0,.28);color:var(--gold);border-radius:999px;padding:5px 12px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;}
+/* ── PWA INSTALL BUTTON (fixe, visible sur tous les écrans) ── */
+#pwa-install-btn{display:none;position:fixed;bottom:22px;right:16px;z-index:9999;align-items:center;gap:6px;background:linear-gradient(135deg,rgba(255,215,0,.18),rgba(255,215,0,.08));border:1px solid rgba(255,215,0,.4);color:var(--gold);border-radius:999px;padding:10px 18px;font-size:.78rem;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;box-shadow:0 4px 20px rgba(0,0,0,.4);backdrop-filter:blur(8px);}
 #pwa-install-btn.show{display:flex;}
+#pwa-install-btn:active{transform:scale(.96);}
 
 /* ── AUTOFILL OVERRIDE (Android Chrome / paste history) ── */
 input:-webkit-autofill,
@@ -392,6 +393,9 @@ input:-webkit-autofill:active {
 </style>
 </head>
 <body>
+
+<!-- ══ BOUTON PWA INSTALL (fixe, tous écrans) ══ -->
+<button id="pwa-install-btn" onclick="doPWAInstall()">⬇ Installer l'app</button>
 
 <!-- ══ ÉCRAN LOGIN ══ -->
 <div class="screen" id="screen-login" style="opacity:1;transition:opacity 0.2s;">
@@ -426,7 +430,6 @@ input:-webkit-autofill:active {
       </div>
     </div>
     <div class="secure-badge">🔒 Sécurisé</div>
-    <button id="pwa-install-btn" onclick="doPWAInstall()">⬇ Installer</button>
   </div>
 
   <section class="hero">
