@@ -399,8 +399,8 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ── Chercher l'ordre correspondant — Transfer ID UNIQUEMENT ──
-    // Pas de fallback numéro de téléphone : trop risqué (faux match)
+    // ── Chercher l'ordre par Transfer ID (clé principale) ────────
+    // L'ordre doit avoir été soumis avec ce Transfer ID exact
     let ordreSnap = await db.collection("orders")
       .where("waafitranfertID", "==", transferId)
       .where("status", "==", "En attente")
@@ -409,27 +409,43 @@ exports.autoConfirmation = onDocumentCreated(
     if (ordreSnap.empty) {
       await db.collection("waafi_notifications").doc(docId).update({
         status:    "non_matché",
-        erreurMsg: `Aucun ordre en attente pour Transfer ID ${transferId}`,
+        erreurMsg: `Aucun ordre soumis avec Transfer ID ${transferId}`,
+        transferIdSMS: transferId,
+        numSMS: numClient,
       });
       return;
     }
 
-    // ── Vérifier montant (±5 DJF tolérance) ──────────────────
     const ordreDoc     = ordreSnap.docs[0];
     const ordre        = ordreDoc.data();
     const ordreRef     = ordre.orderId || ordre.ref || ordreDoc.id;
     const montantOrdre = Number(ordre.montant || 0);
 
-    if (Math.abs(montantOrdre - montantSMS) > 5) {
+    // ── Vérifier numéro expéditeur correspond à l'ordre ──────────
+    // Si le client a fourni son numéro et que le SMS contient l'expéditeur,
+    // ils doivent correspondre — sinon Transfer ID usurpé
+    const numeroOrdre = ordre.numeroPayment || ordre.waafiNumber || "";
+    if (numClient && numeroOrdre && numClient !== numeroOrdre) {
       await db.collection("waafi_notifications").doc(docId).update({
-        status:    "montant_incorrect",
-        erreurMsg: `Montant SMS (${montantSMS}) ≠ Montant ordre (${montantOrdre})`,
+        status:    "expediteur_mismatch",
+        erreurMsg: `N° expéditeur SMS (${numClient}) ≠ N° ordre (${numeroOrdre}) — Transfer ID ${transferId}`,
         ordreRef,
       });
       return;
     }
 
-    // ✅ Confirmer automatiquement ─────────────────────────────
+    // ── Vérifier montant (±5 DJF tolérance) ──────────────────────
+    if (Math.abs(montantOrdre - montantSMS) > 5) {
+      await db.collection("waafi_notifications").doc(docId).update({
+        status:    "montant_incorrect",
+        erreurMsg: `Montant SMS (${montantSMS} DJF) ≠ Montant ordre (${montantOrdre} DJF)`,
+        ordreRef,
+      });
+      return;
+    }
+
+    // ✅ Toutes les vérifications passées — Confirmer automatiquement
+    // Transfer ID ✓ | Expéditeur ✓ | Montant ✓
     await ordreDoc.ref.update({
       status:          "Confirmé",
       confirmedAt:     FieldValue.serverTimestamp(),
