@@ -1976,15 +1976,19 @@ function renderSuivi(){
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   }
 
-  // ── WhatsApp : visible uniquement si anomalie inconnue ─
+  // ── WhatsApp : toujours visible, prominent si anomalie inconnue ─
+  if(waBtn) waBtn.href='https://wa.me/25377275572?text='+encodeURIComponent(waMsg);
   if(waCard){
+    waCard.style.display='flex';
+    var waNote=document.getElementById('suivi-wa-note');
     if(anomalie){
-      if(waBtn) waBtn.href='https://wa.me/25377275572?text='+encodeURIComponent(waMsg);
-      waCard.style.display='flex';
-      var waNote=document.getElementById('suivi-wa-note');
+      waCard.style.borderColor='rgba(37,211,102,0.5)';
+      waCard.style.background='rgba(37,211,102,0.08)';
       if(waNote){ waNote.textContent='Une anomalie a été détectée sur votre ordre. Notre équipe vous aide immédiatement.'; waNote.style.display='block'; }
     } else {
-      waCard.style.display='none';
+      waCard.style.borderColor='rgba(37,211,102,0.15)';
+      waCard.style.background='rgba(37,211,102,0.03)';
+      if(waNote) waNote.style.display='none';
     }
   }
 
