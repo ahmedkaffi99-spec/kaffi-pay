@@ -374,6 +374,17 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .corr-preset{width:100%;background:rgba(255,64,96,.05);border:1px solid rgba(255,64,96,.15);border-radius:10px;padding:9px 12px;font-family:'DM Sans',sans-serif;font-size:.78rem;color:var(--text);cursor:pointer;text-align:left;transition:background .2s;}
 .corr-preset:hover{background:rgba(255,64,96,.1);}
 
+/* ── AUTOFILL OVERRIDE (Android Chrome / paste history) ── */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0px 1000px #0d1f35 inset !important;
+  -webkit-text-fill-color: #eef2ff !important;
+  caret-color: #eef2ff !important;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 </style>
 </head>
 <body>
