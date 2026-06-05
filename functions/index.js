@@ -553,21 +553,77 @@ exports.rechargeCallback = onRequest(
       return;
     }
 
-    const ordreDoc = snap.docs[0];
+    const ordreDoc  = snap.docs[0];
+    const ordre     = ordreDoc.data();
     const estSucces = statut === "succes" || statut === "success" || statut === "ok";
+    const retries   = Number(ordre.rechargeRetries || 0);
 
-    // Mise à jour Firestore selon résultat
+    // ── CAS 1 : Recharge réussie ───────────────────────────────
+    if (estSucces) {
+      await ordreDoc.ref.update({
+        status:          "Rechargé ✅",
+        rechargeStatus:  "rechargé",
+        rechargeAt:      FieldValue.serverTimestamp(),
+        rechargeMessage: message || "Recharge effectuée",
+        rechargeId1xbet: id1xbet || ordre.userId1xBet || "",
+        rechargeMontant: Number(montant || ordre.montant || 0),
+        rechargeRetries: retries,
+      });
+      console.log(`[rechargeCallback] ✅ Ordre ${ref} → RECHARGÉ (tentative ${retries + 1})`);
+      res.json({ success: true, ref, recharge: "ok", tentative: retries + 1 });
+      return;
+    }
+
+    // ── CAS 2 : Échec — on regarde le nombre de tentatives ─────
+    const nouvelleTentative = retries + 1;
+
+    if (nouvelleTentative < 3) {
+      // Encore des tentatives disponibles → relancer MacroDroid
+      await ordreDoc.ref.update({
+        status:          `Recharge Retry ${nouvelleTentative}/3 ⏳`,
+        rechargeStatus:  "retry",
+        rechargeRetries: nouvelleTentative,
+        rechargeMessage: message || "Échec recharge",
+        lastRetryAt:     FieldValue.serverTimestamp(),
+      });
+
+      // Rappeler MacroDroid pour retry
+      const id1xbetOrdre = id1xbet || ordre.userId1xBet || ordre.id1x || "";
+      const montantOrdre = montant || ordre.montant || "";
+      try {
+        const retryUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${id1xbetOrdre}&montant=${montantOrdre}&ref=${ref}&retry=${nouvelleTentative}`;
+        await fetch(retryUrl, { signal: AbortSignal.timeout(8000) });
+      } catch (e) {
+        console.error(`[rechargeCallback] Retry webhook erreur:`, e.message);
+      }
+
+      console.log(`[rechargeCallback] ⏳ Ordre ${ref} → RETRY ${nouvelleTentative}/3`);
+      res.json({ success: true, ref, recharge: "retry", tentative: nouvelleTentative });
+      return;
+    }
+
+    // ── CAS 3 : 3 échecs → Intervention manuelle ──────────────
     await ordreDoc.ref.update({
-      rechargeStatus:  estSucces ? "rechargé" : "erreur_recharge",
-      rechargeAt:      FieldValue.serverTimestamp(),
-      rechargeMessage: message || "",
-      rechargeId1xbet: id1xbet || "",
-      rechargeMontant: Number(montant || 0),
-      // Statut final visible sur le site
-      status: estSucces ? "Rechargé ✅" : "Erreur Recharge ❌",
+      status:           "Intervention Manuelle 🚨",
+      rechargeStatus:   "manuel_requis",
+      rechargeRetries:  nouvelleTentative,
+      rechargeMessage:  message || "3 tentatives échouées",
+      manuelRequis:     true,
+      manuelRequsAt:    FieldValue.serverTimestamp(),
     });
 
-    console.log(`[rechargeCallback] Ordre ${ref} → ${estSucces ? "SUCCÈS" : "ÉCHEC"}: ${message}`);
-    res.json({ success: true, ref, recharge: estSucces ? "ok" : "erreur" });
+    // Log admin visible dans Firebase Console
+    await db.collection("alertes_admin").add({
+      type:      "recharge_echec_3x",
+      ordreRef:  ref,
+      id1xbet:   id1xbet || ordre.userId1xBet || "",
+      montant:   montant || ordre.montant || "",
+      message:   message || "3 tentatives échouées",
+      createdAt: FieldValue.serverTimestamp(),
+      traité:    false,
+    });
+
+    console.error(`[rechargeCallback] 🚨 Ordre ${ref} → 3 ÉCHECS → INTERVENTION MANUELLE`);
+    res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
   }
 );
