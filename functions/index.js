@@ -550,16 +550,27 @@ exports.rechargeCallback = onRequest(
         const ai = _ai;
         const { output } = await ai.generate({
           model: gemini20Flash,
-          prompt: `Tu analyses le résultat d'une recharge 1xBet via l'application MobCash.
+          prompt: `Tu analyses le résultat d'une recharge 1xBet via l'application MobCash (Djibouti).
 
-Texte lu sur l'écran après la recharge :
+Texte lu sur l'écran MobCash après la recharge :
 """
 ${texteEcran}
 """
 
-Détermine si la recharge a réussi ou échoué.
-Mots qui indiquent succès : successful, success, credited, effectué, réussi, completed, deposited, added, confirmed.
-Mots qui indiquent échec : failed, error, erreur, échec, insufficient, invalid, rejected, unsuccessful, not found.`,
+Mots/phrases qui indiquent SUCCÈS (retourne "succes") :
+- "avec succès"
+- "déposé avec succès"
+- "Vous avez déposé"
+- "Dépôt"
+- successful, success, credited, completed, deposited, confirmed
+
+Mots/phrases qui indiquent ÉCHEC (retourne "echec") :
+- "Fonds insuffisants"
+- "Rechargez votre compte"
+- "actualisez la page"
+- failed, error, erreur, insufficient, invalid, rejected, unsuccessful
+
+Si le texte est vide ou incompréhensible, retourne "inconnu".`,
           output: { schema: AnalyseRechargeSchema },
         });
         if (output) {
@@ -570,8 +581,8 @@ Mots qui indiquent échec : failed, error, erreur, échec, insufficient, invalid
         console.error("[rechargeCallback] Gemini analyse error:", e.message);
         // Fallback — détection simple par mots-clés
         const txt = texteEcran.toLowerCase();
-        estSucces = /success|successful|credited|effectu|réussi|completed|deposited/.test(txt);
-        analyseIA = { statut: estSucces ? "succes" : "echec", raison: "Détection par mots-clés", confiance: 60 };
+        estSucces = /avec succ|déposé avec|vous avez déposé|dépôt|success|credited|completed|deposited/.test(txt);
+        analyseIA = { statut: estSucces ? "succes" : "echec", raison: "Détection par mots-clés MobCash", confiance: 70 };
       }
     }
 
