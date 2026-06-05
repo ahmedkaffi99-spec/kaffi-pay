@@ -536,42 +536,51 @@ exports.rechargeCallback = onRequest(
     }
 
     // ── Déterminer succès/échec ───────────────────────────────
-    // MacroDroid détecte localement "avec succès" ou "Fonds insuffisants"
-    // et envoie directement resultat="succes" | "echec" | "inconnu"
+    // Priorité 1 : ecran (texte écran MobCash) → Gemini analyse
+    // Priorité 2 : resultat ("succes"|"echec") → utilisation directe
+    // MacroDroid peut envoyer l'un ou l'autre ou les deux
+    const texteEcran = req.body.ecran || "";
     let estSucces = false;
     let analyseIA = { statut: "inconnu", raison: "Non déterminé", confiance: 0 };
 
-    if (resultat === "succes") {
+    if (texteEcran) {
+      // ── Gemini analyse le texte écran MobCash (méthode principale) ──
+      try {
+        getFlows();
+        const { output } = await _ai.generate({
+          model: gemini20Flash,
+          prompt: `Tu analyses le résultat d'une recharge 1xBet via MobCash (Djibouti).
+
+Texte lu sur l'écran après la recharge :
+"""
+${texteEcran}
+"""
+
+Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépôt", success, credited, completed
+Échec : "Fonds insuffisants", "Rechargez votre compte", "actualisez la page", failed, error, insufficient`,
+          output: {
+            schema: z.object({
+              statut:    z.enum(["succes", "echec", "inconnu"]),
+              raison:    z.string(),
+              confiance: z.number().describe("0-100"),
+            }),
+          },
+        });
+        if (output) { analyseIA = output; estSucces = output.statut === "succes"; }
+      } catch (e) {
+        console.error("[rechargeCallback] Gemini error:", e.message);
+        // Fallback mots-clés si Gemini indisponible
+        const txt = texteEcran.toLowerCase();
+        estSucces = /avec succ|déposé avec|vous avez déposé|dépôt|success|credited|completed|deposited/.test(txt);
+        analyseIA = { statut: estSucces ? "succes" : "echec", raison: "Mots-clés MobCash (Gemini indisponible)", confiance: 70 };
+      }
+    } else if (resultat === "succes") {
+      // Pas de texte écran — MacroDroid a détecté localement
       estSucces = true;
-      analyseIA = { statut: "succes", raison: "Détecté par MacroDroid", confiance: 95 };
+      analyseIA = { statut: "succes", raison: "Détecté par MacroDroid", confiance: 90 };
     } else if (resultat === "echec") {
       estSucces = false;
-      analyseIA = { statut: "echec", raison: "Détecté par MacroDroid — Fonds insuffisants", confiance: 95 };
-    } else {
-      // Fallback Gemini si resultat = "inconnu" ou champ absent
-      const texteEcran = req.body.ecran || "";
-      if (texteEcran) {
-        try {
-          getFlows();
-          const { output } = await _ai.generate({
-            model: gemini20Flash,
-            prompt: `Texte MobCash:\n"""\n${texteEcran}\n"""\nSuccès:"avec succès","déposé","Vous avez déposé". Échec:"Fonds insuffisants","Rechargez".`,
-            output: {
-              schema: z.object({
-                statut:    z.enum(["succes", "echec", "inconnu"]),
-                raison:    z.string(),
-                confiance: z.number(),
-              }),
-            },
-          });
-          if (output) { analyseIA = output; estSucces = output.statut === "succes"; }
-        } catch (e) {
-          console.error("[rechargeCallback] Gemini error:", e.message);
-          const txt = texteEcran.toLowerCase();
-          estSucces = /avec succ|déposé avec|vous avez déposé|success|credited/.test(txt);
-          analyseIA = { statut: estSucces ? "succes" : "echec", raison: "Mots-clés MobCash", confiance: 70 };
-        }
-      }
+      analyseIA = { statut: "echec", raison: "Détecté par MacroDroid — Fonds insuffisants", confiance: 90 };
     }
 
     // ── Chercher l'ordre par ref ──────────────────────────────
