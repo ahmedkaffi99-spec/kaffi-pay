@@ -518,7 +518,8 @@ exports.smsWebhook = onRequest(
 // MacroDroid lit l'écran MobCash et envoie le texte brut ici.
 // Gemini analyse le texte et décide succes ou echec.
 // POST https://europe-west1-kaffi-pay.cloudfunctions.net/rechargeCallback
-// Body : { secret, ref, ecran, id1xbet, montant }
+// Body : { ref, resultat, id1xbet, montant }
+// resultat = "succes" | "echec" | "inconnu"  (détecté par MacroDroid localement)
 exports.rechargeCallback = onRequest(
   { region: "europe-west1", cors: true, secrets: [GEMINI_KEY] },
   async (req, res) => {
@@ -527,66 +528,53 @@ exports.rechargeCallback = onRequest(
       return;
     }
 
-    const { ref, ecran, id1xbet, montant } = req.body;
-    const texteEcran = ecran || req.body.message || "";
+    const { ref, resultat, id1xbet, montant } = req.body;
 
     if (!ref) {
       res.status(400).json({ error: "Champ 'ref' requis" });
       return;
     }
 
-    // ── Analyse Gemini du texte d'écran ──────────────────────
+    // ── Déterminer succès/échec ───────────────────────────────
+    // MacroDroid détecte localement "avec succès" ou "Fonds insuffisants"
+    // et envoie directement resultat="succes" | "echec" | "inconnu"
     let estSucces = false;
-    let analyseIA = { statut: "inconnu", raison: "Pas de texte écran", confiance: 0 };
+    let analyseIA = { statut: "inconnu", raison: "Non déterminé", confiance: 0 };
 
-    if (texteEcran) {
-      try {
-        const AnalyseRechargeSchema = z.object({
-          statut:    z.enum(["succes", "echec", "inconnu"]),
-          raison:    z.string(),
-          confiance: z.number().describe("0-100"),
-        });
-        getFlows();
-        const ai = _ai;
-        const { output } = await ai.generate({
-          model: gemini20Flash,
-          prompt: `Tu analyses le résultat d'une recharge 1xBet via l'application MobCash (Djibouti).
-
-Texte lu sur l'écran MobCash après la recharge :
-"""
-${texteEcran}
-"""
-
-Mots/phrases qui indiquent SUCCÈS (retourne "succes") :
-- "avec succès"
-- "déposé avec succès"
-- "Vous avez déposé"
-- "Dépôt"
-- successful, success, credited, completed, deposited, confirmed
-
-Mots/phrases qui indiquent ÉCHEC (retourne "echec") :
-- "Fonds insuffisants"
-- "Rechargez votre compte"
-- "actualisez la page"
-- failed, error, erreur, insufficient, invalid, rejected, unsuccessful
-
-Si le texte est vide ou incompréhensible, retourne "inconnu".`,
-          output: { schema: AnalyseRechargeSchema },
-        });
-        if (output) {
-          analyseIA = output;
-          estSucces = output.statut === "succes";
+    if (resultat === "succes") {
+      estSucces = true;
+      analyseIA = { statut: "succes", raison: "Détecté par MacroDroid", confiance: 95 };
+    } else if (resultat === "echec") {
+      estSucces = false;
+      analyseIA = { statut: "echec", raison: "Détecté par MacroDroid — Fonds insuffisants", confiance: 95 };
+    } else {
+      // Fallback Gemini si resultat = "inconnu" ou champ absent
+      const texteEcran = req.body.ecran || "";
+      if (texteEcran) {
+        try {
+          getFlows();
+          const { output } = await _ai.generate({
+            model: gemini20Flash,
+            prompt: `Texte MobCash:\n"""\n${texteEcran}\n"""\nSuccès:"avec succès","déposé","Vous avez déposé". Échec:"Fonds insuffisants","Rechargez".`,
+            output: {
+              schema: z.object({
+                statut:    z.enum(["succes", "echec", "inconnu"]),
+                raison:    z.string(),
+                confiance: z.number(),
+              }),
+            },
+          });
+          if (output) { analyseIA = output; estSucces = output.statut === "succes"; }
+        } catch (e) {
+          console.error("[rechargeCallback] Gemini error:", e.message);
+          const txt = texteEcran.toLowerCase();
+          estSucces = /avec succ|déposé avec|vous avez déposé|success|credited/.test(txt);
+          analyseIA = { statut: estSucces ? "succes" : "echec", raison: "Mots-clés MobCash", confiance: 70 };
         }
-      } catch (e) {
-        console.error("[rechargeCallback] Gemini analyse error:", e.message);
-        // Fallback — détection simple par mots-clés
-        const txt = texteEcran.toLowerCase();
-        estSucces = /avec succ|déposé avec|vous avez déposé|dépôt|success|credited|completed|deposited/.test(txt);
-        analyseIA = { statut: estSucces ? "succes" : "echec", raison: "Détection par mots-clés MobCash", confiance: 70 };
       }
     }
 
-    // Chercher l'ordre par ref
+    // ── Chercher l'ordre par ref ──────────────────────────────
     const snap = await db.collection("orders")
       .where("orderId", "==", ref)
       .limit(1).get();
@@ -598,20 +586,20 @@ Si le texte est vide ou incompréhensible, retourne "inconnu".`,
 
     const ordreDoc = snap.docs[0];
     const ordre    = ordreDoc.data();
-    const retries   = Number(ordre.rechargeRetries || 0);
+    const retries  = Number(ordre.rechargeRetries || 0);
 
-    // ── CAS 1 : Recharge réussie ───────────────────────────────
+    // ── CAS 1 : Succès ────────────────────────────────────────
     if (estSucces) {
       await ordreDoc.ref.update({
-        status:           "Rechargé ✅",
-        rechargeStatus:   "rechargé",
-        rechargeAt:       FieldValue.serverTimestamp(),
-        rechargeMessage:  texteEcran || "Recharge effectuée",
-        rechargeId1xbet:  id1xbet || ordre.userId1xBet || "",
-        rechargeMontant:  Number(montant || ordre.montant || 0),
-        rechargeRetries:  retries,
-        ia_ecran_statut:  analyseIA.statut,
-        ia_ecran_raison:  analyseIA.raison,
+        status:             "Rechargé ✅",
+        rechargeStatus:     "rechargé",
+        rechargeAt:         FieldValue.serverTimestamp(),
+        rechargeMessage:    resultat === "succes" ? "Recharge confirmée par MacroDroid" : (req.body.ecran || "Recharge effectuée"),
+        rechargeId1xbet:    id1xbet || ordre.userId1xBet || "",
+        rechargeMontant:    Number(montant || ordre.montant || 0),
+        rechargeRetries:    retries,
+        ia_ecran_statut:    analyseIA.statut,
+        ia_ecran_raison:    analyseIA.raison,
         ia_ecran_confiance: analyseIA.confiance,
       });
       console.log(`[rechargeCallback] ✅ Ordre ${ref} → RECHARGÉ (tentative ${retries + 1})`);
@@ -619,58 +607,50 @@ Si le texte est vide ou incompréhensible, retourne "inconnu".`,
       return;
     }
 
-    // ── CAS 2 : Échec — on regarde le nombre de tentatives ─────
+    // ── CAS 2 : Échec < 3 tentatives → Retry MacroDroid ──────
     const nouvelleTentative = retries + 1;
 
     if (nouvelleTentative < 3) {
-      // Encore des tentatives disponibles → relancer MacroDroid
       await ordreDoc.ref.update({
-        status:           `Recharge Retry ${nouvelleTentative}/3 ⏳`,
-        rechargeStatus:   "retry",
-        rechargeRetries:  nouvelleTentative,
-        rechargeMessage:  texteEcran || "Échec recharge",
-        ia_ecran_statut:  analyseIA.statut,
-        ia_ecran_raison:  analyseIA.raison,
-        lastRetryAt:      FieldValue.serverTimestamp(),
+        status:          `Recharge Retry ${nouvelleTentative}/3 ⏳`,
+        rechargeStatus:  "retry",
+        rechargeRetries: nouvelleTentative,
+        rechargeMessage: "Échec recharge — retry automatique",
+        ia_ecran_statut: analyseIA.statut,
+        ia_ecran_raison: analyseIA.raison,
+        lastRetryAt:     FieldValue.serverTimestamp(),
       });
-
-      // Rappeler MacroDroid pour retry
-      const id1xbetOrdre = id1xbet || ordre.userId1xBet || ordre.id1x || "";
-      const montantOrdre = montant || ordre.montant || "";
       try {
-        const retryUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${id1xbetOrdre}&montant=${montantOrdre}&ref=${ref}&retry=${nouvelleTentative}`;
+        const id1xbetOrdre = id1xbet || ordre.userId1xBet || ordre.id1x || "";
+        const retryUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${id1xbetOrdre}&montant=${montant || ordre.montant}&ref=${ref}&retry=${nouvelleTentative}`;
         await fetch(retryUrl, { signal: AbortSignal.timeout(8000) });
       } catch (e) {
-        console.error(`[rechargeCallback] Retry webhook erreur:`, e.message);
+        console.error("[rechargeCallback] Retry webhook erreur:", e.message);
       }
-
       console.log(`[rechargeCallback] ⏳ Ordre ${ref} → RETRY ${nouvelleTentative}/3`);
       res.json({ success: true, ref, recharge: "retry", tentative: nouvelleTentative });
       return;
     }
 
-    // ── CAS 3 : 3 échecs → Intervention manuelle ──────────────
+    // ── CAS 3 : 3 échecs → Intervention manuelle 🚨 ──────────
     await ordreDoc.ref.update({
-      status:           "Intervention Manuelle 🚨",
-      rechargeStatus:   "manuel_requis",
-      rechargeRetries:  nouvelleTentative,
-      rechargeMessage:  texteEcran || "3 tentatives échouées",
-      manuelRequis:     true,
-      manuelRequsAt:    FieldValue.serverTimestamp(),
+      status:          "Intervention Manuelle 🚨",
+      rechargeStatus:  "manuel_requis",
+      rechargeRetries: nouvelleTentative,
+      rechargeMessage: "3 tentatives échouées",
+      manuelRequis:    true,
+      manuelRequsAt:   FieldValue.serverTimestamp(),
     });
-
-    // Log admin visible dans Firebase Console
     await db.collection("alertes_admin").add({
       type:      "recharge_echec_3x",
       ordreRef:  ref,
       id1xbet:   id1xbet || ordre.userId1xBet || "",
       montant:   montant || ordre.montant || "",
-      message:   texteEcran || "3 tentatives échouées",
+      message:   "3 tentatives échouées",
       createdAt: FieldValue.serverTimestamp(),
       traité:    false,
     });
-
-    console.error(`[rechargeCallback] 🚨 Ordre ${ref} → 3 ÉCHECS → INTERVENTION MANUELLE`);
+    console.error(`[rechargeCallback] 🚨 Ordre ${ref} → INTERVENTION MANUELLE`);
     res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
   }
 );
