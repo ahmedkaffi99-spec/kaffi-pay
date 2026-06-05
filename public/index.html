@@ -3,27 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-<title>Kaffi-Pay — Échange 1xBet & Waafi · Djibouti</title>
+<title>Kaffi-Pay</title>
 <meta name="theme-color" content="#07101e">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Kaffi-Pay">
-<meta name="description" content="Kaffi-Pay — Plateforme d'échange rapide et sécurisée entre 1xBet et Waafi à Djibouti. Déposez et retirez vos fonds en quelques minutes, 24h/24.">
-<meta name="keywords" content="kaffi pay, kaffipay, échange 1xbet waafi djibouti, dépôt 1xbet waafi, retrait 1xbet djibouti">
-<meta property="og:title" content="Kaffi-Pay — Échange 1xBet & Waafi · Djibouti">
-<meta property="og:description" content="Plateforme d'échange rapide et sécurisée entre 1xBet et Waafi à Djibouti. Déposez et retirez vos fonds en quelques minutes, 24h/24.">
-<meta property="og:image" content="/icon-512.png">
-<meta property="og:type" content="website">
-<meta property="og:locale" content="fr_DJ">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Kaffi-Pay — Échange 1xBet & Waafi">
-<meta name="twitter:description" content="Plateforme d'échange rapide et sécurisée entre 1xBet et Waafi à Djibouti. 24h/24.">
+<meta name="description" content="Kaffi-Pay — Plateforme d'échange 1xBet & Waafi">
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
-<link rel="shortcut icon" href="/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 
@@ -369,9 +359,6 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .tl-dot.done{background:rgba(0,212,160,.1);border-color:rgba(0,212,160,.25);}
 .tl-dot.active{background:rgba(255,170,0,.1);border-color:rgba(255,170,0,.25);animation:blink 1.5s infinite;}
 .tl-dot.wait{opacity:.35;}
-.tl-dot.error{background:rgba(255,64,96,.12);border-color:rgba(255,64,96,.3);}
-.tl-dot.warn{background:rgba(255,170,0,.1);border-color:rgba(255,170,0,.3);}
-.tl-dot.muted{background:rgba(150,150,150,.08);border-color:rgba(150,150,150,.2);opacity:.6;}
 .tl-title{font-size:.79rem;font-weight:600;margin-bottom:2px;}
 .tl-desc{font-size:.65rem;color:var(--muted);line-height:1.4;}
 
@@ -419,12 +406,12 @@ input:-webkit-autofill:active {
         <div class="login-logo-name">Kaffi<span>-Pay</span></div>
       </div>
 
-      <div id="sec-fields" style="display:none;" aria-hidden="true">
-        <div class="login-field"><label aria-hidden="true"> </label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username" aria-label="Identifiant"></div>
-        <div class="login-field"><label aria-hidden="true"> </label><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" aria-label="Mot de passe"></div>
+      <div id="sec-fields" style="display:none;">
+        <div class="login-field"><label>Identifiant</label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username"></div>
+        <div class="login-field"><label>Mot de passe</label><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
       </div>
 
-      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;" aria-label="Accéder">🔓 Accéder</button>
+      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;">🔓 Connexion</button>
       <div class="login-error" id="login-error"></div>
       <div class="login-attempts" id="login-attempts"></div>
     </div>
@@ -621,8 +608,6 @@ input:-webkit-autofill:active {
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
     <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>🔔</span>Notifs<div class="notif-dot" id="notif-bell-dot"></div></button>
-    <button class="nav-tab" onclick="showPage('sms')" id="ntab-sms"><span>📡</span>SMS</button>
-    <button class="nav-tab" onclick="showPage('callbacks')" id="ntab-callbacks"><span>📲</span>Callbacks</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -733,36 +718,7 @@ input:-webkit-autofill:active {
       <button class="add-agent-btn" onclick="addAgent()">✅ Ajouter l'agent</button>
     </div>
     <div class="agent-list" id="agent-list"></div>
-
-    <!-- Section changer mot de passe admin — visible seulement Créateur -->
-    <div id="admin-pass-section" style="display:none;margin-top:16px;border-radius:18px;padding:14px;border:1px solid rgba(255,215,0,.09);background:rgba(255,215,0,.02);">
-      <div style="font-size:.79rem;font-weight:600;margin-bottom:12px;color:var(--gold);">🔐 Changer mon mot de passe</div>
-      <div class="form-row">
-        <div class="mini-field"><label>Nouveau mot de passe</label><input type="password" id="admin-new-pass" placeholder="••••••••"></div>
-        <div class="mini-field"><label>Confirmer</label><input type="password" id="admin-new-pass2" placeholder="••••••••"></div>
-      </div>
-      <button class="add-agent-btn" onclick="changeAdminPass()">✅ Mettre à jour</button>
-    </div>
   </div>
-
-  <!-- PAGE SMS WAAFI -->
-  <div class="page-section" id="page-sms">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div class="section-title">📡 SMS Waafi</div>
-      <button class="action-btn" onclick="loadSmsPage()" style="font-size:.7rem;padding:6px 12px;">🔄 Actualiser</button>
-    </div>
-    <div id="sms-page-list" style="display:flex;flex-direction:column;gap:8px;"></div>
-  </div>
-
-  <!-- PAGE CALLBACKS -->
-  <div class="page-section" id="page-callbacks">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div class="section-title">📲 Callbacks Recharge</div>
-      <button class="action-btn" onclick="loadCallbacksPage()" style="font-size:.7rem;padding:6px 12px;">🔄 Actualiser</button>
-    </div>
-    <div id="callbacks-page-list" style="display:flex;flex-direction:column;gap:8px;"></div>
-  </div>
-
 </div>
 </div>
 
@@ -819,23 +775,11 @@ input:-webkit-autofill:active {
     <div id="suivi-timeline"></div>
   </div>
 
-  <!-- Carte motif / raison — visible uniquement si anomalie -->
-  <div id="suivi-raison-card" style="display:none;border-radius:14px;padding:13px 14px;margin-bottom:8px;border:1px solid rgba(255,170,0,0.25);background:rgba(255,170,0,0.04);">
-    <div style="font-size:0.6rem;color:var(--warning);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;font-weight:700;">⚠️ Motif</div>
-    <div id="suivi-raison-txt" style="font-size:0.83rem;color:var(--text);line-height:1.6;"></div>
-  </div>
-
   <button id="suivi-corr-btn" onclick="goCorrection()" style="display:none;width:100%;margin-bottom:10px;padding:13px;border-radius:999px;border:none;background:linear-gradient(135deg,var(--warning),#ffcc00);color:#07101e;font-family:'DM Sans',sans-serif;font-size:0.9rem;font-weight:700;cursor:pointer;box-sizing:border-box;">✏️ Corriger mon ordre</button>
-
-  <!-- Bouton WhatsApp support -->
-  <div id="suivi-wa-card" style="display:flex;flex-direction:column;gap:5px;width:100%;padding:13px 16px;border-radius:14px;border:1px solid rgba(37,211,102,0.15);background:rgba(37,211,102,0.03);box-sizing:border-box;margin-bottom:8px;">
-    <a id="suivi-wa-btn" href="https://wa.me/25377275572" target="_blank"
-      style="display:flex;align-items:center;justify-content:center;gap:8px;color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:700;text-decoration:none;">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
-      <span id="suivi-wa-label">Support WhatsApp</span>
-    </a>
-    <div id="suivi-wa-note" style="display:none;font-size:0.71rem;color:var(--muted);text-align:center;line-height:1.5;"></div>
-  </div>
+  <a id="suivi-wa-btn" href="https://wa.me/25377275572" target="_blank"
+    style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.25);background:rgba(37,211,102,0.05);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;text-decoration:none;box-sizing:border-box;margin-bottom:8px;">
+    Support WhatsApp
+  </a>
 </div>
 </div>
 
@@ -871,7 +815,6 @@ input:-webkit-autofill:active {
     <div id="odm-date" style="font-size:0.65rem;color:var(--muted);margin-bottom:16px;"></div>
     <div id="odm-rows" style="display:flex;flex-direction:column;gap:0;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);margin-bottom:14px;"></div>
     <div id="odm-corr-note" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:10px;font-size:0.72rem;color:var(--warning);background:rgba(255,170,0,0.07);border:1px solid rgba(255,170,0,0.15);"></div>
-    <div id="odm-ia" style="display:none;margin-bottom:14px;"></div>
     <div id="odm-actions" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
 </div>
@@ -883,7 +826,6 @@ input:-webkit-autofill:active {
 // ═══════════════════════════════════════════════════
 const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur'}; // hash hex
 function _checkPass(p){ return btoa(unescape(encodeURIComponent(p))).split('').map(function(c){return c.charCodeAt(0).toString(16);}).join('')===CREATOR._h; }
-var _adminPassCache = null; // mot de passe admin personnalisé stocké dans Firestore
 let fails=0, lockedUntil=0, currentUser=null, loginMode='client';
 let mChart=null, currentFilter='tous', lastTxCount=0;
 var _smsListener=null, _smsDejaTrait=new Set();
@@ -989,7 +931,7 @@ function doLogin(){
   if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
   const u=document.getElementById('login-user').value.trim();
   const p=document.getElementById('login-pass').value;
-  if(u===CREATOR.user&&(_checkPass(p)||(_adminPassCache&&p===_adminPassCache))){loginSuccess({user:u,role:'Créateur',isCreator:true});return;}
+  if(u===CREATOR.user&&_checkPass(p)){loginSuccess({user:u,role:'Créateur',isCreator:true});return;}
   const ag=getAgents().find(a=>a.user===u&&a.pass===p);
   if(ag){loginSuccess({user:u,role:ag.role,isCreator:false});return;}
   fails++;
@@ -1028,7 +970,7 @@ function loginSuccess(u){
     var h = window.location.hash;
     if(h && h.startsWith('#admin-')){
       var page = h.replace('#admin-','');
-      var validPages = ['dashboard','orders','reserves','agents','sms','callbacks'];
+      var validPages = ['dashboard','orders','reserves','agents'];
       if(validPages.indexOf(page)>=0){ setTimeout(function(){ showPage(page); },300); }
     }
   }catch(e){}
@@ -1203,10 +1145,7 @@ function saveAgents(a){
 function loadAgentsFromFirestore(){
   if(!window.db) return;
   window.fsGetDocs(window.fsCollection(window.db,'config')).then(function(snap){
-    snap.forEach(function(d){
-      if(d.id==='agents') _agentsCache=d.data().list||[];
-      if(d.id==='admin' && d.data().pass) _adminPassCache=d.data().pass;
-    });
+    snap.forEach(function(d){ if(d.id==='agents') _agentsCache=d.data().list||[]; });
   }).catch(function(){});
 }
 function getReserves(){ return _reservesCache; }
@@ -1277,11 +1216,10 @@ function submitDepot(){
   const m=document.getElementById('depot-montant').value;
   const id=document.getElementById('depot-id').value;
   const h=document.getElementById('depot-hash').value;
-  const telDepot=document.getElementById('depot-numero-waafi')? document.getElementById('depot-numero-waafi').value.trim() : '';
+  const telDepot=document.getElementById('depot-numero-waafi')? document.getElementById('depot-numero-waafi').value : '';
   if(!m||Number(m)<50){showToast('⚠️ Minimum 50 DJF','error');return;}
   if(!id){showToast('⚠️ ID 1xBet requis','error');return;}
   if(!h||!/^\d{8,10}$/.test(h)){showToast('⚠️ Waafi Transfer ID invalide (8-10 chiffres)','error');return;}
-  if(!telDepot||telDepot.length!==8||!telDepot.startsWith('77')){showToast('⚠️ Numéro Waafi expéditeur requis (8 chiffres, commence par 77)','error');return;}
   setLoading('depot',true);
   setTimeout(()=>{
     setLoading('depot',false);
@@ -1588,56 +1526,18 @@ function openOrderDetail(ref){
   if(tx.correctionMsg){ corrDiv.style.display='block'; corrDiv.textContent='💬 '+tx.correctionMsg; }
   else { corrDiv.style.display='none'; }
 
-  // IA Analyse Gemini
-  var iaDiv=document.getElementById('odm-ia');
-  var iaHtml='';
-  var hasIa=tx.ia_score_fraude!=null||tx.ia_ecran_statut!=null;
-  if(hasIa){
-    var risqueColor=tx.ia_risque==='élevé'?'var(--error)':tx.ia_risque==='moyen'?'var(--warning)':'var(--success)';
-    var risqueIcon=tx.ia_risque==='élevé'?'🔴':tx.ia_risque==='moyen'?'🟡':'🟢';
-    iaHtml='<div style="border-radius:12px;overflow:hidden;border:1px solid rgba(139,92,246,0.25);background:rgba(139,92,246,0.05);padding:12px 14px;">';
-    iaHtml+='<div style="font-size:0.68rem;font-weight:700;color:#a78bfa;letter-spacing:1px;margin-bottom:10px;">🤖 ANALYSE IA</div>';
-    if(tx.ia_score_fraude!=null){
-      var score=Number(tx.ia_score_fraude);
-      var barColor=score>=70?'var(--error)':score>=40?'var(--warning)':'var(--success)';
-      iaHtml+='<div style="margin-bottom:10px;">';
-      iaHtml+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">';
-      iaHtml+='<span style="font-size:0.67rem;color:var(--muted);">Score fraude</span>';
-      iaHtml+='<span style="font-size:0.75rem;font-weight:700;color:'+barColor+';">'+score+'/100</span>';
-      iaHtml+='</div>';
-      iaHtml+='<div style="height:4px;border-radius:99px;background:rgba(255,255,255,0.06);overflow:hidden;">';
-      iaHtml+='<div style="height:100%;width:'+score+'%;background:'+barColor+';border-radius:99px;transition:width 0.4s;"></div></div>';
-      if(tx.ia_risque){
-        iaHtml+='<div style="margin-top:6px;font-size:0.7rem;">'+risqueIcon+' Risque : <strong style="color:'+risqueColor+';">'+tx.ia_risque+'</strong>';
-        if(tx.ia_action){var actColor=tx.ia_action==='valider'?'var(--success)':tx.ia_action==='rejeter'?'var(--error)':'var(--warning)';iaHtml+=' &nbsp;·&nbsp; Action : <strong style="color:'+actColor+';">'+tx.ia_action+'</strong>';}
-        iaHtml+='</div>';
-      }
-      if(tx.ia_raisons&&tx.ia_raisons.length){
-        iaHtml+='<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px;">';
-        tx.ia_raisons.forEach(function(r){ iaHtml+='<span style="font-size:0.62rem;padding:2px 8px;border-radius:99px;background:rgba(255,255,255,0.06);color:var(--muted);">'+r+'</span>'; });
-        iaHtml+='</div>';
-      }
-      iaHtml+='</div>';
-    }
-    if(tx.ia_ecran_statut){
-      var eColor=tx.ia_ecran_statut==='success'?'var(--success)':tx.ia_ecran_statut==='failed'?'var(--error)':'var(--warning)';
-      var eIcon=tx.ia_ecran_statut==='success'?'✅':tx.ia_ecran_statut==='failed'?'❌':'🔄';
-      iaHtml+='<div style="padding-top:8px;border-top:1px solid rgba(255,255,255,0.05);margin-top:2px;">';
-      iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-bottom:4px;">Analyse écran recharge</div>';
-      iaHtml+='<div style="font-size:0.72rem;">'+eIcon+' Statut : <strong style="color:'+eColor+';">'+tx.ia_ecran_statut+'</strong>';
-      if(tx.ia_ecran_confiance!=null) iaHtml+=' &nbsp;·&nbsp; Confiance : <strong>'+Math.round(tx.ia_ecran_confiance*100)+'%</strong>';
-      iaHtml+='</div>';
-      if(tx.ia_ecran_raison) iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-top:3px;">'+tx.ia_ecran_raison+'</div>';
-      iaHtml+='</div>';
-    }
-    iaHtml+='</div>';
-    iaDiv.innerHTML=iaHtml; iaDiv.style.display='block';
-  } else { iaDiv.style.display='none'; iaDiv.innerHTML=''; }
-
-  // Statut seul — pas d'actions manuelles
+  // Actions
   var actDiv=document.getElementById('odm-actions');
   currentOdmRef=tx.ref;
-  actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
+  if(tx.status==='En attente'||tx.status==='Correction'||tx.status==='Argent Reçu'){
+    var ref=tx.ref.replace(/'/g,"\\'");
+    actDiv.innerHTML=
+      +'<button onclick="updateStatus(\''+ref+'\',\'Confirmé\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(0,212,160,0.12);color:var(--success);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(0,212,160,0.25);">✅ Confirmer</button>'
+      +'<button onclick="openCorrection(\''+ref+'\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(255,170,0,0.08);color:var(--warning);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(255,170,0,0.2);">✏️ Correction</button>'
+      +'<button onclick="updateStatus(\''+ref+'\',\'Rejeté\');odmClose()" style="flex:1;padding:10px;border-radius:999px;border:none;background:rgba(255,64,96,0.08);color:var(--error);font-family:\'DM Sans\',sans-serif;font-size:0.78rem;font-weight:700;cursor:pointer;border:1px solid rgba(255,64,96,0.15);">❌ Rejeter</button>';
+  } else {
+    actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
+  }
 
   modal.classList.add('show');
 }
@@ -1680,7 +1580,7 @@ window.addEventListener('popstate', function(){
   if(!currentUser) return;
   if(hash.startsWith('#admin-')){
     var page = hash.replace('#admin-','');
-    var valid = ['dashboard','orders','reserves','agents','notifs','sms','callbacks'];
+    var valid = ['dashboard','orders','reserves','agents','notifs'];
     if(valid.indexOf(page) >= 0) showPage(page);
   }
 });
@@ -1697,9 +1597,7 @@ function showPage(p){
   if(p==='agents') renderAgents();
   if(p==='reserves') calcAndUpdateReserves();
   if(p==='dashboard'){ updateStats(); renderRecentTx(); }
-  if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); renderNotifs(); }
-  if(p==='sms') loadSmsPage();
-  if(p==='callbacks') loadCallbacksPage();
+  if(p==='sms'||p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); renderNotifs(); }
 }
 
 function initDashboard(){
@@ -1713,87 +1611,15 @@ function initDashboard(){
 // ADMIN — AGENTS
 // ═══════════════════════════════════════════════════
 function renderAgents(){
-  const isCreator = currentUser && currentUser.isCreator;
-  let h=`<div class="agent-item">
-    <div class="agent-avatar">K</div>
-    <div class="agent-info">
-      <div class="agent-name">admin <span style="font-size:.62rem;color:var(--gold)">👑 Créateur</span></div>
-      <div class="agent-role">Accès total — Toutes permissions</div>
-    </div>
-  </div>`;
+  let h=`<div class="agent-item"><div class="agent-avatar">K</div><div class="agent-info"><div class="agent-name">admin <span style="font-size:.62rem;color:var(--gold)">👑 Créateur</span></div><div class="agent-role">Accès total — Toutes permissions</div></div></div>`;
   getAgents().forEach((a,i)=>{
-    h+=`<div class="agent-item" id="agent-row-${i}">
+    h+=`<div class="agent-item">
       <div class="agent-avatar">${a.name[0].toUpperCase()}</div>
-      <div class="agent-info" style="min-width:0;flex:1;">
-        <div class="agent-name">${a.name} <span style="font-size:.6rem;color:var(--muted);font-weight:400">${a.role}</span></div>
-        <div class="agent-role" style="margin-top:2px;">
-          login: <b style="color:var(--gold);font-size:.68rem">${a.user}</b>
-          ${isCreator?`· <span id="apass-${i}" style="font-family:monospace;font-size:.68rem;letter-spacing:.05em">••••••</span>
-          <span onclick="toggleAgentPass(${i})" style="cursor:pointer;font-size:.75rem;margin-left:3px">👁</span>`:''}
-        </div>
-        <div id="edit-pass-row-${i}" style="display:none;margin-top:6px;display:none;">
-          <input id="new-apass-${i}" type="password" placeholder="Nouveau mot de passe" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,215,0,.2);border-radius:8px;padding:5px 8px;color:#fff;font-size:.72rem;width:130px;margin-right:5px;">
-          <button onclick="saveAgentPass(${i})" style="background:var(--gold);color:#07101e;border:none;border-radius:8px;padding:5px 10px;font-size:.7rem;font-weight:700;cursor:pointer;">OK</button>
-          <button onclick="cancelEditAgentPass(${i})" style="background:transparent;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:5px 8px;font-size:.7rem;color:var(--muted);cursor:pointer;margin-left:3px;">✕</button>
-        </div>
-      </div>
-      ${isCreator?`<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end;flex-shrink:0;">
-        <button onclick="copyAgentCreds(${i})" title="Copier identifiants" style="background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.18);border-radius:8px;padding:4px 8px;font-size:.68rem;color:var(--gold);cursor:pointer;">📋 Copier</button>
-        <button onclick="editAgentPass(${i})" title="Changer mot de passe" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:4px 8px;font-size:.68rem;color:var(--muted);cursor:pointer;">🔑 MDP</button>
-        <button onclick="deleteAgent(${i})" class="agent-del">🗑 Retirer</button>
-      </div>`:''}
+      <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">${a.role} · login: ${a.user}</div></div>
+      ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
     </div>`;
   });
   document.getElementById('agent-list').innerHTML=h;
-  // Section changer mot de passe admin
-  var adminSec = document.getElementById('admin-pass-section');
-  if(adminSec) adminSec.style.display = isCreator ? 'block' : 'none';
-}
-
-function toggleAgentPass(i){
-  const el = document.getElementById('apass-'+i);
-  const ag = getAgents()[i];
-  if(!el||!ag) return;
-  el.textContent = el.textContent==='••••••' ? ag.pass : '••••••';
-}
-
-function copyAgentCreds(i){
-  const ag = getAgents()[i];
-  if(!ag) return;
-  const txt = 'Kaffi-Pay Agent\nLogin: '+ag.user+'\nMot de passe: '+ag.pass+'\nURL: https://kaffi-pay.web.app';
-  navigator.clipboard.writeText(txt).then(function(){
-    showToast('📋 Identifiants copiés pour '+ag.name,'success');
-  }).catch(function(){
-    showToast('Login: '+ag.user+' | MDP: '+ag.pass,'success');
-  });
-}
-
-function editAgentPass(i){
-  const row = document.getElementById('edit-pass-row-'+i);
-  if(!row) return;
-  row.style.display = row.style.display==='none'||row.style.display==='' ? 'flex' : 'none';
-  if(row.style.display==='flex'){
-    var inp = document.getElementById('new-apass-'+i);
-    if(inp) inp.focus();
-  }
-}
-
-function cancelEditAgentPass(i){
-  var row = document.getElementById('edit-pass-row-'+i);
-  if(row) row.style.display='none';
-}
-
-function saveAgentPass(i){
-  const ag = getAgents();
-  const inp = document.getElementById('new-apass-'+i);
-  if(!inp||!ag[i]) return;
-  const p = inp.value.trim();
-  if(p.length<6){showToast('⚠️ Min. 6 caractères','error');return;}
-  ag[i].pass = p;
-  saveAgents(ag);
-  cancelEditAgentPass(i);
-  renderAgents();
-  showToast('✅ Mot de passe de '+ag[i].name+' mis à jour','success');
 }
 
 function toggleAddAgent(){
@@ -1825,21 +1651,6 @@ function deleteAgent(i){
   if(!confirm('Supprimer cet agent ?'))return;
   const ag=getAgents(); ag.splice(i,1); saveAgents(ag); renderAgents();
   showToast('🗑 Agent supprimé','warning');
-}
-
-function changeAdminPass(){
-  const p1 = document.getElementById('admin-new-pass').value;
-  const p2 = document.getElementById('admin-new-pass2').value;
-  if(!p1||p1.length<6){showToast('⚠️ Min. 6 caractères','error');return;}
-  if(p1!==p2){showToast('⚠️ Mots de passe différents','error');return;}
-  _adminPassCache = p1;
-  if(window.db && window.fsSetDoc && window.fsDoc){
-    window.fsSetDoc(window.fsDoc(window.db,'config','admin'),{pass:p1,updatedAt:new Date()}).then(function(){
-      showToast('✅ Mot de passe admin mis à jour','success');
-      document.getElementById('admin-new-pass').value='';
-      document.getElementById('admin-new-pass2').value='';
-    }).catch(function(e){showToast('❌ Erreur: '+e.message,'error');});
-  }
 }
 
 // ═══════════════════════════════════════════════════
@@ -1959,19 +1770,9 @@ function renderSuivi(){
   var peutAnnuler = (status==='En attente');
   if(retourBtn) retourBtn.style.display = peutAnnuler ? 'none' : '';
   if(annulerBtn) annulerBtn.style.display = peutAnnuler ? '' : 'none';
-  // Reset état par défaut
+  // Reset correction button visibility
   var corrBtnEl=document.getElementById('suivi-corr-btn');
   if(corrBtnEl) corrBtnEl.style.display='none';
-  var raisonReset=document.getElementById('suivi-raison-card');
-  if(raisonReset) raisonReset.style.display='none';
-
-  // ── Raison/motif ─────────────────────────────────
-  var raisonCard = document.getElementById('suivi-raison-card');
-  var raisonTxt  = document.getElementById('suivi-raison-txt');
-  var waCard     = document.getElementById('suivi-wa-card');
-  var waBtn      = document.getElementById('suivi-wa-btn');
-  var anomalie   = false;
-  var waMsg      = 'Bonjour, mon ordre #'+(tx.ref||tx.orderId)+' - '+tx.type+' '+Number(tx.montant).toLocaleString()+' DJF';
 
   if(status==='En attente'){
     card.style.borderColor='rgba(255,170,0,0.2)';
@@ -1979,16 +1780,16 @@ function renderSuivi(){
     icon.textContent='⏳';
     stxt.textContent='En attente de traitement';
     stxt.style.color='var(--warning)';
-    sdesc.textContent='Votre ordre est enregistré. Vérification de votre paiement en cours — vous serez crédité automatiquement.';
-    prog.style.width='25%';
+    sdesc.textContent='Votre ordre est en cours de traitement. Vous serez crédité très rapidement.';
+    prog.style.width='30%';
     prog.style.background='linear-gradient(90deg,var(--warning),#ffcc00)';
-  } else if(status==='Confirmé'||status==='Rechargé ✅'){
+  } else if(status==='Confirmé'){
     card.style.borderColor='rgba(0,212,160,0.25)';
     card.style.background='linear-gradient(160deg,rgba(0,212,160,0.06),rgba(7,16,30,0.8))';
     icon.textContent=isDepot?'✅':'💸';
     stxt.textContent=isDepot?'Dépôt confirmé !':'Retrait effectué !';
     stxt.style.color='var(--success)';
-    sdesc.textContent=isDepot?'Votre compte 1xBet a été crédité avec succès. Merci d\'avoir utilisé Kaffi-Pay !':'Votre argent a été envoyé sur votre numéro Waafi avec succès.';
+    sdesc.textContent=isDepot?'Votre compte 1xBet a été crédité avec succès.':'Votre argent a été envoyé sur votre numéro Waafi.';
     prog.style.width='100%';
     prog.style.background='linear-gradient(90deg,var(--success),#00ffcc)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
@@ -1998,22 +1799,20 @@ function renderSuivi(){
     icon.textContent='✏️';
     stxt.textContent='Correction requise';
     stxt.style.color='var(--warning)';
-    sdesc.textContent='Une information de votre ordre doit être corrigée. Lisez le motif ci-dessous.';
-    prog.style.width='50%';
+    var corrMsg = tx.correctionMsg || 'Veuillez corriger les informations de votre ordre.';
+    sdesc.textContent=corrMsg;
+    prog.style.width='60%';
     prog.style.background='linear-gradient(90deg,var(--warning),#ffcc00)';
+    // Afficher bouton corriger
     var corrBtn = document.getElementById('suivi-corr-btn');
     if(corrBtn) corrBtn.style.display='flex';
-    var raison = tx.correctionMsg||'Veuillez corriger les informations de votre ordre.';
-    if(raisonCard) raisonCard.style.display='block';
-    if(raisonTxt)  raisonTxt.textContent=raison;
-    // Pas de WhatsApp — le client corrige lui-même
   } else if(status==='Argent Reçu'){
     card.style.borderColor='rgba(91,156,255,0.25)';
     card.style.background='linear-gradient(160deg,rgba(91,156,255,0.06),rgba(7,16,30,0.8))';
     icon.textContent='💳';
     stxt.textContent='Paiement reçu — Crédit en cours';
     stxt.style.color='#5b9cff';
-    sdesc.textContent='Votre paiement Waafi a été reçu et validé. Votre compte 1xBet sera crédité dans quelques instants.';
+    sdesc.textContent='Votre paiement a été reçu et validé. Votre compte va être crédité dans quelques instants.';
     prog.style.width='75%';
     prog.style.background='linear-gradient(90deg,#5b9cff,#00d4a0)';
   } else if(status==='Rejeté'){
@@ -2022,66 +1821,10 @@ function renderSuivi(){
     icon.textContent='❌';
     stxt.textContent='Ordre rejeté';
     stxt.style.color='var(--error)';
-    var rejetRaison = tx.rejetRaison||tx.rejectionReason||tx.flagRaison||'';
-    if(rejetRaison){
-      sdesc.textContent='Votre ordre n\'a pas pu être traité. Voir le motif ci-dessous.';
-      if(raisonCard) raisonCard.style.display='block';
-      if(raisonTxt)  raisonTxt.textContent=rejetRaison;
-    } else {
-      sdesc.textContent='Une erreur inattendue s\'est produite. Contactez le support.';
-      anomalie=true;
-      waMsg+=' — Ordre rejeté (raison inconnue)';
-    }
+    sdesc.textContent='Votre ordre a été rejeté. Contactez le support pour assistance.';
     prog.style.width='100%';
     prog.style.background='linear-gradient(90deg,var(--error),#ff8a9a)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
-  } else if(status==='Annulé'){
-    card.style.borderColor='rgba(150,150,150,0.2)';
-    card.style.background='linear-gradient(160deg,rgba(150,150,150,0.04),rgba(7,16,30,0.8))';
-    icon.textContent='🚫';
-    stxt.textContent='Ordre annulé';
-    stxt.style.color='var(--muted)';
-    sdesc.textContent='Cet ordre a été annulé. Vous pouvez soumettre un nouvel ordre.';
-    prog.style.width='100%';
-    prog.style.background='rgba(150,150,150,0.3)';
-    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
-  } else if(status && status.startsWith('Recharge Retry')){
-    card.style.borderColor='rgba(91,156,255,0.2)';
-    card.style.background='linear-gradient(160deg,rgba(91,156,255,0.04),rgba(7,16,30,0.8))';
-    icon.textContent='🔄';
-    stxt.textContent='Recharge en cours…';
-    stxt.style.color='#5b9cff';
-    sdesc.textContent='Votre paiement a été reçu. La recharge 1xBet est en cours de traitement, veuillez patienter.';
-    prog.style.width='85%';
-    prog.style.background='linear-gradient(90deg,#5b9cff,#00d4a0)';
-  } else if(status==='Intervention Manuelle 🚨'){
-    card.style.borderColor='rgba(255,140,0,0.3)';
-    card.style.background='linear-gradient(160deg,rgba(255,140,0,0.06),rgba(7,16,30,0.8))';
-    icon.textContent='🚨';
-    stxt.textContent='Traitement manuel requis';
-    stxt.style.color='#ff8c00';
-    sdesc.textContent='Votre paiement a bien été reçu. Notre équipe traite votre ordre manuellement. Contactez le support pour suivi.';
-    prog.style.width='90%';
-    prog.style.background='linear-gradient(90deg,#ff8c00,#ffcc00)';
-    anomalie=true;
-    waMsg+=' — Intervention manuelle requise (3 tentatives recharge échouées)';
-    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
-  }
-
-  // ── WhatsApp : toujours visible, prominent si anomalie inconnue ─
-  if(waBtn) waBtn.href='https://wa.me/25377275572?text='+encodeURIComponent(waMsg);
-  if(waCard){
-    waCard.style.display='flex';
-    var waNote=document.getElementById('suivi-wa-note');
-    if(anomalie){
-      waCard.style.borderColor='rgba(37,211,102,0.5)';
-      waCard.style.background='rgba(37,211,102,0.08)';
-      if(waNote){ waNote.textContent='Une anomalie a été détectée sur votre ordre. Notre équipe vous aide immédiatement.'; waNote.style.display='block'; }
-    } else {
-      waCard.style.borderColor='rgba(37,211,102,0.15)';
-      waCard.style.background='rgba(37,211,102,0.03)';
-      if(waNote) waNote.style.display='none';
-    }
   }
 
   const rows=isDepot?[
@@ -2112,44 +1855,23 @@ function renderSuivi(){
       +'</div>';
   }).join('');
 
-  var isRetry    = status && status.startsWith('Recharge Retry');
-  var isManuel   = (status==='Intervention Manuelle 🚨');
-  var argentRecu = (status==='Argent Reçu'||status==='Confirmé'||status==='Rechargé ✅'||isRetry||isManuel);
-  var isRejete   = (status==='Rejeté');
-  var isAnnule   = (status==='Annulé');
-  var isCorr     = (status==='Correction');
-  var fmtDate    = function(d){ if(!d) return ''; try{ var dt=d.toDate?d.toDate():new Date(d); return dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+' · '+dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}); }catch(e){return '';} };
-
+  var argentRecu = (status==='Argent Reçu'||status==='Confirmé');
   const steps=isDepot?[
-    {icon:'📝', title:'Ordre soumis',          desc:'Demande enregistrée',               done:true,      active:false,  ts:tx.createdAt},
-    {icon:'🔍', title:'En cours de traitement', desc:'Vérification du paiement Waafi',    done:argentRecu||isRejete,  active:status==='En attente', ts:null},
-    {icon:'💳', title:'Paiement reçu',          desc:'Virement Waafi validé',             done:argentRecu, active:status==='Argent Reçu', ts:tx.paiementRecuAt||null},
-    {icon:'💰', title:'Compte 1xBet crédité',   desc:'Solde mis à jour',                 done:status==='Confirmé'||status==='Rechargé ✅', active:isRetry||isManuel, ts:tx.confirmedAt||tx.rechargeAt||null},
-    ...(isRejete?[{icon:'❌', title:'Ordre rejeté', desc:tx.rejetRaison||'Ordre rejeté', done:false, active:true, ts:tx.rejetedAt||null, error:true}]:[]),
-    ...(isAnnule?[{icon:'🚫', title:'Ordre annulé', desc:'Annulé par le client', done:false, active:true, ts:tx.canceledAt||tx.annuleAt||null, muted:true}]:[]),
-    ...(isCorr?[{icon:'✏️', title:'Correction requise', desc:tx.correctionMsg||'Informations à corriger', done:false, active:true, ts:tx.correctionAt||null, warn:true}]:[])
+    {icon:'📝',title:'Ordre soumis',desc:'Demande enregistrée dans le système',done:true,active:false},
+    {icon:'👁',title:'En cours de traitement',desc:'Traitement en cours',done:argentRecu||status==='Confirmé',active:status==='En attente'},
+    {icon:'💳',title:'Paiement reçu',desc:'Votre virement Waafi a été validé',done:status==='Confirmé',active:status==='Argent Reçu'},
+    {icon:'💰',title:'Compte 1xBet crédité',desc:'Votre solde a été mis à jour',done:status==='Confirmé',active:false}
   ]:[
-    {icon:'📝', title:'Ordre soumis',          desc:'Demande enregistrée',               done:true,      active:false,  ts:tx.createdAt},
-    {icon:'🔍', title:'En cours de traitement', desc:'Vérification en cours',             done:argentRecu||isRejete,  active:status==='En attente', ts:null},
-    {icon:'📱', title:'Envoi Waafi',            desc:'Argent envoyé sur votre numéro',    done:status==='Confirmé'||status==='Rechargé ✅', active:status==='Argent Reçu', ts:tx.confirmedAt||null},
-    ...(isRejete?[{icon:'❌', title:'Ordre rejeté', desc:tx.rejetRaison||'Ordre rejeté', done:false, active:true, ts:tx.rejetedAt||null, error:true}]:[]),
-    ...(isAnnule?[{icon:'🚫', title:'Ordre annulé', desc:'Annulé par le client', done:false, active:true, ts:tx.canceledAt||null, muted:true}]:[]),
-    ...(isCorr?[{icon:'✏️', title:'Correction requise', desc:tx.correctionMsg||'Informations à corriger', done:false, active:true, ts:tx.correctionAt||null, warn:true}]:[])
+    {icon:'📝',title:'Ordre soumis',desc:'Demande enregistrée dans le système',done:true,active:false},
+    {icon:'👁',title:'En cours de traitement',desc:'Traitement en cours',done:argentRecu||status==='Confirmé',active:status==='En attente'},
+    {icon:'📱',title:'Envoi Waafi',desc:'Argent envoyé sur votre numéro',done:status==='Confirmé',active:status==='Argent Reçu'}
   ];
 
   document.getElementById('suivi-timeline').innerHTML=steps.map(function(s){
-    var dc = s.error?'error': s.muted?'muted': s.warn?'warn': s.done?'done': s.active?'active':'wait';
-    var em = s.error?'❌': s.muted?'🚫': s.warn?'✏️': s.done?'✅': s.active?'⏳':'○';
-    var col= s.error?'var(--error)': s.muted?'var(--muted)': s.warn?'var(--warning)': s.done?'var(--success)': s.active?'var(--warning)':'var(--muted)';
-    var ts = fmtDate(s.ts);
-    return '<div class="tl-step">'
-      +'<div class="tl-dot '+dc+'">'+em+'</div>'
-      +'<div style="flex:1;min-width:0;">'
-        +'<div class="tl-title" style="color:'+col+'">'+s.title+'</div>'
-        +'<div class="tl-desc" style="line-height:1.5">'+s.desc+'</div>'
-        +(ts?'<div style="font-size:.6rem;color:var(--muted);margin-top:2px;">🕐 '+ts+'</div>':'')
-      +'</div>'
-      +'</div>';
+    var dc=s.done?'done':s.active?'active':'wait';
+    var em=s.done?'✅':s.active?'⏳':'○';
+    var col=s.done?'var(--success)':s.active?'var(--warning)':'var(--muted)';
+    return '<div class="tl-step"><div class="tl-dot '+dc+'">'+em+'</div><div style="flex:1"><div class="tl-title" style="color:'+col+'">'+s.title+'</div><div class="tl-desc">'+s.desc+'</div></div></div>';
   }).join('');
 
   document.getElementById('suivi-wa-btn').href=
@@ -2566,8 +2288,6 @@ function extraireNumeroExp(texte){
 function startSmsListener(){
   if(!window.db || _smsListener) return;
   try{
-    // Pas de orderBy ici — MacroDroid crée des docs sans createdAt,
-    // orderBy les exclurait et le listener ne les verrait jamais.
     var col = window.fsCollection(window.db, 'waafi_notifications');
     _smsListener = window.fsOnSnapshot(col, function(snap){
       snap.docChanges().forEach(function(change){
@@ -2788,15 +2508,16 @@ function demarrerTimerRejet(ref){
     var ordre = _txsCache.find(function(t){ return (t.ref===ref||t.orderId===ref) && t.status==='En attente'; });
     if(ordre){
       await updateTxFirebase(ref, {
-        status: 'Rejeté',
-        rejetRaison: 'Paiement Waafi non reçu dans le délai imparti (10 minutes). Vérifiez votre Transfer ID et réessayez.',
-        rejetedAt: new Date()
+        status:      'Rejeté',
+        rejetRaison: 'Paiement Waafi non reçu dans le délai imparti (20 minutes). Vérifiez votre Transfer ID et réessayez.',
+        rejetedAt:   new Date(),
+        rejetBy:     'auto_serveur',
       });
-      pushNotif('ordre_rejete', 'Paiement non reçu en 10 minutes. Ordre rejeté automatiquement.', ref, ordre.montant);
+      pushNotif('ordre_rejete', 'Paiement non reçu en 20 minutes. Ordre rejeté automatiquement.', ref, ordre.montant);
       showToast('⏰ Ordre #'+ref+' rejeté — paiement non reçu', 'warning');
     }
     delete _rejetTimers[ref];
-  }, 600000);
+  }, 20 * 60 * 1000);
 }
 
 async function saveTxFirebaseWithTimer(tx){
@@ -2858,12 +2579,6 @@ try {
   if(typeof demarrerTimerRejet!=="undefined") window.demarrerTimerRejet=demarrerTimerRejet;
   if(typeof clearSmsLog!=="undefined") window.clearSmsLog=clearSmsLog;
   if(typeof addAgent!=="undefined") window.addAgent=addAgent;
-  if(typeof changeAdminPass!=="undefined") window.changeAdminPass=changeAdminPass;
-  if(typeof copyAgentCreds!=="undefined") window.copyAgentCreds=copyAgentCreds;
-  if(typeof toggleAgentPass!=="undefined") window.toggleAgentPass=toggleAgentPass;
-  if(typeof editAgentPass!=="undefined") window.editAgentPass=editAgentPass;
-  if(typeof cancelEditAgentPass!=="undefined") window.cancelEditAgentPass=cancelEditAgentPass;
-  if(typeof saveAgentPass!=="undefined") window.saveAgentPass=saveAgentPass;
   if(typeof adminCopy!=="undefined") window.adminCopy=adminCopy;
   if(typeof boutonPaiementRetrait!=="undefined") window.boutonPaiementRetrait=boutonPaiementRetrait;
   if(typeof checkURLAdmin!=="undefined") window.checkURLAdmin=checkURLAdmin;
@@ -2889,9 +2604,6 @@ try {
   if(typeof sendCorrection!=="undefined") window.sendCorrection=sendCorrection;
   if(typeof setAdminPage!=="undefined") window.setAdminPage=setAdminPage;
   if(typeof setCorr!=="undefined") window.setCorr=setCorr;
-
-  if(typeof loadSmsPage!=="undefined") window.loadSmsPage=loadSmsPage;
-  if(typeof loadCallbacksPage!=="undefined") window.loadCallbacksPage=loadCallbacksPage;
   if(typeof showPage!=="undefined") window.showPage=showPage;
   if(typeof showScreen!=="undefined") window.showScreen=showScreen;
   if(typeof startFirebaseListeners!=="undefined") window.startFirebaseListeners=startFirebaseListeners;
@@ -2902,97 +2614,6 @@ try {
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
 } catch(e) {}
-
-// ══════════════════════════════════════════════════════════════
-// PAGE SMS — waafi_notifications triés par createdAt desc
-// ══════════════════════════════════════════════════════════════
-var SMS_STATUS_COLOR = {
-  'matché':                    '#4caf50',
-  'non_matché':                '#e91e8c',
-  'bloqué_2sur3':              '#ff9800',
-  'en_cours':                  '#5b9cff',
-  'ignoré_format':             '#888',
-  'ignoré_non_waafi':          '#888',
-  'ignoré_champs_manquants':   '#ff9800',
-  'erreur_parsing':            '#f44336',
-  'nouveau':                   '#5b9cff',
-};
-
-function loadSmsPage(){
-  var el = document.getElementById('sms-page-list');
-  if(!el || !window.db) return;
-  el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:.78rem;">Chargement…</div>';
-  var q = window.fsQuery(
-    window.fsCollection(window.db, 'waafi_notifications'),
-    window.fsOrderBy('createdAt', 'desc'),
-    window.fsLimit(80)
-  );
-  window.fsGetDocs(q).then(function(snap){
-    if(snap.empty){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted);">Aucun SMS enregistré</div>'; return; }
-    el.innerHTML = snap.docs.map(function(d){
-      var s = d.data();
-      var st    = s.status || 'nouveau';
-      var color = SMS_STATUS_COLOR[st] || '#888';
-      var texte = (s.notification || s.notificationText || s.texte || s.message || '—').substring(0,100);
-      var date  = s.createdAt && s.createdAt.seconds ? new Date(s.createdAt.seconds*1000).toLocaleString('fr-FR') : '—';
-      var tid   = s.transferIdSMS || '—';
-      var mt    = s.montantSMS != null ? Number(s.montantSMS).toLocaleString()+' DJF' : '—';
-      var num   = s.numSMS || '—';
-      var ref   = s.ordreRef ? ' → <b style="color:var(--gold);">#'+s.ordreRef+'</b>' : '';
-      var err   = s.erreurMsg ? '<div style="font-size:.63rem;color:#f44336;margin-top:3px;">⚠️ '+s.erreurMsg+'</div>' : '';
-      return '<div style="border-radius:12px;padding:11px 13px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">'
-        +'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
-        +'<span style="font-size:.66rem;font-weight:700;color:'+color+';text-transform:uppercase;">'+st+'</span>'
-        +'<span style="font-size:.58rem;color:var(--muted);">'+date+'</span></div>'
-        +'<div style="font-size:.71rem;color:var(--text);word-break:break-all;margin-bottom:4px;">'+texte+'</div>'
-        +'<div style="font-size:.63rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;">'
-        +'<span>Transfer ID: <b style="color:var(--text);">'+tid+'</b></span>'
-        +'<span>Montant: <b style="color:var(--text);">'+mt+'</b></span>'
-        +'<span>N°: <b style="color:var(--text);">'+num+'</b></span>'+ref+'</div>'+err+'</div>';
-    }).join('');
-  }).catch(function(e){ el.innerHTML='<div style="color:#f44336;padding:16px;font-size:.75rem;">Erreur: '+e.message+'</div>'; });
-}
-
-// ══════════════════════════════════════════════════════════════
-// PAGE CALLBACKS — callbacks triés par createdAt desc
-// ══════════════════════════════════════════════════════════════
-var CB_COLOR = { succes:'#4caf50', retry:'#ff9800', echec_manuel:'#f44336' };
-var CB_ICON  = { succes:'✅', retry:'⏳', echec_manuel:'🚨' };
-
-function loadCallbacksPage(){
-  var el = document.getElementById('callbacks-page-list');
-  if(!el || !window.db) return;
-  el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:.78rem;">Chargement…</div>';
-  var q = window.fsQuery(
-    window.fsCollection(window.db, 'callbacks'),
-    window.fsOrderBy('createdAt', 'desc'),
-    window.fsLimit(80)
-  );
-  window.fsGetDocs(q).then(function(snap){
-    if(snap.empty){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted);">Aucun callback enregistré</div>'; return; }
-    el.innerHTML = snap.docs.map(function(d){
-      var s    = d.data();
-      var type = s.type || 'inconnu';
-      var col  = CB_COLOR[type] || '#888';
-      var ico  = CB_ICON[type]  || '🔔';
-      var date = s.createdAt && s.createdAt.seconds ? new Date(s.createdAt.seconds*1000).toLocaleString('fr-FR') : '—';
-      var mt   = s.montant != null ? Number(s.montant).toLocaleString()+' DJF' : '—';
-      var tent = s.tentative != null ? s.tentative+'/3' : '—';
-      var ecr  = s.ecranTexte ? '<div style="font-size:.62rem;color:var(--muted);margin-top:3px;word-break:break-all;">📱 '+s.ecranTexte.substring(0,120)+'</div>' : '';
-      return '<div style="border-radius:12px;padding:11px 13px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">'
-        +'<div style="display:flex;justify-content:space-between;margin-bottom:4px;">'
-        +'<span style="font-size:.66rem;font-weight:700;color:'+col+';text-transform:uppercase;">'+ico+' '+type+'</span>'
-        +'<span style="font-size:.58rem;color:var(--muted);">'+date+'</span></div>'
-        +'<div style="font-size:.63rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-bottom:2px;">'
-        +'<span>Ordre: <b style="color:var(--gold);">#'+(s.ordreRef||'—')+'</b></span>'
-        +'<span>1xBet: <b style="color:var(--text);">'+(s.id1xbet||'—')+'</b></span>'
-        +'<span>Montant: <b style="color:var(--text);">'+mt+'</b></span>'
-        +'<span>Tentative: <b style="color:var(--text);">'+tent+'</b></span></div>'
-        +'<div style="font-size:.62rem;color:var(--muted);">IA: '+(s.ia_statut||'—')+' — '+(s.ia_raison||'—')+'</div>'
-        +ecr+'</div>';
-    }).join('');
-  }).catch(function(e){ el.innerHTML='<div style="color:#f44336;padding:16px;font-size:.75rem;">Erreur: '+e.message+'</div>'; });
-}
 
 // ── PWA Install Prompt ──
 var _pwaPrompt = null;
