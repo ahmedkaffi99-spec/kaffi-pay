@@ -296,7 +296,7 @@ exports.geminiAnalyseAdmin = onCall(
   { secrets: [GEMINI_KEY] },
   async () => {
     const snap = await db.collection("orders")
-      .orderBy("date", "desc").limit(100).get();
+      .orderBy("createdAt", "desc").limit(100).get();
 
     const txs       = snap.docs.map((d) => d.data());
     const confirmes = txs.filter((t) => t.status === "Confirmé");
@@ -463,6 +463,7 @@ exports.autoConfirmation = onDocumentCreated(
     }
 
     // ✅ 3/3 confirmé
+    const matchType = "transferId_3sur3";
     console.log(`[AutoConfirm] ✅ 3/3 Match — Ordre ${ordreRef} · ${montantSMS} DJF · ${numClient}`);
 
     await Promise.all([
