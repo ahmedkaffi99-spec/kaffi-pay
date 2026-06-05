@@ -718,6 +718,16 @@ input:-webkit-autofill:active {
       <button class="add-agent-btn" onclick="addAgent()">✅ Ajouter l'agent</button>
     </div>
     <div class="agent-list" id="agent-list"></div>
+
+    <!-- Section changer mot de passe admin — visible seulement Créateur -->
+    <div id="admin-pass-section" style="display:none;margin-top:16px;border-radius:18px;padding:14px;border:1px solid rgba(255,215,0,.09);background:rgba(255,215,0,.02);">
+      <div style="font-size:.79rem;font-weight:600;margin-bottom:12px;color:var(--gold);">🔐 Changer mon mot de passe</div>
+      <div class="form-row">
+        <div class="mini-field"><label>Nouveau mot de passe</label><input type="password" id="admin-new-pass" placeholder="••••••••"></div>
+        <div class="mini-field"><label>Confirmer</label><input type="password" id="admin-new-pass2" placeholder="••••••••"></div>
+      </div>
+      <button class="add-agent-btn" onclick="changeAdminPass()">✅ Mettre à jour</button>
+    </div>
   </div>
 </div>
 </div>
@@ -826,6 +836,7 @@ input:-webkit-autofill:active {
 // ═══════════════════════════════════════════════════
 const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur'}; // hash hex
 function _checkPass(p){ return btoa(unescape(encodeURIComponent(p))).split('').map(function(c){return c.charCodeAt(0).toString(16);}).join('')===CREATOR._h; }
+var _adminPassCache = null; // mot de passe admin personnalisé stocké dans Firestore
 let fails=0, lockedUntil=0, currentUser=null, loginMode='client';
 let mChart=null, currentFilter='tous', lastTxCount=0;
 var _smsListener=null, _smsDejaTrait=new Set();
@@ -931,7 +942,7 @@ function doLogin(){
   if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
   const u=document.getElementById('login-user').value.trim();
   const p=document.getElementById('login-pass').value;
-  if(u===CREATOR.user&&_checkPass(p)){loginSuccess({user:u,role:'Créateur',isCreator:true});return;}
+  if(u===CREATOR.user&&(_checkPass(p)||(_adminPassCache&&p===_adminPassCache))){loginSuccess({user:u,role:'Créateur',isCreator:true});return;}
   const ag=getAgents().find(a=>a.user===u&&a.pass===p);
   if(ag){loginSuccess({user:u,role:ag.role,isCreator:false});return;}
   fails++;
@@ -1145,7 +1156,10 @@ function saveAgents(a){
 function loadAgentsFromFirestore(){
   if(!window.db) return;
   window.fsGetDocs(window.fsCollection(window.db,'config')).then(function(snap){
-    snap.forEach(function(d){ if(d.id==='agents') _agentsCache=d.data().list||[]; });
+    snap.forEach(function(d){
+      if(d.id==='agents') _agentsCache=d.data().list||[];
+      if(d.id==='admin' && d.data().pass) _adminPassCache=d.data().pass;
+    });
   }).catch(function(){});
 }
 function getReserves(){ return _reservesCache; }
@@ -1611,15 +1625,87 @@ function initDashboard(){
 // ADMIN — AGENTS
 // ═══════════════════════════════════════════════════
 function renderAgents(){
-  let h=`<div class="agent-item"><div class="agent-avatar">K</div><div class="agent-info"><div class="agent-name">admin <span style="font-size:.62rem;color:var(--gold)">👑 Créateur</span></div><div class="agent-role">Accès total — Toutes permissions</div></div></div>`;
+  const isCreator = currentUser && currentUser.isCreator;
+  let h=`<div class="agent-item">
+    <div class="agent-avatar">K</div>
+    <div class="agent-info">
+      <div class="agent-name">admin <span style="font-size:.62rem;color:var(--gold)">👑 Créateur</span></div>
+      <div class="agent-role">Accès total — Toutes permissions</div>
+    </div>
+  </div>`;
   getAgents().forEach((a,i)=>{
-    h+=`<div class="agent-item">
+    h+=`<div class="agent-item" id="agent-row-${i}">
       <div class="agent-avatar">${a.name[0].toUpperCase()}</div>
-      <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">${a.role} · login: ${a.user}</div></div>
-      ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
+      <div class="agent-info" style="min-width:0;flex:1;">
+        <div class="agent-name">${a.name} <span style="font-size:.6rem;color:var(--muted);font-weight:400">${a.role}</span></div>
+        <div class="agent-role" style="margin-top:2px;">
+          login: <b style="color:var(--gold);font-size:.68rem">${a.user}</b>
+          ${isCreator?`· <span id="apass-${i}" style="font-family:monospace;font-size:.68rem;letter-spacing:.05em">••••••</span>
+          <span onclick="toggleAgentPass(${i})" style="cursor:pointer;font-size:.75rem;margin-left:3px">👁</span>`:''}
+        </div>
+        <div id="edit-pass-row-${i}" style="display:none;margin-top:6px;display:none;">
+          <input id="new-apass-${i}" type="password" placeholder="Nouveau mot de passe" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,215,0,.2);border-radius:8px;padding:5px 8px;color:#fff;font-size:.72rem;width:130px;margin-right:5px;">
+          <button onclick="saveAgentPass(${i})" style="background:var(--gold);color:#07101e;border:none;border-radius:8px;padding:5px 10px;font-size:.7rem;font-weight:700;cursor:pointer;">OK</button>
+          <button onclick="cancelEditAgentPass(${i})" style="background:transparent;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:5px 8px;font-size:.7rem;color:var(--muted);cursor:pointer;margin-left:3px;">✕</button>
+        </div>
+      </div>
+      ${isCreator?`<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end;flex-shrink:0;">
+        <button onclick="copyAgentCreds(${i})" title="Copier identifiants" style="background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.18);border-radius:8px;padding:4px 8px;font-size:.68rem;color:var(--gold);cursor:pointer;">📋 Copier</button>
+        <button onclick="editAgentPass(${i})" title="Changer mot de passe" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:4px 8px;font-size:.68rem;color:var(--muted);cursor:pointer;">🔑 MDP</button>
+        <button onclick="deleteAgent(${i})" class="agent-del">🗑 Retirer</button>
+      </div>`:''}
     </div>`;
   });
   document.getElementById('agent-list').innerHTML=h;
+  // Section changer mot de passe admin
+  var adminSec = document.getElementById('admin-pass-section');
+  if(adminSec) adminSec.style.display = isCreator ? 'block' : 'none';
+}
+
+function toggleAgentPass(i){
+  const el = document.getElementById('apass-'+i);
+  const ag = getAgents()[i];
+  if(!el||!ag) return;
+  el.textContent = el.textContent==='••••••' ? ag.pass : '••••••';
+}
+
+function copyAgentCreds(i){
+  const ag = getAgents()[i];
+  if(!ag) return;
+  const txt = 'Kaffi-Pay Agent\nLogin: '+ag.user+'\nMot de passe: '+ag.pass+'\nURL: https://kaffi-pay.web.app';
+  navigator.clipboard.writeText(txt).then(function(){
+    showToast('📋 Identifiants copiés pour '+ag.name,'success');
+  }).catch(function(){
+    showToast('Login: '+ag.user+' | MDP: '+ag.pass,'success');
+  });
+}
+
+function editAgentPass(i){
+  const row = document.getElementById('edit-pass-row-'+i);
+  if(!row) return;
+  row.style.display = row.style.display==='none'||row.style.display==='' ? 'flex' : 'none';
+  if(row.style.display==='flex'){
+    var inp = document.getElementById('new-apass-'+i);
+    if(inp) inp.focus();
+  }
+}
+
+function cancelEditAgentPass(i){
+  var row = document.getElementById('edit-pass-row-'+i);
+  if(row) row.style.display='none';
+}
+
+function saveAgentPass(i){
+  const ag = getAgents();
+  const inp = document.getElementById('new-apass-'+i);
+  if(!inp||!ag[i]) return;
+  const p = inp.value.trim();
+  if(p.length<6){showToast('⚠️ Min. 6 caractères','error');return;}
+  ag[i].pass = p;
+  saveAgents(ag);
+  cancelEditAgentPass(i);
+  renderAgents();
+  showToast('✅ Mot de passe de '+ag[i].name+' mis à jour','success');
 }
 
 function toggleAddAgent(){
@@ -1651,6 +1737,21 @@ function deleteAgent(i){
   if(!confirm('Supprimer cet agent ?'))return;
   const ag=getAgents(); ag.splice(i,1); saveAgents(ag); renderAgents();
   showToast('🗑 Agent supprimé','warning');
+}
+
+function changeAdminPass(){
+  const p1 = document.getElementById('admin-new-pass').value;
+  const p2 = document.getElementById('admin-new-pass2').value;
+  if(!p1||p1.length<6){showToast('⚠️ Min. 6 caractères','error');return;}
+  if(p1!==p2){showToast('⚠️ Mots de passe différents','error');return;}
+  _adminPassCache = p1;
+  if(window.db && window.fsSetDoc && window.fsDoc){
+    window.fsSetDoc(window.fsDoc(window.db,'config','admin'),{pass:p1,updatedAt:new Date()}).then(function(){
+      showToast('✅ Mot de passe admin mis à jour','success');
+      document.getElementById('admin-new-pass').value='';
+      document.getElementById('admin-new-pass2').value='';
+    }).catch(function(e){showToast('❌ Erreur: '+e.message,'error');});
+  }
 }
 
 // ═══════════════════════════════════════════════════
@@ -2578,6 +2679,12 @@ try {
   if(typeof demarrerTimerRejet!=="undefined") window.demarrerTimerRejet=demarrerTimerRejet;
   if(typeof clearSmsLog!=="undefined") window.clearSmsLog=clearSmsLog;
   if(typeof addAgent!=="undefined") window.addAgent=addAgent;
+  if(typeof changeAdminPass!=="undefined") window.changeAdminPass=changeAdminPass;
+  if(typeof copyAgentCreds!=="undefined") window.copyAgentCreds=copyAgentCreds;
+  if(typeof toggleAgentPass!=="undefined") window.toggleAgentPass=toggleAgentPass;
+  if(typeof editAgentPass!=="undefined") window.editAgentPass=editAgentPass;
+  if(typeof cancelEditAgentPass!=="undefined") window.cancelEditAgentPass=cancelEditAgentPass;
+  if(typeof saveAgentPass!=="undefined") window.saveAgentPass=saveAgentPass;
   if(typeof adminCopy!=="undefined") window.adminCopy=adminCopy;
   if(typeof boutonPaiementRetrait!=="undefined") window.boutonPaiementRetrait=boutonPaiementRetrait;
   if(typeof checkURLAdmin!=="undefined") window.checkURLAdmin=checkURLAdmin;
