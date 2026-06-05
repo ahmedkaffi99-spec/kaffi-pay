@@ -10,6 +10,7 @@
 
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest }                    = require("firebase-functions/v2/https");
+const { onSchedule }                           = require("firebase-functions/v2/scheduler");
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
@@ -698,5 +699,37 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
     });
     console.error(`[rechargeCallback] 🚨 Ordre ${ref} → INTERVENTION MANUELLE`);
     res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// 8. AUTO-REJET — Ordres sans paiement après 1 minute
+// ══════════════════════════════════════════════════════════════
+// Tourne toutes les minutes. Cherche les dépôts "En attente"
+// créés il y a plus de 65 secondes et les rejette automatiquement.
+exports.autoRejetDelai = onSchedule(
+  { schedule: "every 1 minutes", region: "europe-west1", timeZone: "Africa/Djibouti" },
+  async () => {
+    const cutoff = new Date(Date.now() - 65 * 1000); // 65 secondes
+
+    const snap = await db.collection("orders")
+      .where("status",    "==", "En attente")
+      .where("type",      "==", "Dépôt")
+      .where("createdAt", "<",  cutoff)
+      .limit(50).get();
+
+    if (snap.empty) return;
+
+    const batch = db.batch();
+    for (const doc of snap.docs) {
+      batch.update(doc.ref, {
+        status:      "Rejeté",
+        rejetRaison: "Paiement Waafi non reçu dans le délai imparti (1 minute). Vérifiez votre Transfer ID et réessayez.",
+        rejetedAt:   FieldValue.serverTimestamp(),
+        autoRejected: true,
+      });
+    }
+    await batch.commit();
+    console.log(`[AutoRejet] ${snap.size} ordre(s) rejeté(s) — délai dépassé`);
   }
 );
