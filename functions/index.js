@@ -515,3 +515,59 @@ exports.smsWebhook = onRequest(
     res.json({ success: true, docId: docRef.id });
   }
 );
+
+// ══════════════════════════════════════════════════════════════
+// 7. CALLBACK MacroDroid → Résultat recharge 1xBet
+// ══════════════════════════════════════════════════════════════
+// MacroDroid appelle après succès ou échec de la recharge :
+// POST https://europe-west1-kaffi-pay.cloudfunctions.net/rechargeCallback
+// Body : { secret, ref, statut, id1xbet, montant, message }
+exports.rechargeCallback = onRequest(
+  { region: "europe-west1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Méthode non autorisée" });
+      return;
+    }
+
+    const { secret, ref, statut, id1xbet, montant, message } = req.body;
+
+    // Vérifier secret
+    if (secret !== "f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2") {
+      res.status(401).json({ error: "Secret invalide" });
+      return;
+    }
+
+    if (!ref || !statut) {
+      res.status(400).json({ error: "Champs 'ref' et 'statut' requis" });
+      return;
+    }
+
+    // Chercher l'ordre par ref
+    const snap = await db.collection("orders")
+      .where("orderId", "==", ref)
+      .limit(1).get();
+
+    if (snap.empty) {
+      res.status(404).json({ error: `Ordre ${ref} non trouvé` });
+      return;
+    }
+
+    const ordreDoc = snap.docs[0];
+    const estSucces = statut === "succes" || statut === "success" || statut === "ok";
+
+    // Mise à jour Firestore selon résultat
+    await ordreDoc.ref.update({
+      rechargeStatus:  estSucces ? "rechargé" : "erreur_recharge",
+      rechargeAt:      FieldValue.serverTimestamp(),
+      rechargeMessage: message || "",
+      rechargeId1xbet: id1xbet || "",
+      rechargeMontant: Number(montant || 0),
+      // Statut final visible sur le site
+      status: estSucces ? "Rechargé ✅" : "Erreur Recharge ❌",
+    });
+
+    console.log(`[rechargeCallback] Ordre ${ref} → ${estSucces ? "SUCCÈS" : "ÉCHEC"}: ${message}`);
+    res.json({ success: true, ref, recharge: estSucces ? "ok" : "erreur" });
+  }
+);
