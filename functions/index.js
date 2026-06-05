@@ -481,46 +481,32 @@ exports.autoConfirmation = onDocumentCreated(
 
     console.log(`[AutoConfirm] TransferID: ${transferId}, Montant: ${montantSMS} DJF, N°: ${numClient}`);
 
-    if (!transferId && !montantSMS) {
+    // Transfer ID strict — sans Transfer ID, aucune confirmation automatique
+    if (!transferId) {
       await db.collection("waafi_notifications").doc(docId).update({
-        status:    "erreur_parsing",
-        erreurMsg: "Impossible d'extraire Transfer ID ou Montant du SMS",
+        status:    "ignoré_sans_transferId",
+        erreurMsg: "Transfer ID absent du SMS — confirmation automatique impossible",
+        montantSMS,
+        numSMS:    numClient,
+        createdAt: FieldValue.serverTimestamp(),
       });
       return;
     }
 
-    // ── Chercher ordre correspondant (même logique que indexfinal22) ──
-    // Transfer ID seul suffit, OU montant + numéro ensemble
-    let ordreDoc  = null;
-    let matchType = "";
+    // ── Chercher ordre par Transfer ID strict uniquement ──────────
+    const snap = await db.collection("orders")
+      .where("waafitranfertID", "==", transferId)
+      .where("status", "==", "En attente")
+      .limit(1).get();
 
-    // Priorité 1 : Transfer ID exact
-    if (transferId) {
-      const snap = await db.collection("orders")
-        .where("waafitranfertID", "==", transferId)
-        .where("status", "==", "En attente")
-        .limit(1).get();
-      if (!snap.empty) { ordreDoc = snap.docs[0]; matchType = "transferId"; }
-    }
-
-    // Priorité 2 : Montant + Numéro expéditeur (si pas de match Transfer ID)
-    if (!ordreDoc && montantSMS && numClient) {
-      const snap = await db.collection("orders")
-        .where("status", "==", "En attente")
-        .where("montant", "==", String(montantSMS))
-        .limit(10).get();
-      for (const d of snap.docs) {
-        const o = d.data();
-        const tel = o.numeroPayment || o.waafiNumber || "";
-        if (tel && tel === numClient) { ordreDoc = d; matchType = "montant+num"; break; }
-      }
-    }
+    let ordreDoc  = snap.empty ? null : snap.docs[0];
+    let matchType = "transferId";
 
     if (!ordreDoc) {
-      // Aucun ordre — stocker pour rétro-match quand client soumettra plus tard
+      // Transfer ID reçu mais aucun ordre correspondant — stocker pour rétro-match
       await db.collection("waafi_notifications").doc(docId).update({
         status:        "non_matché",
-        erreurMsg:     `Aucun ordre En attente pour Transfer-Id ${transferId || "?"} / ${montantSMS} DJF / ${numClient}`,
+        erreurMsg:     `Aucun ordre En attente pour Transfer-Id ${transferId}`,
         transferIdSMS: transferId,
         numSMS:        numClient,
         montantSMS:    montantSMS,
