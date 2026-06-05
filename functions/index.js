@@ -18,7 +18,8 @@ const { googleAI, gemini20Flash }              = require("@genkit-ai/googleai");
 const { enableFirebaseTelemetry }              = require("@genkit-ai/firebase");
 
 // ── Télémétrie Firebase — active les traces dans Firebase Console → Genkit
-enableFirebaseTelemetry();
+// Wrappé en try-catch pour ne pas bloquer le démarrage si indisponible
+try { enableFirebaseTelemetry(); } catch(e) { console.warn("[Telemetry] non disponible:", e.message); }
 
 initializeApp();
 const db = getFirestore();
