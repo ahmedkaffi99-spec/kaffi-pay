@@ -840,6 +840,7 @@ input:-webkit-autofill:active {
     <div id="odm-date" style="font-size:0.65rem;color:var(--muted);margin-bottom:16px;"></div>
     <div id="odm-rows" style="display:flex;flex-direction:column;gap:0;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);margin-bottom:14px;"></div>
     <div id="odm-corr-note" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:10px;font-size:0.72rem;color:var(--warning);background:rgba(255,170,0,0.07);border:1px solid rgba(255,170,0,0.15);"></div>
+    <div id="odm-ia" style="display:none;margin-bottom:14px;"></div>
     <div id="odm-actions" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
 </div>
@@ -1554,6 +1555,63 @@ function openOrderDetail(ref){
   var corrDiv=document.getElementById('odm-corr-note');
   if(tx.correctionMsg){ corrDiv.style.display='block'; corrDiv.textContent='💬 '+tx.correctionMsg; }
   else { corrDiv.style.display='none'; }
+
+  // IA Analyse Gemini
+  var iaDiv=document.getElementById('odm-ia');
+  var iaHtml='';
+  var hasIa=tx.ia_score_fraude!=null||tx.ia_ecran_statut||tx.ia_preuve_valide!=null;
+  if(hasIa){
+    var risqueColor=tx.ia_risque==='élevé'?'var(--error)':tx.ia_risque==='moyen'?'var(--warning)':'var(--success)';
+    var risqueIcon=tx.ia_risque==='élevé'?'🔴':tx.ia_risque==='moyen'?'🟡':'🟢';
+    iaHtml='<div style="border-radius:12px;overflow:hidden;border:1px solid rgba(139,92,246,0.25);background:rgba(139,92,246,0.05);padding:12px 14px;">';
+    iaHtml+='<div style="font-size:0.68rem;font-weight:700;color:#a78bfa;letter-spacing:1px;margin-bottom:10px;">🤖 ANALYSE IA</div>';
+    if(tx.ia_score_fraude!=null){
+      var score=Number(tx.ia_score_fraude);
+      var barColor=score>=70?'var(--error)':score>=40?'var(--warning)':'var(--success)';
+      iaHtml+='<div style="margin-bottom:10px;">';
+      iaHtml+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">';
+      iaHtml+='<span style="font-size:0.67rem;color:var(--muted);">Score fraude</span>';
+      iaHtml+='<span style="font-size:0.75rem;font-weight:700;color:'+barColor+';">'+score+'/100</span>';
+      iaHtml+='</div>';
+      iaHtml+='<div style="height:4px;border-radius:99px;background:rgba(255,255,255,0.06);overflow:hidden;">';
+      iaHtml+='<div style="height:100%;width:'+score+'%;background:'+barColor+';border-radius:99px;transition:width 0.4s;"></div></div>';
+      if(tx.ia_risque){
+        iaHtml+='<div style="margin-top:6px;font-size:0.7rem;">'+risqueIcon+' Risque : <strong style="color:'+risqueColor+';">'+tx.ia_risque+'</strong>';
+        if(tx.ia_action){var actColor=tx.ia_action==='valider'?'var(--success)':tx.ia_action==='rejeter'?'var(--error)':'var(--warning)';iaHtml+=' &nbsp;·&nbsp; Action : <strong style="color:'+actColor+';">'+tx.ia_action+'</strong>';}
+        iaHtml+='</div>';
+      }
+      if(tx.ia_raisons&&tx.ia_raisons.length){
+        iaHtml+='<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:4px;">';
+        tx.ia_raisons.forEach(function(r){ iaHtml+='<span style="font-size:0.62rem;padding:2px 8px;border-radius:99px;background:rgba(255,255,255,0.06);color:var(--muted);">'+r+'</span>'; });
+        iaHtml+='</div>';
+      }
+      iaHtml+='</div>';
+    }
+    if(tx.ia_ecran_statut){
+      var eColor=tx.ia_ecran_statut==='success'?'var(--success)':tx.ia_ecran_statut==='failed'?'var(--error)':'var(--warning)';
+      var eIcon=tx.ia_ecran_statut==='success'?'✅':tx.ia_ecran_statut==='failed'?'❌':'🔄';
+      iaHtml+='<div style="padding-top:8px;border-top:1px solid rgba(255,255,255,0.05);margin-top:2px;">';
+      iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-bottom:4px;">Analyse écran recharge</div>';
+      iaHtml+='<div style="font-size:0.72rem;">'+eIcon+' Statut : <strong style="color:'+eColor+';">'+tx.ia_ecran_statut+'</strong>';
+      if(tx.ia_ecran_confiance!=null) iaHtml+=' &nbsp;·&nbsp; Confiance : <strong>'+Math.round(tx.ia_ecran_confiance*100)+'%</strong>';
+      iaHtml+='</div>';
+      if(tx.ia_ecran_raison) iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-top:3px;">'+tx.ia_ecran_raison+'</div>';
+      iaHtml+='</div>';
+    }
+    if(tx.ia_preuve_valide!=null){
+      var pColor=tx.ia_preuve_valide?'var(--success)':'var(--error)';
+      var pIcon=tx.ia_preuve_valide?'✅':'❌';
+      iaHtml+='<div style="padding-top:8px;border-top:1px solid rgba(255,255,255,0.05);margin-top:2px;">';
+      iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-bottom:4px;">Vérification preuve</div>';
+      iaHtml+='<div style="font-size:0.72rem;">'+pIcon+' Preuve : <strong style="color:'+pColor+';'+(tx.ia_preuve_valide?'':'')+'">'+( tx.ia_preuve_valide?'Valide':'Invalide')+'</strong>';
+      if(tx.ia_preuve_confiance!=null) iaHtml+=' &nbsp;·&nbsp; Confiance : <strong>'+Math.round(tx.ia_preuve_confiance*100)+'%</strong>';
+      iaHtml+='</div>';
+      if(tx.ia_preuve_raison) iaHtml+='<div style="font-size:0.67rem;color:var(--muted);margin-top:3px;">'+tx.ia_preuve_raison+'</div>';
+      iaHtml+='</div>';
+    }
+    iaHtml+='</div>';
+    iaDiv.innerHTML=iaHtml; iaDiv.style.display='block';
+  } else { iaDiv.style.display='none'; iaDiv.innerHTML=''; }
 
   // Actions
   var actDiv=document.getElementById('odm-actions');
