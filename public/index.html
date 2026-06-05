@@ -622,6 +622,7 @@ input:-webkit-autofill:active {
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
     <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>🔔</span>Notifs<div class="notif-dot" id="notif-bell-dot"></div></button>
     <button class="nav-tab" onclick="showPage('sms')" id="ntab-sms"><span>📡</span>SMS</button>
+    <button class="nav-tab" onclick="showPage('callbacks')" id="ntab-callbacks"><span>📲</span>Callbacks</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -741,6 +742,17 @@ input:-webkit-autofill:active {
         <div class="mini-field"><label>Confirmer</label><input type="password" id="admin-new-pass2" placeholder="••••••••"></div>
       </div>
       <button class="add-agent-btn" onclick="changeAdminPass()">✅ Mettre à jour</button>
+    </div>
+  </div>
+
+  <!-- CALLBACKS MACRODROID -->
+  <div class="page-section" id="page-callbacks">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div class="section-title">📲 Callbacks Recharge 1xBet</div>
+      <button class="action-btn" onclick="loadCallbacks()" style="font-size:.7rem;padding:6px 12px;">🔄 Actualiser</button>
+    </div>
+    <div id="callbacks-list" style="display:flex;flex-direction:column;gap:8px;">
+      <div style="text-align:center;padding:32px;color:var(--muted);font-size:0.78rem;">Chargement…</div>
     </div>
   </div>
 
@@ -1019,7 +1031,7 @@ function loginSuccess(u){
     var h = window.location.hash;
     if(h && h.startsWith('#admin-')){
       var page = h.replace('#admin-','');
-      var validPages = ['dashboard','orders','reserves','agents','sms'];
+      var validPages = ['dashboard','orders','reserves','agents','sms','callbacks'];
       if(validPages.indexOf(page)>=0){ setTimeout(function(){ showPage(page); },300); }
     }
   }catch(e){}
@@ -1671,7 +1683,7 @@ window.addEventListener('popstate', function(){
   if(!currentUser) return;
   if(hash.startsWith('#admin-')){
     var page = hash.replace('#admin-','');
-    var valid = ['dashboard','orders','reserves','agents','notifs','sms'];
+    var valid = ['dashboard','orders','reserves','agents','notifs','sms','callbacks'];
     if(valid.indexOf(page) >= 0) showPage(page);
   }
 });
@@ -1690,6 +1702,7 @@ function showPage(p){
   if(p==='dashboard'){ updateStats(); renderRecentTx(); }
   if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); renderNotifs(); }
   if(p==='sms') loadWaafiNotifs();
+  if(p==='callbacks') loadCallbacks();
 }
 
 function initDashboard(){
@@ -2881,6 +2894,7 @@ try {
   if(typeof sendCorrection!=="undefined") window.sendCorrection=sendCorrection;
   if(typeof setAdminPage!=="undefined") window.setAdminPage=setAdminPage;
   if(typeof setCorr!=="undefined") window.setCorr=setCorr;
+  if(typeof loadCallbacks!=="undefined") window.loadCallbacks=loadCallbacks;
   if(typeof loadWaafiNotifs!=="undefined") window.loadWaafiNotifs=loadWaafiNotifs;
   if(typeof showPage!=="undefined") window.showPage=showPage;
   if(typeof showScreen!=="undefined") window.showScreen=showScreen;
@@ -2949,6 +2963,65 @@ function loadWaafiNotifs(){
         +   ordreRef
         + '</div>'
         + erreur
+        + '</div>';
+    }).join('');
+  }).catch(function(e){
+    el.innerHTML = '<div style="text-align:center;padding:24px;color:#f44336;font-size:0.75rem;">Erreur : '+e.message+'</div>';
+  });
+}
+
+// ── Callbacks Recharge 1xBet — page admin ─────────────────────
+function loadCallbacks(){
+  var el = document.getElementById('callbacks-list');
+  if(!el || !window.db) return;
+  el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:0.78rem;">Chargement…</div>';
+
+  var TYPE_COLOR = {
+    'succes':       '#4caf50',
+    'retry':        '#ff9800',
+    'echec_manuel': '#f44336',
+  };
+  var TYPE_ICON = {
+    'succes':       '✅',
+    'retry':        '⏳',
+    'echec_manuel': '🚨',
+  };
+
+  var q = window.fsQuery(
+    window.fsCollection(window.db, 'callbacks'),
+    window.fsOrderBy('createdAt', 'desc'),
+    window.fsLimit(50)
+  );
+
+  window.fsGetDocs(q).then(function(snap){
+    if(snap.empty){
+      el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:0.78rem;">Aucun callback enregistré</div>';
+      return;
+    }
+    el.innerHTML = snap.docs.map(function(d){
+      var s = d.data();
+      var type    = s.type || 'inconnu';
+      var color   = TYPE_COLOR[type]  || 'var(--muted)';
+      var icon    = TYPE_ICON[type]   || '🔔';
+      var date    = s.createdAt && s.createdAt.seconds
+        ? new Date(s.createdAt.seconds*1000).toLocaleString('fr-FR')
+        : '—';
+      var montant   = s.montant != null ? Number(s.montant).toLocaleString()+' DJF' : '—';
+      var tentative = s.tentative != null ? s.tentative+'/3' : '—';
+      var ecran     = s.ecranTexte ? '<div style="font-size:.63rem;color:var(--muted);margin-top:4px;word-break:break-all;">📱 '+s.ecranTexte.substring(0,100)+'…</div>' : '';
+      return '<div style="border-radius:13px;padding:11px 14px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">'
+        +   '<span style="font-size:.67rem;font-weight:700;color:'+color+';text-transform:uppercase;letter-spacing:.5px;">'+icon+' '+type+'</span>'
+        +   '<span style="font-size:.58rem;color:var(--muted);">'+date+'</span>'
+        + '</div>'
+        + '<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:.64rem;color:var(--muted);margin-bottom:3px;">'
+        +   '<span>Ordre: <b style="color:var(--gold);">#'+(s.ordreRef||'—')+'</b></span>'
+        +   '<span>ID 1xBet: <b style="color:var(--text);">'+(s.id1xbet||'—')+'</b></span>'
+        +   '<span>Montant: <b style="color:var(--text);">'+montant+'</b></span>'
+        +   '<span>Tentative: <b style="color:var(--text);">'+tentative+'</b></span>'
+        + '</div>'
+        + '<div style="font-size:.63rem;color:var(--muted);">IA: '+(s.ia_statut||'—')+' — '+(s.ia_raison||'—')+'</div>'
+        + ecran
         + '</div>';
     }).join('');
   }).catch(function(e){

@@ -668,6 +668,18 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
         ia_ecran_raison:    analyseIA.raison,
         ia_ecran_confiance: analyseIA.confiance,
       });
+      await db.collection("callbacks").add({
+        type:       "succes",
+        ordreRef:   ref,
+        id1xbet:    id1xbet || ordre.userId1xBet || "",
+        montant:    Number(montant || ordre.montant || 0),
+        tentative:  retries + 1,
+        ia_statut:  analyseIA.statut,
+        ia_raison:  analyseIA.raison,
+        ia_confiance: analyseIA.confiance,
+        ecranTexte: texteEcran.substring(0, 300),
+        createdAt:  FieldValue.serverTimestamp(),
+      });
       console.log(`[rechargeCallback] ✅ Ordre ${ref} → RECHARGÉ (tentative ${retries + 1})`);
       res.json({ success: true, ref, recharge: "ok", tentative: retries + 1, ia: analyseIA });
       return;
@@ -685,6 +697,18 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
         ia_ecran_statut: analyseIA.statut,
         ia_ecran_raison: analyseIA.raison,
         lastRetryAt:     FieldValue.serverTimestamp(),
+      });
+      await db.collection("callbacks").add({
+        type:       "retry",
+        ordreRef:   ref,
+        id1xbet:    id1xbet || ordre.userId1xBet || "",
+        montant:    Number(montant || ordre.montant || 0),
+        tentative:  nouvelleTentative,
+        ia_statut:  analyseIA.statut,
+        ia_raison:  analyseIA.raison,
+        ia_confiance: analyseIA.confiance,
+        ecranTexte: texteEcran.substring(0, 300),
+        createdAt:  FieldValue.serverTimestamp(),
       });
       try {
         const id1xbetOrdre = id1xbet || ordre.userId1xBet || ordre.id1x || "";
@@ -706,6 +730,18 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
       rechargeMessage: "3 tentatives échouées",
       manuelRequis:    true,
       manuelRequsAt:   FieldValue.serverTimestamp(),
+    });
+    await db.collection("callbacks").add({
+      type:       "echec_manuel",
+      ordreRef:   ref,
+      id1xbet:    id1xbet || ordre.userId1xBet || "",
+      montant:    Number(montant || ordre.montant || 0),
+      tentative:  nouvelleTentative,
+      ia_statut:  analyseIA.statut,
+      ia_raison:  analyseIA.raison,
+      ia_confiance: analyseIA.confiance,
+      ecranTexte: texteEcran.substring(0, 300),
+      createdAt:  FieldValue.serverTimestamp(),
     });
     await db.collection("alertes_admin").add({
       type:      "recharge_echec_3x",
