@@ -1,6 +1,6 @@
 {
-  "name": "Kaffi Pay",
-  "short_name": "KaffiPay",
+  "name": "Kaffi-Pay",
+  "short_name": "Kaffi-Pay",
   "description": "Plateforme d'échange 1xBet & Waafi",
   "start_url": "/",
   "display": "standalone",
