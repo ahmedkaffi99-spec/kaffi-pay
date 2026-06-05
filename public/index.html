@@ -885,6 +885,7 @@ function checkURLAdmin(){
   } else if(hash.startsWith('#suivi-')){
     // Restaurer page suivi après refresh / pull-to-refresh
     var ref = decodeURIComponent(hash.replace('#suivi-',''));
+    if(!ref){ showScreen('client'); return; }
     suiviRef = ref;
     showScreen('suivi');
     try{ document.getElementById('suivi-ref').textContent = ref; }catch(e){}
@@ -1065,13 +1066,10 @@ async function saveTxFirebase(tx, _retries){
 }
 
 async function updateTxFirebase(ref, data){
-  try{
-    if(!window.db){ return; }
-    var tx = _txsCache.find(function(t){ return t.ref===ref||t.orderId===ref; });
-    if(tx && tx._fid){
-      await window.fsUpdateDoc(window.fsDoc(window.db,'orders',tx._fid), data);
-    }
-  } catch(e){ showToast('❌ Erreur mise à jour','error'); }
+  if(!window.db){ throw new Error('Firebase non initialisé'); }
+  var tx = _txsCache.find(function(t){ return t.ref===ref||t.orderId===ref; });
+  if(!tx || !tx._fid){ throw new Error('Ordre introuvable'); }
+  await window.fsUpdateDoc(window.fsDoc(window.db,'orders',tx._fid), data);
 }
 
 function listenTxs(){
@@ -1395,6 +1393,16 @@ function checkAlert(r1x,rW){
 // ADMIN — ORDRES
 // ═══════════════════════════════════════════════════
 function updateStatus(ref, newStatus){
+  if(!currentUser) return;
+  // Optimistic local update for instant UI feedback
+  var idx = _txsCache.findIndex(function(t){ return t.ref===ref||t.orderId===ref; });
+  var prevStatus = idx>=0 ? _txsCache[idx].status : null;
+  if(idx>=0){
+    _txsCache[idx].status=newStatus;
+    renderAllTx(currentFilter, document.getElementById('search-input')?.value||'');
+    renderRecentTx(); updateStats(); calcAndUpdateReserves();
+    lastTxCount=_txsCache.length;
+  }
   updateTxFirebase(ref, {status: newStatus}).then(function(){
     var tx = _txsCache.find(function(t){ return t.ref===ref||t.orderId===ref; });
     var montant = tx ? tx.montant : null;
@@ -1408,17 +1416,11 @@ function updateStatus(ref, newStatus){
     } else {
       showToast('🔄 Statut mis à jour','success');
     }
+  }).catch(function(e){
+    // Revert optimistic update on write failure
+    if(idx>=0 && prevStatus!==null){ _txsCache[idx].status=prevStatus; renderAllTx(currentFilter,''); renderRecentTx(); updateStats(); }
+    showToast('❌ Échec mise à jour — '+e.message,'error');
   });
-  // Update local cache immediately for UI
-  var idx = _txsCache.findIndex(function(t){ return t.ref===ref||t.orderId===ref; });
-  if(idx>=0){
-    _txsCache[idx].status=newStatus;
-    renderAllTx(currentFilter, document.getElementById('search-input')?.value||'');
-    renderRecentTx();
-    updateStats();
-    calcAndUpdateReserves();
-    lastTxCount=_txsCache.length;
-  }
 }
 
 function renderRecentTx(){
@@ -1739,7 +1741,18 @@ function showSuivi(ref, txData){
 
 function renderSuivi(){
   var tx = currentSuiviTx;
-  if(!tx) return;
+  if(!tx){
+    // Données pas encore chargées (après refresh) — afficher état chargement
+    var _icon=document.getElementById('suivi-icon');
+    var _stxt=document.getElementById('suivi-status-text');
+    var _sdesc=document.getElementById('suivi-status-desc');
+    var _prog=document.getElementById('suivi-progress');
+    if(_icon) _icon.textContent='🔄';
+    if(_stxt){ _stxt.textContent='Chargement…'; _stxt.style.color='var(--muted)'; }
+    if(_sdesc) _sdesc.textContent='Récupération de votre ordre en cours…';
+    if(_prog){ _prog.style.width='10%'; _prog.style.background='rgba(255,255,255,0.15)'; }
+    return;
+  }
   const isDepot=tx.type==='Dépôt';
   const status=tx.status||'En attente';
 
@@ -1943,20 +1956,24 @@ function setCorr(msg){
 }
 
 function sendCorrection(){
+  if(!currentUser) return;
   const msg = document.getElementById('corr-msg').value.trim();
   if(!msg){ showToast('⚠️ Saisissez un message','error'); return; }
-  const txs = getTxs();
-  const idx = txs.findIndex(t=>t.ref===correctionRef);
   var cidx=_txsCache.findIndex(function(t){return t.ref===correctionRef;});
   if(cidx>=0){
+    var prevStatus=_txsCache[cidx].status;
     _txsCache[cidx].status='Correction';
     _txsCache[cidx].correctionMsg=msg;
-    updateTxFirebase(correctionRef,{status:'Correction',correctionMsg:msg}).catch(function(){});
     renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:'');
-    renderRecentTx();
-    updateStats();
-    pushNotif('correction', 'Message : "'+msg+'"', correctionRef, null);
-    showToast('✏️ Correction envoyée au client','warning');
+    renderRecentTx(); updateStats();
+    updateTxFirebase(correctionRef,{status:'Correction',correctionMsg:msg}).then(function(){
+      pushNotif('correction', 'Message : "'+msg+'"', correctionRef, null);
+      showToast('✏️ Correction envoyée au client','warning');
+    }).catch(function(e){
+      _txsCache[cidx].status=prevStatus; delete _txsCache[cidx].correctionMsg;
+      renderAllTx(currentFilter,''); renderRecentTx();
+      showToast('❌ Échec envoi correction — '+e.message,'error');
+    });
   }
   closeCorrModal();
 }
@@ -2568,16 +2585,20 @@ try {
 
 // ── PWA Install Prompt ──
 var _pwaPrompt = null;
+var _pwaPromptActive = false;
 window.addEventListener('beforeinstallprompt', function(e){
   e.preventDefault();
   _pwaPrompt = e;
+  _pwaPromptActive = false;
   var btn = document.getElementById('pwa-install-btn');
   if(btn) btn.classList.add('show');
 });
 function doPWAInstall(){
-  if(!_pwaPrompt) return;
+  if(!_pwaPrompt || _pwaPromptActive) return;
+  _pwaPromptActive = true;
   _pwaPrompt.prompt();
   _pwaPrompt.userChoice.then(function(r){
+    _pwaPromptActive = false;
     if(r.outcome === 'accepted'){
       var btn = document.getElementById('pwa-install-btn');
       if(btn) btn.classList.remove('show');
