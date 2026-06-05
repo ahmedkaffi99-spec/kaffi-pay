@@ -227,8 +227,63 @@ exports.onNouvelOrdre = onDocumentCreated(
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
       updates.status     = "Rejeté";
       updates.flagRaison = "IA Fraude: " + (fraud.raisons||[]).join(", ");
+      await db.collection("orders").doc(docId).update(updates);
+      return;
     }
     await db.collection("orders").doc(docId).update(updates);
+
+    // ── 1c. Correspondance rétroactive — SMS déjà stocké avant l'ordre ──
+    // Le client a envoyé l'argent Waafi avant de soumettre le formulaire.
+    // On cherche un SMS non-matché des dernières 24h avec le même Transfer ID.
+    if (!transferId) return;
+    try {
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const smsSnap = await db.collection("waafi_notifications")
+        .where("transferIdSMS", "==", transferId)
+        .where("status", "==", "non_matché")
+        .limit(5).get();
+
+      for (const smsDoc of smsSnap.docs) {
+        const smsData   = smsDoc.data();
+        const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date(0);
+        if (createdAt < cutoff) continue; // SMS trop ancien (> 24h)
+
+        const montantSMS   = Number(smsData.montantSMS || 0);
+        const montantOrdre = Number(tx.montant || 0);
+        if (Math.abs(montantOrdre - montantSMS) > 5) continue; // montant incompatible
+
+        // Vérifier expéditeur si disponible
+        const numSMS    = smsData.numSMS || "";
+        const numOrdre  = tx.numeroPayment || tx.waafiNumber || "";
+        if (numSMS && numOrdre && numSMS !== numOrdre) continue; // expéditeur différent
+
+        // ✅ Match rétroactif trouvé — confirmer l'ordre
+        const ordreRef = tx.orderId || tx.ref || docId;
+        const id1xbet  = tx.userId1xBet || tx.id1x || tx.idUser || "";
+
+        await Promise.all([
+          db.collection("orders").doc(docId).update({
+            status:          "Confirmé",
+            confirmedAt:     FieldValue.serverTimestamp(),
+            confirmedBy:     "auto_waafi_retroactif",
+            montantRecu:     montantSMS,
+          }),
+          smsDoc.ref.update({ status: "traité_retroactif", ordreRef }),
+        ]);
+
+        console.log(`[RetroMatch] ✅ Ordre ${ordreRef} confirmé via SMS ${smsDoc.id}`);
+
+        if (id1xbet) {
+          const url = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+          fetch(url, { signal: AbortSignal.timeout(8000) })
+            .then(r => db.collection("orders").doc(docId).update({ webhookStatus: r.ok?"ok":"erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
+            .catch(() => db.collection("orders").doc(docId).update({ webhookStatus:"erreur_timeout" }));
+        }
+        break; // Un seul match suffit
+      }
+    } catch(e) {
+      console.error("[RetroMatch] erreur:", e.message);
+    }
   }
 );
 
@@ -391,11 +446,14 @@ exports.autoConfirmation = onDocumentCreated(
       .limit(1).get();
 
     if (ordreSnap.empty) {
+      // Stocker les données parsées pour correspondance rétroactive
+      // quand le client soumettra son ordre plus tard
       await db.collection("waafi_notifications").doc(docId).update({
-        status:    "non_matché",
-        erreurMsg: `Aucun ordre soumis avec Transfer ID ${transferId}`,
+        status:        "non_matché",
+        erreurMsg:     `Aucun ordre soumis avec Transfer ID ${transferId}`,
         transferIdSMS: transferId,
-        numSMS: numClient,
+        numSMS:        numClient,
+        montantSMS:    montantSMS,
       });
       return;
     }
