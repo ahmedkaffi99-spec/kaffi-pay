@@ -1,43 +1,150 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║           KAFFI PAY — CLOUD FUNCTIONS v2.1                  ║
- * ║  • Détection fraude & doublons (Gemini AI)                  ║
+ * ║         KAFFI PAY — CLOUD FUNCTIONS v3.0 (Genkit 100%)      ║
+ * ║  • Genkit flows avec output structuré (Zod schemas)         ║
+ * ║  • Détection fraude & doublons (Gemini 2.0 Flash)           ║
  * ║  • Validation automatique des ordres                        ║
- * ║  • Notification WhatsApp admin (Meta API — à configurer)    ║
- * ║  • Analyse admin Gemini (résumé, prédictions)               ║
+ * ║  • Analyse admin (résumé, prédictions, score santé)         ║
  * ║  • Vérification preuves paiement (Gemini Vision)            ║
+ * ║  • Auto-confirmation SMS Waafi → MacroDroid 1xBet           ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { onCall, onRequest }                    = require("firebase-functions/v2/https");
+const { onCall }                               = require("firebase-functions/v2/https");
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
-const { GoogleGenerativeAI }                   = require("@google/generative-ai");
+const { genkit, z }                            = require("genkit");
+const { googleAI, gemini20Flash }              = require("@genkit-ai/googleai");
 
 initializeApp();
 const db = getFirestore();
 
-// ── Secrets ───────────────────────────────────────────────────
-const GEMINI_KEY   = defineSecret("GEMINI_KEY");
+// ── Secret Firebase ────────────────────────────────────────────
+const GEMINI_KEY = defineSecret("GEMINI_KEY");
 
-function getGemini(key) {
-  const genAI = new GoogleGenerativeAI(key);
-  return genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+// ── Instance Genkit — initialisée au premier appel runtime ────
+let _ai = null;
+function getAI() {
+  if (!_ai) {
+    _ai = genkit({
+      plugins: [googleAI({ apiKey: GEMINI_KEY.value() })],
+      model: gemini20Flash,
+    });
+  }
+  return _ai;
 }
 
 // ══════════════════════════════════════════════════════════════
-// 1. NOUVEL ORDRE → Fraude + Doublons + Alerte WhatsApp admin
+// SCHEMAS ZOD — Output structuré garanti par Genkit
+// ══════════════════════════════════════════════════════════════
+
+const FraudeSchema = z.object({
+  score_fraude: z.number().describe("Score de fraude de 0 à 100"),
+  risque:       z.enum(["faible", "moyen", "élevé"]),
+  raisons:      z.array(z.string()).describe("Liste des raisons du score"),
+  action:       z.enum(["valider", "vérifier", "rejeter"]),
+});
+
+const AnalyseAdminSchema = z.object({
+  resume:             z.string().describe("Résumé en 2 phrases"),
+  alerte:             z.string().nullable().describe("Problème urgent ou null"),
+  conseil:            z.string().describe("1 conseil actionnable"),
+  prediction_demain:  z.number().describe("Volume prédit en DJF"),
+  heure_pic:          z.string().describe("Heure de pointe ex: 14h-16h"),
+  score_sante:        z.number().describe("Score santé de 0 à 100"),
+});
+
+const PreuveSchema = z.object({
+  est_valide:                  z.boolean(),
+  transfer_id_detecte:         z.string().nullable(),
+  montant_detecte:             z.number().nullable(),
+  expediteur_detecte:          z.string().nullable(),
+  correspondance_montant:      z.boolean(),
+  correspondance_transfer_id:  z.boolean(),
+  confiance:                   z.number().describe("Niveau de confiance 0 à 100"),
+  raison:                      z.string().describe("Explication courte"),
+});
+
+// ══════════════════════════════════════════════════════════════
+// FLOWS GENKIT — Logique AI réutilisable et observable
+// ══════════════════════════════════════════════════════════════
+
+async function flowAnalyseFraude(ai, tx, transferId) {
+  const { output } = await ai.generate({
+    model: gemini20Flash,
+    prompt: `Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
+
+Transaction à analyser :
+- Type: ${tx.type || "?"}
+- Montant: ${tx.montant} DJF
+- Transfer ID: ${transferId || "?"}
+- N° Expéditeur: ${tx.numeroPayment || "?"}
+- Heure soumission: ${new Date().getHours()}h
+
+Règles strictes :
+1. Montant > 50 000 DJF → suspect
+2. Transfer ID < 6 chiffres → invalide
+3. Numéro ne commence pas par 77 → suspect
+4. Montant < 50 DJF → invalide
+5. Soumission entre 00h et 05h → risque élevé`,
+    output: { schema: FraudeSchema },
+  });
+  return output || { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
+}
+
+async function flowAnalyseAdmin(ai, stats, derniersTx) {
+  const { output } = await ai.generate({
+    model: gemini20Flash,
+    prompt: `Tu es l'assistant IA de Kaffi Pay (Djibouti, plateforme d'échange 1xBet↔Waafi).
+
+Données des 100 dernières transactions :
+- Confirmées: ${stats.confirmes} — Volume: ${stats.volume.toLocaleString()} DJF
+- En attente: ${stats.attente}
+- Rejetées: ${stats.rejetes}
+- Taux confirmation: ${stats.taux}%
+- Montant moyen: ${stats.moyennne} DJF
+
+5 dernières transactions :
+${derniersTx.map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} — ${t.date}`).join("\n")}
+
+Analyse la situation et donne des insights actionnables.`,
+    output: { schema: AnalyseAdminSchema },
+  });
+  return output;
+}
+
+async function flowVerifPreuve(ai, imageBase64, mimeType, montantAttendu, transferIdAttendu) {
+  const { output } = await ai.generate({
+    model: gemini20Flash,
+    prompt: [
+      {
+        text: `Tu vérifies une capture d'écran de paiement Waafi pour Kaffi Pay (Djibouti).
+
+Montant attendu: ${montantAttendu} DJF
+Transfer ID attendu: ${transferIdAttendu}
+
+Analyse l'image et vérifie si le paiement correspond.`,
+      },
+      {
+        media: { url: `data:${mimeType || "image/jpeg"};base64,${imageBase64}` },
+      },
+    ],
+    output: { schema: PreuveSchema },
+  });
+  return output;
+}
+
+// ══════════════════════════════════════════════════════════════
+// 1. NOUVEL ORDRE → Fraude + Doublons
 // ══════════════════════════════════════════════════════════════
 exports.onNouvelOrdre = onDocumentCreated(
   { document: "orders/{docId}", region: "europe-west1", secrets: [GEMINI_KEY] },
   async (event) => {
-    const tx        = event.data.data();
-    const docId     = event.params.docId;
-    const ref       = tx.orderId || tx.ref || docId;
-    const transferId= tx.waafitranfertID || tx.hash || "";
-    const model     = getGemini(GEMINI_KEY.value());
+    const tx         = event.data.data();
+    const docId      = event.params.docId;
+    const transferId = tx.waafitranfertID || tx.hash || "";
 
     // ── 1a. Détection doublons ─────────────────────────────────
     if (transferId) {
@@ -52,44 +159,19 @@ exports.onNouvelOrdre = onDocumentCreated(
           flagRaison: "Doublon — Transfer ID déjà utilisé",
           flaggedAt:  FieldValue.serverTimestamp(),
         });
-
-        // Alerte WhatsApp admin
         return;
       }
     }
 
-    // ── 1b. Analyse fraude Gemini ──────────────────────────────
-    const fraudPrompt = `
-Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
-Réponds UNIQUEMENT en JSON valide, sans texte autour.
-
-{
-  "score_fraude": 0-100,
-  "risque": "faible"|"moyen"|"élevé",
-  "raisons": ["raison1"],
-  "action": "valider"|"vérifier"|"rejeter"
-}
-
-Transaction :
-- Type: ${tx.type}
-- Montant: ${tx.montant} DJF
-- Transfer ID: ${transferId}
-- N° Expéditeur: ${tx.numeroPayment || "?"}
-- Heure: ${new Date().getHours()}h
-
-Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numéro ne commence pas par 77 = suspect.
-`;
-
+    // ── 1b. Flow Genkit — Analyse fraude ──────────────────────
+    const ai = getAI();
     let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
     try {
-      const aiResp = await model.generateContent(fraudPrompt);
-      const txt    = aiResp.response.text().replace(/```json|```/g, "").trim();
-      fraud        = JSON.parse(txt);
+      fraud = await flowAnalyseFraude(ai, tx, transferId);
     } catch (e) {
-      console.error("Gemini fraud error:", e);
+      console.error("[Genkit] flowAnalyseFraude error:", e.message);
     }
 
-    // Sauvegarder analyse IA
     await db.collection("orders").doc(docId).update({
       ia_score_fraude: fraud.score_fraude,
       ia_risque:       fraud.risque,
@@ -102,14 +184,14 @@ Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numér
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
       await db.collection("orders").doc(docId).update({
         status:     "Rejeté",
-        flagRaison: "IA Fraude: " + fraud.raisons.join(", "),
+        flagRaison: "IA Fraude: " + (fraud.raisons || []).join(", "),
       });
     }
   }
 );
 
 // ══════════════════════════════════════════════════════════════
-// 2. ORDRE CONFIRMÉ → Notification WhatsApp client
+// 2. ORDRE MODIFIÉ → Notification statut client
 // ══════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
   { document: "transactions/{docId}", secrets: [] },
@@ -124,27 +206,22 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     let msg = "";
     if (after.status === "Confirmé") {
-      msg = `✅ *Kaffi Pay* — Ordre Confirmé !\n\nRéf: ${ref}\nMontant: ${montant} DJF\n\nVotre compte 1xBet a été crédité. Merci 🙏`;
+      msg = `✅ *Kaffi-Pay* — Ordre Confirmé !\n\nRéf: ${ref}\nMontant: ${montant} DJF\n\nVotre compte 1xBet a été crédité. Merci 🙏`;
     } else if (after.status === "Rejeté") {
-      msg = `❌ *Kaffi Pay* — Ordre Rejeté\n\nRéf: ${ref}\n${after.flagRaison || ""}\n\nContactez le support WhatsApp pour aide.`;
+      msg = `❌ *Kaffi-Pay* — Ordre Rejeté\n\nRéf: ${ref}\n${after.flagRaison || ""}\n\nContactez le support pour aide.`;
     } else if (after.status === "Correction") {
-      msg = `✏️ *Kaffi Pay* — Correction Requise\n\nRéf: ${ref}\n${after.correctionMsg || "Veuillez corriger votre ordre."}\n\nRépondez à ce message pour aide.`;
+      msg = `✏️ *Kaffi-Pay* — Correction Requise\n\nRéf: ${ref}\n${after.correctionMsg || "Veuillez corriger votre ordre."}`;
     } else if (after.status === "Argent Reçu") {
-      msg = `💰 *Kaffi Pay* — Paiement Reçu !\n\nRéf: ${ref}\nMontant: ${montant} DJF\nCrédit en cours... quelques instants.`;
+      msg = `💰 *Kaffi-Pay* — Paiement Reçu !\n\nRéf: ${ref}\nMontant: ${montant} DJF\nCrédit en cours...`;
     }
 
     if (!msg || !tel) return;
-
-    try {
-      const clientTel = tel.startsWith("+") ? tel : `+253${tel}`;
-    } catch (e) {
-      console.warn("WhatsApp client error:", e.message);
-    }
+    console.log(`[Notification] ${tel} → ${after.status}`);
   }
 );
 
 // ══════════════════════════════════════════════════════════════
-// 4. GEMINI — Analyse admin (résumé + prédictions)
+// 3. GENKIT FLOW — Analyse admin (résumé + prédictions)
 // ══════════════════════════════════════════════════════════════
 exports.geminiAnalyseAdmin = onCall(
   { secrets: [GEMINI_KEY] },
@@ -157,45 +234,30 @@ exports.geminiAnalyseAdmin = onCall(
     const attente   = txs.filter((t) => t.status === "En attente");
     const rejetes   = txs.filter((t) => t.status === "Rejeté");
     const volume    = confirmes.reduce((s, t) => s + Number(t.montant || 0), 0);
-    const model     = getGemini(GEMINI_KEY.value());
+    const taux      = txs.length ? Math.round((confirmes.length / txs.length) * 100) : 0;
+    const moyennne  = confirmes.length ? Math.round(volume / confirmes.length) : 0;
 
-    const prompt = `
-Tu es l'assistant IA de Kaffi Pay (Djibouti).
-Réponds UNIQUEMENT en JSON valide.
-
-Données (100 dernières transactions) :
-- Confirmées: ${confirmes.length} — Volume: ${volume.toLocaleString()} DJF
-- En attente: ${attente.length}
-- Rejetées: ${rejetes.length}
-- Taux confirmation: ${txs.length ? Math.round((confirmes.length/txs.length)*100) : 0}%
-- Montant moyen: ${confirmes.length ? Math.round(volume/confirmes.length) : 0} DJF
-
-5 dernières:
-${txs.slice(0, 5).map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} — ${t.date}`).join("\n")}
-
-{
-  "resume": "résumé 2 phrases",
-  "alerte": "problème urgent ou null",
-  "conseil": "1 conseil",
-  "prediction_demain": nombre_djf,
-  "heure_pic": "ex: 14h-16h",
-  "score_sante": 0-100
-}
-`;
-
-    const aiResp = await model.generateContent(prompt);
-    const txt    = aiResp.response.text().replace(/```json|```/g, "").trim();
-
+    const ai = getAI();
     try {
-      return { success: true, data: JSON.parse(txt), stats: { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume } };
-    } catch {
-      return { success: false, error: "Erreur parsing IA" };
+      const data = await flowAnalyseAdmin(
+        ai,
+        { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume, taux, moyennne },
+        txs.slice(0, 5)
+      );
+      return {
+        success: true,
+        data,
+        stats: { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume },
+      };
+    } catch (e) {
+      console.error("[Genkit] flowAnalyseAdmin error:", e.message);
+      return { success: false, error: "Erreur analyse IA" };
     }
   }
 );
 
 // ══════════════════════════════════════════════════════════════
-// 5. GEMINI VISION — Vérification preuve paiement
+// 4. GENKIT VISION — Vérification preuve paiement (image)
 // ══════════════════════════════════════════════════════════════
 exports.geminiVerifPreuve = onCall(
   { secrets: [GEMINI_KEY] },
@@ -203,36 +265,11 @@ exports.geminiVerifPreuve = onCall(
     const { imageBase64, mimeType, ordreRef, montantAttendu, transferIdAttendu } = request.data;
     if (!imageBase64) throw new Error("Image requise");
 
-    const model = getGemini(GEMINI_KEY.value());
-
-    const prompt = `
-Tu vérifies une preuve de paiement Waafi pour Kaffi Pay (Djibouti).
-Réponds UNIQUEMENT en JSON valide.
-
-Montant attendu: ${montantAttendu} DJF
-Transfer ID attendu: ${transferIdAttendu}
-
-{
-  "est_valide": true|false,
-  "transfer_id_detecte": "ID ou null",
-  "montant_detecte": nombre ou null,
-  "expediteur_detecte": "numéro ou null",
-  "correspondance_montant": true|false,
-  "correspondance_transfer_id": true|false,
-  "confiance": 0-100,
-  "raison": "explication courte"
-}
-`;
-
-    const result = await model.generateContent([
-      prompt,
-      { inlineData: { data: imageBase64, mimeType: mimeType || "image/jpeg" } },
-    ]);
-
-    const txt = result.response.text().replace(/```json|```/g, "").trim();
+    const ai = getAI();
     try {
-      const parsed = JSON.parse(txt);
-      if (ordreRef) {
+      const parsed = await flowVerifPreuve(ai, imageBase64, mimeType, montantAttendu, transferIdAttendu);
+
+      if (ordreRef && parsed) {
         const snap = await db.collection("orders")
           .where("orderId", "==", ordreRef).limit(1).get();
         if (!snap.empty) {
@@ -245,85 +282,63 @@ Transfer ID attendu: ${transferIdAttendu}
         }
       }
       return { success: true, data: parsed };
-    } catch {
+    } catch (e) {
+      console.error("[Genkit] flowVerifPreuve error:", e.message);
       return { success: false, error: "Impossible d'analyser l'image" };
     }
   }
 );
 
 // ══════════════════════════════════════════════════════════════
-// 6. AUTO-CONFIRMATION — SMS Waafi reçu → Ordre confirmé auto
+// 5. AUTO-CONFIRMATION — SMS Waafi → Ordre confirmé → 1xBet
 // ══════════════════════════════════════════════════════════════
-//
-// Flux :
-//   MacroDroid détecte SMS Waafi
-//   → écrit dans Firestore collection "waafi_notifications"
-//   → cette fonction se déclenche automatiquement
-//   → cherche l'ordre correspondant (Transfer ID + Montant)
-//   → confirme l'ordre si correspondance trouvée
-//   → envoie WhatsApp au client
-//
 exports.autoConfirmation = onDocumentCreated(
   { document: "waafi_notifications/{docId}", region: "europe-west1", secrets: [] },
   async (event) => {
     const sms   = event.data.data();
     const docId = event.params.docId;
 
-    // Ignorer si déjà traité
     if (sms.status === "traité" || sms.status === "en_cours") return;
 
-    // ── Vérifier secret si présent ──────────────────────────────
+    // ── Vérifier secret ────────────────────────────────────────
     if (sms.secret && sms.secret !== "f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2") {
-      await db.collection("waafi_notifications").doc(docId).update({
-        status: "rejeté_secret_invalide",
-      });
+      await db.collection("waafi_notifications").doc(docId).update({ status: "rejeté_secret_invalide" });
       return;
     }
 
-    // Marquer comme "en cours" pour éviter double traitement
     await db.collection("waafi_notifications").doc(docId).update({
-      status: "en_cours",
+      status:      "en_cours",
       processedAt: FieldValue.serverTimestamp(),
     });
 
-    // ── Parser le SMS Waafi ────────────────────────────────────
-    // Format SMS Waafi :
-    // "Transfer-Id: 75973739, You have Received DJF 1000 from Client(77043065), Your Balance is: DJF XXXX."
+    // ── Parser SMS Waafi ───────────────────────────────────────
     const notification = sms.notification || sms.not_body || "";
-    const title        = sms.not_title || "";
 
-    // Extraire Transfer ID
     const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i);
     const transferId    = transferMatch ? transferMatch[1].trim() : null;
 
-    // Extraire Montant
     const montantMatch = notification.match(/Received\s+DJF\s+([\d,]+)/i);
-    const montantSMS   = montantMatch
-      ? Number(montantMatch[1].replace(/,/g, ""))
-      : null;
+    const montantSMS   = montantMatch ? Number(montantMatch[1].replace(/,/g, "")) : null;
 
-    // Extraire Numéro expéditeur
     const numMatch  = notification.match(/\((\d{8})\)/);
     const numClient = numMatch ? numMatch[1] : null;
 
-    console.log(`SMS Waafi → TransferID: ${transferId}, Montant: ${montantSMS} DJF, N°: ${numClient}`);
+    console.log(`[AutoConfirm] TransferID: ${transferId}, Montant: ${montantSMS} DJF, N°: ${numClient}`);
 
     if (!transferId || !montantSMS) {
       await db.collection("waafi_notifications").doc(docId).update({
-        status:      "erreur_parsing",
-        erreurMsg:   "Impossible d'extraire Transfer ID ou Montant du SMS",
+        status:    "erreur_parsing",
+        erreurMsg: "Impossible d'extraire Transfer ID ou Montant du SMS",
       });
       return;
     }
 
     // ── Chercher l'ordre correspondant ────────────────────────
-    // Stratégie 1 : par Transfer ID exact
     let ordreSnap = await db.collection("orders")
       .where("waafitranfertID", "==", transferId)
       .where("status", "==", "En attente")
       .limit(1).get();
 
-    // Stratégie 2 : par montant + numéro si Transfer ID pas trouvé
     if (ordreSnap.empty && numClient) {
       ordreSnap = await db.collection("orders")
         .where("numeroPayment", "==", numClient)
@@ -331,10 +346,7 @@ exports.autoConfirmation = onDocumentCreated(
         .limit(1).get();
     }
 
-    // Stratégie 3 supprimée — trop risquée (faux positifs)
-
     if (ordreSnap.empty) {
-      // Aucun ordre trouvé — alerter l'admin
       await db.collection("waafi_notifications").doc(docId).update({
         status:    "non_matché",
         erreurMsg: `Aucun ordre en attente pour Transfer ID ${transferId} / ${montantSMS} DJF`,
@@ -342,24 +354,22 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ── Ordre trouvé → Confirmer ───────────────────────────────
-    const ordreDoc  = ordreSnap.docs[0];
-    const ordre     = ordreDoc.data();
-    const ordreRef  = ordre.orderId || ordre.ref || ordreDoc.id;
+    // ── Vérifier montant (±5 DJF tolérance) ──────────────────
+    const ordreDoc     = ordreSnap.docs[0];
+    const ordre        = ordreDoc.data();
+    const ordreRef     = ordre.orderId || ordre.ref || ordreDoc.id;
     const montantOrdre = Number(ordre.montant || 0);
 
-    // Vérification tolérance montant (±5 DJF pour arrondi)
-    const diff = Math.abs(montantOrdre - montantSMS);
-    if (diff > 5) {
+    if (Math.abs(montantOrdre - montantSMS) > 5) {
       await db.collection("waafi_notifications").doc(docId).update({
         status:    "montant_incorrect",
         erreurMsg: `Montant SMS (${montantSMS}) ≠ Montant ordre (${montantOrdre})`,
-        ordreRef:  ordreRef,
+        ordreRef,
       });
       return;
     }
 
-    // ✅ Tout correspond → Confirmer automatiquement
+    // ✅ Confirmer automatiquement ─────────────────────────────
     await ordreDoc.ref.update({
       status:          "Confirmé",
       confirmedAt:     FieldValue.serverTimestamp(),
@@ -368,13 +378,12 @@ exports.autoConfirmation = onDocumentCreated(
       montantRecu:     montantSMS,
     });
 
-    // Marquer SMS comme traité
     await db.collection("waafi_notifications").doc(docId).update({
       status:   "traité",
-      ordreRef: ordreRef,
+      ordreRef,
     });
 
-    // ── Déclencher webhook MacroDroid → Recharge 1xBet ──────────
+    // ── Déclencher MacroDroid → Recharge 1xBet ────────────────
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
     if (id1xbet) {
       try {
@@ -384,17 +393,11 @@ exports.autoConfirmation = onDocumentCreated(
           webhookStatus: resp.ok ? "ok" : "erreur_" + resp.status,
           webhookAt:     FieldValue.serverTimestamp(),
         });
+        console.log(`[MacroDroid] webhook ${resp.ok ? "OK" : "ERREUR " + resp.status}`);
       } catch (e) {
         await ordreDoc.ref.update({ webhookStatus: "erreur_timeout" });
+        console.error("[MacroDroid] timeout:", e.message);
       }
-    }
-
-    // WhatsApp client
-    const tel = ordre.waafiNumber || ordre.tel || ordre.numeroPayment || numClient || "";
-    if (tel) {
-      try {
-        const clientTel = tel.startsWith("+") ? tel : `+253${tel}`;
-      } catch (e) { console.warn("WhatsApp client error:", e.message); }
     }
   }
 );
