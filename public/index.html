@@ -3,17 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-<title>Kaffi-Pay</title>
+<title>Kaffi-Pay — Échange 1xBet & Waafi · Djibouti</title>
 <meta name="theme-color" content="#07101e">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Kaffi-Pay">
-<meta name="description" content="Kaffi-Pay — Plateforme d'échange 1xBet & Waafi">
+<meta name="description" content="Kaffi-Pay — Plateforme d'échange rapide et sécurisée entre 1xBet et Waafi à Djibouti. Déposez et retirez vos fonds en quelques minutes, 24h/24.">
+<meta name="keywords" content="kaffi pay, kaffipay, échange 1xbet waafi djibouti, dépôt 1xbet waafi, retrait 1xbet djibouti">
+<meta property="og:title" content="Kaffi-Pay — Échange 1xBet & Waafi · Djibouti">
+<meta property="og:description" content="Plateforme d'échange rapide et sécurisée entre 1xBet et Waafi à Djibouti. Déposez et retirez vos fonds en quelques minutes, 24h/24.">
+<meta property="og:image" content="/icon-512.png">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="fr_DJ">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Kaffi-Pay — Échange 1xBet & Waafi">
+<meta name="twitter:description" content="Plateforme d'échange rapide et sécurisée entre 1xBet et Waafi à Djibouti. 24h/24.">
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+<link rel="shortcut icon" href="/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 
@@ -409,12 +419,12 @@ input:-webkit-autofill:active {
         <div class="login-logo-name">Kaffi<span>-Pay</span></div>
       </div>
 
-      <div id="sec-fields" style="display:none;">
-        <div class="login-field"><label>Identifiant</label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username"></div>
-        <div class="login-field"><label>Mot de passe</label><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+      <div id="sec-fields" style="display:none;" aria-hidden="true">
+        <div class="login-field"><label aria-hidden="true"> </label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username" aria-label="Identifiant"></div>
+        <div class="login-field"><label aria-hidden="true"> </label><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" aria-label="Mot de passe"></div>
       </div>
 
-      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;">🔓 Connexion</button>
+      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;" aria-label="Accéder">🔓 Accéder</button>
       <div class="login-error" id="login-error"></div>
       <div class="login-attempts" id="login-attempts"></div>
     </div>
