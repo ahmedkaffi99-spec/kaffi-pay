@@ -890,7 +890,7 @@ function checkURLAdmin(){
     suiviRef = ref;
     showScreen('suivi');
     try{ document.getElementById('suivi-ref').textContent = ref; }catch(e){}
-    // currentSuiviTx sera restauré depuis _txsCache quand listenTxs tirera
+    renderSuivi(); // affiche état chargement immédiatement (⏳ → 🔄)
   } else {
     showScreen('client');
   }
