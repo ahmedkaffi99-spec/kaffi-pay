@@ -78,6 +78,9 @@ window.addEventListener('online', function() {
       var toast = document.getElementById('toast');
       if(toast){ toast.textContent = '✅ Connexion rétablie'; toast.className = 'toast show success'; setTimeout(function(){ toast.className='toast'; }, 3000); }
       window.dispatchEvent(new Event('firebase-ready'));
+      // Re-souscription listeners après reconnexion
+      if(typeof listenTxs === 'function') setTimeout(listenTxs, 1000);
+      if(typeof startSmsListener === 'function') setTimeout(startSmsListener, 1500);
     });
   }
 });
@@ -1089,8 +1092,15 @@ function listenTxs(){
       }
       // Refresh suivi si ouvert
       if(suiviRef) renderSuivi();
+    }, function(err){
+      // Erreur listener → re-souscription automatique après 5s
+      console.warn('[listenTxs] erreur:', err.code);
+      _unsubTxs = null;
+      setTimeout(function(){ if(window.db) listenTxs(); }, 5000);
     });
-  } catch(e){}
+  } catch(e){
+    setTimeout(function(){ if(window.db) listenTxs(); }, 5000);
+  }
 }
 
 // Agents stockés dans Firestore
@@ -2253,9 +2263,16 @@ function startSmsListener(){
           traiterSmsWaafi(texte, docId);
         }
       });
+    }, function(err){
+      // Erreur listener → re-souscription automatique après 5s
+      console.warn('[startSmsListener] erreur:', err.code);
+      _smsListener = null;
+      setTimeout(function(){ if(window.db) startSmsListener(); }, 5000);
     });
     pushNotif('sms_recu', '📡 Listener SMS Waafi actif — en attente de notifications MacroDroid.', null, null);
-  }catch(e){}
+  }catch(e){
+    setTimeout(function(){ if(window.db) startSmsListener(); }, 5000);
+  }
 }
 
 async function traiterSmsWaafi(texte, smsId){
