@@ -194,58 +194,41 @@ Analyse l'image et vérifie si le paiement correspond exactement.`,
 // 1. NOUVEL ORDRE → Fraude + Doublons
 // ══════════════════════════════════════════════════════════════
 exports.onNouvelOrdre = onDocumentCreated(
-  { document: "orders/{docId}", region: "europe-west1", secrets: [GEMINI_KEY] },
+  { document: "orders/{docId}", region: "europe-west1", secrets: [GEMINI_KEY], minInstances: 1, concurrency: 80 },
   async (event) => {
     const tx         = event.data.data();
     const docId      = event.params.docId;
     const transferId = tx.waafitranfertID || tx.hash || "";
 
-    // ── 1a. Détection doublons ─────────────────────────────────
-    if (transferId) {
-      const existing = await db.collection("orders")
-        .where("waafitranfertID", "==", transferId)
-        .where("__name__", "!=", docId)
-        .limit(1).get();
-
-      if (!existing.empty) {
-        await db.collection("orders").doc(docId).update({
-          status:     "Rejeté",
-          flagRaison: "Doublon — Transfer ID déjà utilisé",
-          flaggedAt:  FieldValue.serverTimestamp(),
-        });
-        return;
-      }
-    }
-
-    // ── 1b. Flow Genkit — Analyse fraude ──────────────────────
+    // ── 1a+1b. Doublon + Fraude lancés en parallèle ───────────
     const { analyseFraude } = getFlows();
-    let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
-    try {
-      fraud = await analyseFraude({
+
+    const [existingSnap, fraud] = await Promise.all([
+      transferId
+        ? db.collection("orders").where("waafitranfertID","==",transferId).where("__name__","!=",docId).limit(1).get()
+        : Promise.resolve({ empty: true }),
+      analyseFraude({
         type:          tx.type || "?",
         montant:       Number(tx.montant || 0),
         transferId:    transferId,
         numeroPayment: tx.numeroPayment || "",
         heure:         new Date().getHours(),
-      });
-    } catch (e) {
-      console.error("[Genkit] analyseFraude error:", e.message);
-    }
+      }).catch(() => ({ score_fraude:0, risque:"faible", raisons:[], action:"valider" })),
+    ]);
 
-    await db.collection("orders").doc(docId).update({
-      ia_score_fraude: fraud.score_fraude,
-      ia_risque:       fraud.risque,
-      ia_raisons:      fraud.raisons,
-      ia_action:       fraud.action,
-      ia_analysedAt:   FieldValue.serverTimestamp(),
-    });
-
-    if (fraud.action === "rejeter" || fraud.risque === "élevé") {
+    if (!existingSnap.empty) {
       await db.collection("orders").doc(docId).update({
-        status:     "Rejeté",
-        flagRaison: "IA Fraude: " + (fraud.raisons || []).join(", "),
+        status:"Rejeté", flagRaison:"Doublon — Transfer ID déjà utilisé", flaggedAt:FieldValue.serverTimestamp(),
       });
+      return;
     }
+
+    const updates = { ia_score_fraude:fraud.score_fraude, ia_risque:fraud.risque, ia_raisons:fraud.raisons, ia_action:fraud.action, ia_analysedAt:FieldValue.serverTimestamp() };
+    if (fraud.action === "rejeter" || fraud.risque === "élevé") {
+      updates.status     = "Rejeté";
+      updates.flagRaison = "IA Fraude: " + (fraud.raisons||[]).join(", ");
+    }
+    await db.collection("orders").doc(docId).update(updates);
   }
 );
 
@@ -366,7 +349,7 @@ exports.geminiVerifPreuve = onCall(
 // 5. AUTO-CONFIRMATION — SMS Waafi → Ordre confirmé → 1xBet
 // ══════════════════════════════════════════════════════════════
 exports.autoConfirmation = onDocumentCreated(
-  { document: "waafi_notifications/{docId}", region: "europe-west1", secrets: [] },
+  { document: "waafi_notifications/{docId}", region: "europe-west1", secrets: [], minInstances: 1, concurrency: 80 },
   async (event) => {
     const sms   = event.data.data();
     const docId = event.params.docId;
@@ -447,34 +430,28 @@ exports.autoConfirmation = onDocumentCreated(
 
     // ✅ Toutes les vérifications passées — Confirmer automatiquement
     // Transfer ID ✓ | Expéditeur ✓ | Montant ✓
-    await ordreDoc.ref.update({
-      status:          "Confirmé",
-      confirmedAt:     FieldValue.serverTimestamp(),
-      confirmedBy:     "auto_waafi_sms",
-      waafitranfertID: transferId,
-      montantRecu:     montantSMS,
-    });
-
-    await db.collection("waafi_notifications").doc(docId).update({
-      status:   "traité",
-      ordreRef,
-    });
-
-    // ── Déclencher MacroDroid → Recharge 1xBet ────────────────
+    // Paralléliser : confirmer ordre + marquer SMS traité en même temps
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
+    await Promise.all([
+      ordreDoc.ref.update({
+        status:          "Confirmé",
+        confirmedAt:     FieldValue.serverTimestamp(),
+        confirmedBy:     "auto_waafi_sms",
+        waafitranfertID: transferId,
+        montantRecu:     montantSMS,
+      }),
+      db.collection("waafi_notifications").doc(docId).update({
+        status: "traité", ordreRef,
+      }),
+    ]);
+
+    // ── Déclencher MacroDroid → Recharge 1xBet (fire & update en parallèle) ──
     if (id1xbet) {
-      try {
-        const webhookUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${id1xbet}&montant=${montantSMS}&ref=${ordreRef}`;
-        const resp = await fetch(webhookUrl, { signal: AbortSignal.timeout(10000) });
-        await ordreDoc.ref.update({
-          webhookStatus: resp.ok ? "ok" : "erreur_" + resp.status,
-          webhookAt:     FieldValue.serverTimestamp(),
-        });
-        console.log(`[MacroDroid] webhook ${resp.ok ? "OK" : "ERREUR " + resp.status}`);
-      } catch (e) {
-        await ordreDoc.ref.update({ webhookStatus: "erreur_timeout" });
-        console.error("[MacroDroid] timeout:", e.message);
-      }
+      const webhookUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+      fetch(webhookUrl, { signal: AbortSignal.timeout(8000) })
+        .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
+        .catch(e => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
+      // Ne pas await → retourner immédiatement, MacroDroid est déclenché en arrière-plan
     }
   }
 );
@@ -485,7 +462,7 @@ exports.autoConfirmation = onDocumentCreated(
 // MacroDroid appelle : POST https://europe-west1-kaffi-pay.cloudfunctions.net/smsWebhook
 // Body JSON : { secret, notification, not_title }
 exports.smsWebhook = onRequest(
-  { region: "europe-west1", cors: true },
+  { region: "europe-west1", cors: true, minInstances: 1, concurrency: 80 },
   async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).json({ error: "Méthode non autorisée" });
@@ -522,7 +499,7 @@ exports.smsWebhook = onRequest(
 // Body : { ref, resultat, id1xbet, montant }
 // resultat = "succes" | "echec" | "inconnu"  (détecté par MacroDroid localement)
 exports.rechargeCallback = onRequest(
-  { region: "europe-west1", cors: true, secrets: [GEMINI_KEY] },
+  { region: "europe-west1", cors: true, secrets: [GEMINI_KEY], minInstances: 1, concurrency: 80 },
   async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).json({ error: "Méthode non autorisée" });
