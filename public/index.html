@@ -374,6 +374,10 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .corr-preset{width:100%;background:rgba(255,64,96,.05);border:1px solid rgba(255,64,96,.15);border-radius:10px;padding:9px 12px;font-family:'DM Sans',sans-serif;font-size:.78rem;color:var(--text);cursor:pointer;text-align:left;transition:background .2s;}
 .corr-preset:hover{background:rgba(255,64,96,.1);}
 
+/* ── PWA INSTALL BUTTON ── */
+#pwa-install-btn{display:none;align-items:center;gap:5px;background:rgba(255,215,0,.1);border:1px solid rgba(255,215,0,.28);color:var(--gold);border-radius:999px;padding:5px 12px;font-size:.72rem;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;}
+#pwa-install-btn.show{display:flex;}
+
 /* ── AUTOFILL OVERRIDE (Android Chrome / paste history) ── */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
@@ -422,6 +426,7 @@ input:-webkit-autofill:active {
       </div>
     </div>
     <div class="secure-badge">🔒 Sécurisé</div>
+    <button id="pwa-install-btn" onclick="doPWAInstall()">⬇ Installer</button>
   </div>
 
   <section class="hero">
@@ -866,14 +871,21 @@ function checkURLAdmin(){
   var hash = window.location.hash;
   var search = window.location.search;
   // Supporte /admin, ?admin, #admin, et fichier local admin.html
-  var isAdmin = path.endsWith('/admin') || 
+  var isAdmin = path.endsWith('/admin') ||
                 path.includes('admin') ||
-                hash === '#admin' || 
+                hash === '#admin' ||
                 search === '?admin';
   if(isAdmin){
     showAdminLogin();
     document.getElementById('screen-login').style.opacity='1';
     try{ window.history.replaceState(null,'',window.location.pathname.replace('/admin','/') || '/'); }catch(e){}
+  } else if(hash.startsWith('#suivi-')){
+    // Restaurer page suivi après refresh / pull-to-refresh
+    var ref = decodeURIComponent(hash.replace('#suivi-',''));
+    suiviRef = ref;
+    showScreen('suivi');
+    try{ document.getElementById('suivi-ref').textContent = ref; }catch(e){}
+    // currentSuiviTx sera restauré depuis _txsCache quand listenTxs tirera
   } else {
     showScreen('client');
   }
@@ -1101,8 +1113,14 @@ function listenTxs(){
           renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:'');
         }
       }
-      // Refresh suivi si ouvert
-      if(suiviRef) renderSuivi();
+      // Refresh suivi si ouvert (restaure aussi après refresh si currentSuiviTx est perdu)
+      if(suiviRef){
+        if(!currentSuiviTx){
+          var _restored = _txsCache.find(function(t){ return t.ref===suiviRef||t.orderId===suiviRef; });
+          if(_restored) currentSuiviTx = _restored;
+        }
+        renderSuivi();
+      }
     }, function(err){
       // Erreur listener → re-souscription automatique après 5s
       console.warn('[listenTxs] erreur:', err.code);
@@ -1540,8 +1558,20 @@ function saveAdminPage(page){
 }
 
 window.addEventListener('popstate', function(){
-  if(!currentUser) return;
   var hash = window.location.hash;
+  // Retour vers suivi (fonctionne même sans connexion admin)
+  if(hash.startsWith('#suivi-')){
+    var _ref = decodeURIComponent(hash.replace('#suivi-',''));
+    if(_ref){
+      var _tx = _txsCache.find(function(t){ return t.ref===_ref||t.orderId===_ref; });
+      if(_tx){ currentSuiviTx=_tx; suiviRef=_ref; showScreen('suivi'); renderSuivi(); return; }
+      // Données pas encore chargées : afficher l'écran et laisser listenTxs compléter
+      suiviRef=_ref; showScreen('suivi');
+      try{ document.getElementById('suivi-ref').textContent=_ref; }catch(e){}
+    }
+    return;
+  }
+  if(!currentUser) return;
   if(hash.startsWith('#admin-')){
     var page = hash.replace('#admin-','');
     var valid = ['dashboard','orders','reserves','agents','notifs'];
@@ -2532,6 +2562,31 @@ try {
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
 } catch(e) {}
+
+// ── PWA Install Prompt ──
+var _pwaPrompt = null;
+window.addEventListener('beforeinstallprompt', function(e){
+  e.preventDefault();
+  _pwaPrompt = e;
+  var btn = document.getElementById('pwa-install-btn');
+  if(btn) btn.classList.add('show');
+});
+function doPWAInstall(){
+  if(!_pwaPrompt) return;
+  _pwaPrompt.prompt();
+  _pwaPrompt.userChoice.then(function(r){
+    if(r.outcome === 'accepted'){
+      var btn = document.getElementById('pwa-install-btn');
+      if(btn) btn.classList.remove('show');
+    }
+    _pwaPrompt = null;
+  });
+}
+window.addEventListener('appinstalled', function(){
+  var btn = document.getElementById('pwa-install-btn');
+  if(btn) btn.classList.remove('show');
+  _pwaPrompt = null;
+});
 
 // ── Service Worker PWA ──
 // Fonctionne sur kaffi-pay.com (Firebase Hosting sert sw.js)
