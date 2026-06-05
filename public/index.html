@@ -1933,8 +1933,7 @@ function renderSuivi(){
     var raison = tx.correctionMsg||'Veuillez corriger les informations de votre ordre.';
     if(raisonCard) raisonCard.style.display='block';
     if(raisonTxt)  raisonTxt.textContent=raison;
-    anomalie=true;
-    waMsg+=' — Correction requise: '+raison;
+    // Pas de WhatsApp — le client corrige lui-même
   } else if(status==='Argent Reçu'){
     card.style.borderColor='rgba(91,156,255,0.25)';
     card.style.background='linear-gradient(160deg,rgba(91,156,255,0.06),rgba(7,16,30,0.8))';
@@ -1950,15 +1949,21 @@ function renderSuivi(){
     icon.textContent='❌';
     stxt.textContent='Ordre rejeté';
     stxt.style.color='var(--error)';
-    var raison = tx.rejetRaison||tx.rejectionReason||'Votre ordre a été rejeté.';
-    sdesc.textContent='Votre ordre n\'a pas pu être traité. Voir le motif ci-dessous.';
-    if(raisonCard) raisonCard.style.display='block';
-    if(raisonTxt)  raisonTxt.textContent=raison;
+    var rejetRaison = tx.rejetRaison||tx.rejectionReason||'';
+    if(rejetRaison){
+      // Raison connue — afficher le motif, pas de WhatsApp
+      sdesc.textContent='Votre ordre n\'a pas pu être traité. Voir le motif ci-dessous.';
+      if(raisonCard) raisonCard.style.display='block';
+      if(raisonTxt)  raisonTxt.textContent=rejetRaison;
+    } else {
+      // Raison inconnue — anomalie système → diriger vers support
+      sdesc.textContent='Une erreur inattendue s\'est produite. Contactez le support.';
+      anomalie=true;
+      waMsg+=' — Ordre rejeté (raison inconnue)';
+    }
     prog.style.width='100%';
     prog.style.background='linear-gradient(90deg,var(--error),#ff8a9a)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
-    anomalie=true;
-    waMsg+=' — Ordre rejeté, motif: '+raison;
   } else if(status==='Annulé'){
     card.style.borderColor='rgba(150,150,150,0.2)';
     card.style.background='linear-gradient(160deg,rgba(150,150,150,0.04),rgba(7,16,30,0.8))';
@@ -1971,25 +1976,15 @@ function renderSuivi(){
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   }
 
-  // ── WhatsApp : prominant si anomalie, discret sinon ─
-  if(waBtn) waBtn.href='https://wa.me/25377275572?text='+encodeURIComponent(waMsg);
+  // ── WhatsApp : visible uniquement si anomalie inconnue ─
   if(waCard){
     if(anomalie){
-      waCard.style.borderColor='rgba(37,211,102,0.5)';
-      waCard.style.background='rgba(37,211,102,0.08)';
+      if(waBtn) waBtn.href='https://wa.me/25377275572?text='+encodeURIComponent(waMsg);
       waCard.style.display='flex';
-      var waLabel=document.getElementById('suivi-wa-label');
-      if(waLabel) waLabel.textContent='Contacter le support';
       var waNote=document.getElementById('suivi-wa-note');
-      if(waNote){ waNote.textContent='Un problème avec votre ordre ? Notre équipe vous aide.'; waNote.style.display='block'; }
+      if(waNote){ waNote.textContent='Une anomalie a été détectée sur votre ordre. Notre équipe vous aide immédiatement.'; waNote.style.display='block'; }
     } else {
-      waCard.style.borderColor='rgba(37,211,102,0.15)';
-      waCard.style.background='rgba(37,211,102,0.03)';
-      waCard.style.display='flex';
-      var waLabel=document.getElementById('suivi-wa-label');
-      if(waLabel) waLabel.textContent='Support WhatsApp';
-      var waNote=document.getElementById('suivi-wa-note');
-      if(waNote) waNote.style.display='none';
+      waCard.style.display='none';
     }
   }
 
