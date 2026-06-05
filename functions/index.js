@@ -213,15 +213,19 @@ exports.onNouvelOrdre = onDocumentCreated(
 
     if (!existingSnap.empty) {
       await db.collection("orders").doc(docId).update({
-        status:"Rejeté", flagRaison:"Doublon — Transfer ID déjà utilisé", flaggedAt:FieldValue.serverTimestamp(),
+        status:      "Rejeté",
+        rejetRaison: "Transfer ID déjà utilisé dans un ordre précédent.",
+        flagRaison:  "Doublon — Transfer ID déjà utilisé",
+        flaggedAt:   FieldValue.serverTimestamp(),
       });
       return;
     }
 
     const updates = { ia_score_fraude:fraud.score_fraude, ia_risque:fraud.risque, ia_raisons:fraud.raisons, ia_action:fraud.action, ia_analysedAt:FieldValue.serverTimestamp() };
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
-      updates.status     = "Rejeté";
-      updates.flagRaison = "IA Fraude: " + (fraud.raisons||[]).join(", ");
+      updates.status      = "Rejeté";
+      updates.rejetRaison = "Ordre suspect détecté : " + (fraud.raisons||[]).join(", ");
+      updates.flagRaison  = "IA Fraude: " + (fraud.raisons||[]).join(", ");
       await db.collection("orders").doc(docId).update(updates);
       return;
     }

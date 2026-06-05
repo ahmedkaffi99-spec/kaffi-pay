@@ -1949,14 +1949,12 @@ function renderSuivi(){
     icon.textContent='❌';
     stxt.textContent='Ordre rejeté';
     stxt.style.color='var(--error)';
-    var rejetRaison = tx.rejetRaison||tx.rejectionReason||'';
+    var rejetRaison = tx.rejetRaison||tx.rejectionReason||tx.flagRaison||'';
     if(rejetRaison){
-      // Raison connue — afficher le motif, pas de WhatsApp
       sdesc.textContent='Votre ordre n\'a pas pu être traité. Voir le motif ci-dessous.';
       if(raisonCard) raisonCard.style.display='block';
       if(raisonTxt)  raisonTxt.textContent=rejetRaison;
     } else {
-      // Raison inconnue — anomalie système → diriger vers support
       sdesc.textContent='Une erreur inattendue s\'est produite. Contactez le support.';
       anomalie=true;
       waMsg+=' — Ordre rejeté (raison inconnue)';
@@ -1973,6 +1971,27 @@ function renderSuivi(){
     sdesc.textContent='Cet ordre a été annulé. Vous pouvez soumettre un nouvel ordre.';
     prog.style.width='100%';
     prog.style.background='rgba(150,150,150,0.3)';
+    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+  } else if(status && status.startsWith('Recharge Retry')){
+    card.style.borderColor='rgba(91,156,255,0.2)';
+    card.style.background='linear-gradient(160deg,rgba(91,156,255,0.04),rgba(7,16,30,0.8))';
+    icon.textContent='🔄';
+    stxt.textContent='Recharge en cours…';
+    stxt.style.color='#5b9cff';
+    sdesc.textContent='Votre paiement a été reçu. La recharge 1xBet est en cours de traitement, veuillez patienter.';
+    prog.style.width='85%';
+    prog.style.background='linear-gradient(90deg,#5b9cff,#00d4a0)';
+  } else if(status==='Intervention Manuelle 🚨'){
+    card.style.borderColor='rgba(255,140,0,0.3)';
+    card.style.background='linear-gradient(160deg,rgba(255,140,0,0.06),rgba(7,16,30,0.8))';
+    icon.textContent='🚨';
+    stxt.textContent='Traitement manuel requis';
+    stxt.style.color='#ff8c00';
+    sdesc.textContent='Votre paiement a bien été reçu. Notre équipe traite votre ordre manuellement. Contactez le support pour suivi.';
+    prog.style.width='90%';
+    prog.style.background='linear-gradient(90deg,#ff8c00,#ffcc00)';
+    anomalie=true;
+    waMsg+=' — Intervention manuelle requise (3 tentatives recharge échouées)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   }
 
@@ -2020,7 +2039,9 @@ function renderSuivi(){
       +'</div>';
   }).join('');
 
-  var argentRecu = (status==='Argent Reçu'||status==='Confirmé'||status==='Rechargé ✅');
+  var isRetry    = status && status.startsWith('Recharge Retry');
+  var isManuel   = (status==='Intervention Manuelle 🚨');
+  var argentRecu = (status==='Argent Reçu'||status==='Confirmé'||status==='Rechargé ✅'||isRetry||isManuel);
   var isRejete   = (status==='Rejeté');
   var isAnnule   = (status==='Annulé');
   var isCorr     = (status==='Correction');
@@ -2030,7 +2051,7 @@ function renderSuivi(){
     {icon:'📝', title:'Ordre soumis',          desc:'Demande enregistrée',               done:true,      active:false,  ts:tx.createdAt},
     {icon:'🔍', title:'En cours de traitement', desc:'Vérification du paiement Waafi',    done:argentRecu||isRejete,  active:status==='En attente', ts:null},
     {icon:'💳', title:'Paiement reçu',          desc:'Virement Waafi validé',             done:argentRecu, active:status==='Argent Reçu', ts:tx.paiementRecuAt||null},
-    {icon:'💰', title:'Compte 1xBet crédité',   desc:'Solde mis à jour',                 done:status==='Confirmé'||status==='Rechargé ✅', active:false, ts:tx.confirmedAt||null},
+    {icon:'💰', title:'Compte 1xBet crédité',   desc:'Solde mis à jour',                 done:status==='Confirmé'||status==='Rechargé ✅', active:isRetry||isManuel, ts:tx.confirmedAt||tx.rechargeAt||null},
     ...(isRejete?[{icon:'❌', title:'Ordre rejeté', desc:tx.rejetRaison||'Ordre rejeté', done:false, active:true, ts:tx.rejetedAt||null, error:true}]:[]),
     ...(isAnnule?[{icon:'🚫', title:'Ordre annulé', desc:'Annulé par le client', done:false, active:true, ts:tx.canceledAt||tx.annuleAt||null, muted:true}]:[]),
     ...(isCorr?[{icon:'✏️', title:'Correction requise', desc:tx.correctionMsg||'Informations à corriger', done:false, active:true, ts:tx.correctionAt||null, warn:true}]:[])
