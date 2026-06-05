@@ -1256,10 +1256,11 @@ function submitDepot(){
   const m=document.getElementById('depot-montant').value;
   const id=document.getElementById('depot-id').value;
   const h=document.getElementById('depot-hash').value;
-  const telDepot=document.getElementById('depot-numero-waafi')? document.getElementById('depot-numero-waafi').value : '';
+  const telDepot=document.getElementById('depot-numero-waafi')? document.getElementById('depot-numero-waafi').value.trim() : '';
   if(!m||Number(m)<50){showToast('⚠️ Minimum 50 DJF','error');return;}
   if(!id){showToast('⚠️ ID 1xBet requis','error');return;}
   if(!h||!/^\d{8,10}$/.test(h)){showToast('⚠️ Waafi Transfer ID invalide (8-10 chiffres)','error');return;}
+  if(!telDepot||telDepot.length!==8||!telDepot.startsWith('77')){showToast('⚠️ Numéro Waafi expéditeur requis (8 chiffres, commence par 77)','error');return;}
   setLoading('depot',true);
   setTimeout(()=>{
     setLoading('depot',false);

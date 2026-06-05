@@ -559,13 +559,13 @@ exports.autoRejetServeur = onSchedule(
     snap.docs.forEach(doc => {
       batch.update(doc.ref, {
         status:      "Rejeté",
-        rejetRaison: "Paiement Waafi non reçu dans le délai imparti (3 minutes). Vérifiez votre Transfer ID et réessayez.",
+        rejetRaison: "Paiement Waafi non reçu dans le délai imparti (10 minutes). Vérifiez votre Transfer ID et réessayez.",
         rejetedAt:   FieldValue.serverTimestamp(),
         rejetBy:     "auto_serveur",
       });
     });
     await batch.commit();
-    console.log(`[AutoRejet] ${snap.size} ordre(s) rejeté(s) après 3 min sans paiement`);
+    console.log(`[AutoRejet] ${snap.size} ordre(s) rejeté(s) après 10 min sans paiement`);
   }
 );
 
