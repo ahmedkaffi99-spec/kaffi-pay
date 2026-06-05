@@ -176,13 +176,10 @@ exports.onNouvelOrdre = onDocumentCreated(
       return;
     }
 
+    // IA fraude : FLAG uniquement — jamais de rejet automatique
     const updates = { ia_score_fraude:fraud.score_fraude, ia_risque:fraud.risque, ia_raisons:fraud.raisons, ia_action:fraud.action, ia_analysedAt:FieldValue.serverTimestamp() };
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
-      updates.status      = "Rejeté";
-      updates.rejetRaison = "Ordre suspect détecté : " + (fraud.raisons||[]).join(", ");
-      updates.flagRaison  = "IA Fraude: " + (fraud.raisons||[]).join(", ");
-      await db.collection("orders").doc(docId).update(updates);
-      return;
+      updates.flagRaison = "IA Fraude (à vérifier): " + (fraud.raisons||[]).join(", ");
     }
     await db.collection("orders").doc(docId).update(updates);
 
@@ -547,9 +544,9 @@ exports.smsWebhook = onRequest(
 // 7. AUTO-REJET SERVEUR — Ordres "En attente" depuis > 3 min
 // ══════════════════════════════════════════════════════════════
 exports.autoRejetServeur = onSchedule(
-  { schedule: "every 2 minutes", region: "europe-west1", timeoutSeconds: 60 },
+  { schedule: "every 5 minutes", region: "europe-west1", timeoutSeconds: 60 },
   async () => {
-    const cutoff = new Date(Date.now() - 3 * 60 * 1000); // 3 minutes
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000); // 10 minutes
     const snap   = await db.collection("orders")
       .where("status", "==", "En attente")
       .where("createdAt", "<", cutoff)

@@ -2753,14 +2753,14 @@ function demarrerTimerRejet(ref){
     if(ordre){
       await updateTxFirebase(ref, {
         status: 'Rejeté',
-        rejetRaison: 'Paiement Waafi non reçu dans le délai imparti (1 minute). Vérifiez votre Transfer ID et réessayez.',
+        rejetRaison: 'Paiement Waafi non reçu dans le délai imparti (10 minutes). Vérifiez votre Transfer ID et réessayez.',
         rejetedAt: new Date()
       });
-      pushNotif('ordre_rejete', 'Paiement non reçu en 1 minute. Ordre rejeté automatiquement.', ref, ordre.montant);
+      pushNotif('ordre_rejete', 'Paiement non reçu en 10 minutes. Ordre rejeté automatiquement.', ref, ordre.montant);
       showToast('⏰ Ordre #'+ref+' rejeté — paiement non reçu', 'warning');
     }
     delete _rejetTimers[ref];
-  }, 65000);
+  }, 600000);
 }
 
 async function saveTxFirebaseWithTimer(tx){
