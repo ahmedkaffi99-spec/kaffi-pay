@@ -417,7 +417,7 @@ exports.autoConfirmation = onDocumentCreated(
     });
 
     // ── Parser SMS Waafi ───────────────────────────────────────
-    const notification = sms.notification || sms.not_body || "";
+    const notification = sms.notification || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
 
     const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i);
     const transferId    = transferMatch ? transferMatch[1].trim() : null;
