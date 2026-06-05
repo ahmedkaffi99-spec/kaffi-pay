@@ -1,27 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // MacroDroid et clients écrivent sans authentification
-    match /waafi_notifications/{doc} {
-      allow write: if true;
-      allow read: if request.auth != null;
-    }
-
-    // Clients soumettent des ordres et les lisent pour le suivi (sans auth)
-    match /orders/{doc} {
-      allow create: if true;
-      allow read: if true;
-      // Client peut annuler ou rejeter (timer) uniquement si l'ordre est encore "En attente"
-      allow update: if resource.data.status == 'En attente'
-                    && (request.resource.data.status == 'Annulé'
-                        || request.resource.data.status == 'Rejeté');
-      allow delete: if request.auth != null;
-    }
-
-    // Tout le reste nécessite une authentification admin
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if true;
     }
   }
 }
