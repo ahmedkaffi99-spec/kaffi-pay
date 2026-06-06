@@ -1,7 +1,7 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════╗
- * ║           KAFFI PAY — CLOUD FUNCTIONS v3.0                      ║
- * ║  • Détection fraude & doublons (Gemini AI)                      ║
+ * ║           KAFFI PAY — CLOUD FUNCTIONS v3.1                      ║
+ * ║  • Détection fraude & doublons (Vertex AI Gemini)               ║
  * ║  • Confirmation automatique SMS Waafi                           ║
  * ║  • Notifications Telegram admin                                 ║
  * ║  • Analyse admin Gemini (résumé, prédictions)                   ║
@@ -15,15 +15,16 @@ const { onCall, onRequest }                    = require("firebase-functions/v2/
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
-const { GoogleGenerativeAI }                   = require("@google/generative-ai");
+const { VertexAI }                             = require("@google-cloud/vertexai");
 
 initializeApp();
 const db = getFirestore();
 
-const REGION = "europe-west1";
+const REGION     = "europe-west1";
+const PROJECT_ID = "kaffi-pay";
+const AI_LOC     = "us-central1";
 
 // ── Secrets ────────────────────────────────────────────────────────
-const GEMINI_KEY        = defineSecret("GEMINI_KEY");
 const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
@@ -31,8 +32,14 @@ const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-function getGemini(key) {
-  return new GoogleGenerativeAI(key).getGenerativeModel({ model: "gemini-2.0-flash" });
+function getGemini() {
+  return new VertexAI({ project: PROJECT_ID, location: AI_LOC })
+    .getGenerativeModel({ model: "gemini-2.0-flash-001" });
+}
+
+// Extrait le texte de la réponse Vertex AI
+function aiText(result) {
+  return result.response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
 async function sendTelegram(token, chatId, text) {
@@ -93,7 +100,7 @@ exports.onNouvelOrdre = onDocumentCreated(
   {
     document:  "orders/{docId}",
     region:    REGION,
-    secrets:   [GEMINI_KEY, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -103,7 +110,7 @@ exports.onNouvelOrdre = onDocumentCreated(
     const transferId = tx.waafitranfertID || tx.hash || "";
     const isDepot    = tx.type === "Dépôt";
 
-    // ── 1a. Détection doublons (sans composite index) ──────────────
+    // ── 1a. Détection doublons ─────────────────────────────────────
     if (transferId) {
       const existing = await db.collection("orders")
         .where("waafitranfertID", "==", transferId)
@@ -128,11 +135,14 @@ exports.onNouvelOrdre = onDocumentCreated(
       }
     }
 
-    // ── 1b. Analyse fraude Gemini ──────────────────────────────────
+    // ── 1b. Analyse fraude Gemini (Vertex AI) ─────────────────────
     let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
     try {
-      const model      = getGemini(GEMINI_KEY.value());
-      const aiResp     = await model.generateContent(`
+      const model  = getGemini();
+      const result = await model.generateContent({
+        contents: [{
+          role: "user",
+          parts: [{ text: `
 Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
 Réponds UNIQUEMENT en JSON valide, sans texte autour.
 
@@ -151,8 +161,10 @@ Transaction :
 - Heure: ${new Date().getHours()}h
 
 Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numéro ne commence pas par 77 = suspect.
-`);
-      fraud = JSON.parse(aiResp.response.text().replace(/```json|```/g, "").trim());
+` }]
+        }]
+      });
+      fraud = JSON.parse(aiText(result).replace(/```json|```/g, "").trim());
     } catch (e) {
       console.error("Gemini fraud error:", e.message);
     }
@@ -204,7 +216,6 @@ Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numér
 
 // ══════════════════════════════════════════════════════════════════
 // 2. ORDRE MIS À JOUR → Notification Telegram admin
-//    IMPORTANT : écoute "orders/" (corrigé — était "transactions/")
 // ══════════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
   {
@@ -216,7 +227,6 @@ exports.onOrdreUpdated = onDocumentUpdated(
     const before = event.data.before.data();
     const after  = event.data.after.data();
 
-    // Ne rien faire si le statut n'a pas changé
     if (before.status === after.status) return;
 
     const ref     = after.orderId || after.ref || event.params.docId;
@@ -255,7 +265,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
 // 3. ANALYSE IA ADMIN (résumé + prédictions)
 // ══════════════════════════════════════════════════════════════════
 exports.geminiAnalyseAdmin = onCall(
-  { region: REGION, secrets: [GEMINI_KEY] },
+  { region: REGION },
   async () => {
     const snap = await db.collection("orders")
       .orderBy("ts", "desc")
@@ -267,9 +277,12 @@ exports.geminiAnalyseAdmin = onCall(
     const attente   = txs.filter((t) => t.status === "En attente");
     const rejetes   = txs.filter((t) => t.status === "Rejeté");
     const volume    = confirmes.reduce((s, t) => s + Number(t.montant || 0), 0);
-    const model     = getGemini(GEMINI_KEY.value());
+    const model     = getGemini();
 
-    const aiResp = await model.generateContent(`
+    const result = await model.generateContent({
+      contents: [{
+        role: "user",
+        parts: [{ text: `
 Tu es l'assistant IA de Kaffi Pay (Djibouti).
 Réponds UNIQUEMENT en JSON valide.
 
@@ -291,9 +304,11 @@ ${txs.slice(0, 5).map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} —
   "heure_pic": "ex: 14h-16h",
   "score_sante": 0-100
 }
-`);
+` }]
+      }]
+    });
 
-    const txt = aiResp.response.text().replace(/```json|```/g, "").trim();
+    const txt = aiText(result).replace(/```json|```/g, "").trim();
     try {
       return {
         success: true,
@@ -310,14 +325,17 @@ ${txs.slice(0, 5).map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} —
 // 4. VÉRIFICATION PREUVE DE PAIEMENT (Gemini Vision)
 // ══════════════════════════════════════════════════════════════════
 exports.geminiVerifPreuve = onCall(
-  { region: REGION, secrets: [GEMINI_KEY] },
+  { region: REGION },
   async (request) => {
     const { imageBase64, mimeType, ordreRef, montantAttendu, transferIdAttendu } = request.data;
     if (!imageBase64) throw new Error("Image requise");
 
-    const model  = getGemini(GEMINI_KEY.value());
-    const result = await model.generateContent([
-      `Tu vérifies une preuve de paiement Waafi pour Kaffi Pay (Djibouti).
+    const model  = getGemini();
+    const result = await model.generateContent({
+      contents: [{
+        role: "user",
+        parts: [
+          { text: `Tu vérifies une preuve de paiement Waafi pour Kaffi Pay (Djibouti).
 Réponds UNIQUEMENT en JSON valide.
 
 Montant attendu: ${montantAttendu} DJF
@@ -332,11 +350,13 @@ Transfer ID attendu: ${transferIdAttendu}
   "correspondance_transfer_id": true|false,
   "confiance": 0-100,
   "raison": "explication courte"
-}`,
-      { inlineData: { data: imageBase64, mimeType: mimeType || "image/jpeg" } },
-    ]);
+}` },
+          { inlineData: { data: imageBase64, mimeType: mimeType || "image/jpeg" } },
+        ]
+      }]
+    });
 
-    const txt = result.response.text().replace(/```json|```/g, "").trim();
+    const txt = aiText(result).replace(/```json|```/g, "").trim();
     try {
       const parsed = JSON.parse(txt);
       if (ordreRef) {
@@ -362,16 +382,6 @@ Transfer ID attendu: ${transferIdAttendu}
 
 // ══════════════════════════════════════════════════════════════════
 // 5. AUTO-CONFIRMATION — SMS Waafi → Confirme l'ordre + Webhook
-//
-//  Flux :
-//    MacroDroid détecte SMS Waafi
-//    → écrit dans Firestore "waafi_notifications"
-//    → cette fonction se déclenche
-//    → cherche l'ordre (Transfer ID ou montant+numéro)
-//    → transaction atomique pour éviter double-traitement
-//    → "Argent Reçu" immédiat, "Confirmé" après 10s
-//    → déclenche webhook MacroDroid pour recharge 1xBet
-//    → notifie admin Telegram
 // ══════════════════════════════════════════════════════════════════
 exports.autoConfirmation = onDocumentCreated(
   {
@@ -384,10 +394,8 @@ exports.autoConfirmation = onDocumentCreated(
     const sms   = event.data.data();
     const docId = event.params.docId;
 
-    // Ignorer si déjà traité
     if (sms.status === "traité" || sms.status === "en_cours") return;
 
-    // Vérifier secret MacroDroid si fourni
     const expectedSecret = MACRO_SECRET.value() || "KaffiPay2026";
     if (sms.secret && sms.secret !== expectedSecret) {
       await db.collection("waafi_notifications").doc(docId).update({
@@ -396,13 +404,11 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // Marquer "en cours" pour éviter double traitement
     await db.collection("waafi_notifications").doc(docId).update({
       status:      "en_cours",
       processedAt: FieldValue.serverTimestamp(),
     });
 
-    // ── Parser le SMS Waafi ────────────────────────────────────────
     const notification =
       sms.notification || sms.not_body || sms.message ||
       sms.texte || sms.body || sms.text || "";
@@ -421,10 +427,8 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ── Chercher l'ordre correspondant ────────────────────────────
     let ordreSnap = { empty: true };
 
-    // Stratégie 1 : Transfer ID exact
     if (transferId) {
       ordreSnap = await db.collection("orders")
         .where("waafitranfertID", "==", transferId)
@@ -433,7 +437,6 @@ exports.autoConfirmation = onDocumentCreated(
         .get();
     }
 
-    // Stratégie 2 : montant + numéro client
     if (ordreSnap.empty && numClient && montantSMS) {
       ordreSnap = await db.collection("orders")
         .where("numeroPayment", "==", numClient)
@@ -466,7 +469,6 @@ exports.autoConfirmation = onDocumentCreated(
     const montantOrdre = Number(ordre.montant || 0);
     const mt           = montantSMS || montantOrdre;
 
-    // Vérification tolérance montant (±5 DJF pour arrondi)
     if (montantSMS && Math.abs(montantOrdre - montantSMS) > 5) {
       await db.collection("waafi_notifications").doc(docId).update({
         status:    "montant_incorrect",
@@ -483,7 +485,6 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    // ── Transaction atomique → "Argent Reçu" (évite double traitement) ──
     const claimed = await claimOrder(ordreDoc.ref, "En attente", "Argent Reçu", {
       confirmedBy:     "auto_waafi_sms",
       waafitranfertID: transferId || ordre.waafitranfertID,
@@ -493,7 +494,6 @@ exports.autoConfirmation = onDocumentCreated(
     });
 
     if (!claimed) {
-      // Ordre déjà traité par le frontend ou une autre exécution
       await db.collection("waafi_notifications").doc(docId).update({
         status:   "déjà_traité",
         ordreRef: ordreRef,
@@ -506,7 +506,6 @@ exports.autoConfirmation = onDocumentCreated(
       ordreRef: ordreRef,
     });
 
-    // ── Attente 10s puis "Confirmé" ───────────────────────────────
     await new Promise((r) => setTimeout(r, 10000));
 
     await ordreDoc.ref.update({
@@ -518,7 +517,6 @@ exports.autoConfirmation = onDocumentCreated(
       status: "traité",
     });
 
-    // ── Webhook MacroDroid → Recharge 1xBet ──────────────────────
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
 
     if (id1xbet) {
@@ -567,7 +565,6 @@ exports.autoConfirmation = onDocumentCreated(
       );
     }
 
-    // ── Notification finale ───────────────────────────────────────
     await sendTelegram(
       TELEGRAM_TOKEN.value(),
       TELEGRAM_ADMIN_ID.value(),
@@ -580,7 +577,7 @@ exports.autoConfirmation = onDocumentCreated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 6. HEALTH CHECK — Vérifier que le backend fonctionne
+// 6. HEALTH CHECK
 // ══════════════════════════════════════════════════════════════════
 exports.healthCheck = onRequest(
   { region: REGION },
@@ -590,7 +587,7 @@ exports.healthCheck = onRequest(
 
     try {
       const t0   = Date.now();
-      const snap = await db.collection("orders").limit(1).get();
+      await db.collection("orders").limit(1).get();
       const ms   = Date.now() - t0;
 
       res.json({
@@ -598,7 +595,7 @@ exports.healthCheck = onRequest(
         timestamp: new Date().toISOString(),
         region:    REGION,
         firestore: `connected (${ms}ms)`,
-        version:   "3.0",
+        version:   "3.1",
       });
     } catch (e) {
       res.status(500).json({ status: "error", message: e.message });
