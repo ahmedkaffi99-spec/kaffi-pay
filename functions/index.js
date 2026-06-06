@@ -8,6 +8,7 @@
 
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest }                    = require("firebase-functions/v2/https");
+const { onSchedule }                           = require("firebase-functions/v2/scheduler");
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
@@ -247,7 +248,14 @@ exports.onNouvelOrdre = onDocumentCreated(
         });
         await rtdbUpdateStatus(ordreRef, "Rejeté");
       }
-      // "attendre" → ordre reste "En attente"
+      } else if (decision === "attendre") {
+        // Gemini attend plus de données → marquer pour retry
+        await db.collection("orders").doc(docId).update({
+          ia_decision: "attendre", ia_raison: raison,
+          geminiRetryAt: FieldValue.serverTimestamp(),
+          geminiRetryCount: FieldValue.increment(1),
+        });
+      }
     } catch (e) {
       console.error("[onNouvelOrdre] Gemini erreur:", e.message);
     }
@@ -309,6 +317,12 @@ exports.autoConfirmation = onDocumentCreated(
           flagRaison: "Gemini: " + raison, ia_decision: "rejeter",
         });
         await rtdbUpdateStatus(ordreRef, "Rejeté");
+      } else if (decision === "attendre") {
+        await ordreDoc.ref.update({
+          ia_decision: "attendre", ia_raison: raison,
+          geminiRetryAt: FieldValue.serverTimestamp(),
+          geminiRetryCount: FieldValue.increment(1),
+        });
       }
     } catch (e) {
       console.error("[autoConfirmation] Gemini erreur:", e.message);
@@ -456,6 +470,118 @@ exports.rechargeCallback = onRequest(
     });
     console.error(`[rechargeCallback] 🚨 ${ref} → INTERVENTION MANUELLE`);
     res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// 8. RETRY + ALERTES — toutes les 5 minutes
+//    - Retry Gemini si ia_decision="attendre" et SMS peut-être arrivé
+//    - Alerte admin si ordre "En attente" > 15 min sans décision
+// ══════════════════════════════════════════════════════════════
+exports.retryEtAlertes = onSchedule(
+  { schedule: "every 5 minutes", region: "europe-west1", secrets: [GEMINI_KEY] },
+  async () => {
+    const maintenant  = Date.now();
+    const il_y_a_5min = new Date(maintenant - 5  * 60 * 1000);
+    const il_y_a_15min= new Date(maintenant - 15 * 60 * 1000);
+    const il_y_a_1h   = new Date(maintenant - 60 * 60 * 1000);
+
+    // ── 1. Retry Gemini : ordres "attendre" dont le SMS est peut-être arrivé ──
+    const retrySnap = await db.collection("orders")
+      .where("status",      "==", "En attente")
+      .where("ia_decision", "==", "attendre")
+      .limit(20).get();
+
+    for (const ordreDoc of retrySnap.docs) {
+      const ordre    = ordreDoc.data();
+      const ordreRef = ordre.orderId || ordre.ref || ordreDoc.id;
+      const tid      = ordre.waafitranfertID || "";
+      if (!tid) continue;
+
+      // Chercher SMS arrivé dans les 24h
+      const smsSnap = await db.collection("waafi_notifications")
+        .where("transferIdSMS", "==", tid).limit(3).get();
+
+      const cutoff = new Date(maintenant - 24 * 60 * 60 * 1000);
+      let smsDoc = null;
+      for (const s of smsSnap.docs) {
+        const d = s.data();
+        const ca = d.createdAt ? d.createdAt.toDate() : new Date(0);
+        if (ca >= cutoff) { smsDoc = s; break; }
+      }
+
+      if (!smsDoc) continue;
+
+      try {
+        const { decision, raison } = await geminiDecider(ordre, smsDoc.data());
+        console.log(`[retry] ${ordreRef} → Gemini ${decision}`);
+
+        if (decision === "confirmer") {
+          const montantRecu = Number(smsDoc.data().montantSMS || ordre.montant || 0);
+          const id1xbet     = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
+          const updated = await db.runTransaction(async (t) => {
+            const snap = await t.get(ordreDoc.ref);
+            if (snap.data().status !== "En attente") return false;
+            t.update(ordreDoc.ref, {
+              status: "Confirmé", confirmedAt: FieldValue.serverTimestamp(),
+              confirmedBy: "gemini_retry", montantRecu, ia_raison: raison,
+            });
+            return true;
+          });
+          if (updated) {
+            await rtdbUpdateStatus(ordreRef, "Confirmé");
+            declencherMacro(ordreDoc, ordreRef, id1xbet, montantRecu);
+          }
+        } else if (decision === "rejeter") {
+          await ordreDoc.ref.update({
+            status: "Rejeté", rejetedAt: FieldValue.serverTimestamp(),
+            flagRaison: "Gemini retry: " + raison, ia_decision: "rejeter",
+          });
+          await rtdbUpdateStatus(ordreRef, "Rejeté");
+        } else {
+          await ordreDoc.ref.update({
+            geminiRetryAt:    FieldValue.serverTimestamp(),
+            geminiRetryCount: FieldValue.increment(1),
+          });
+        }
+      } catch (e) {
+        console.error("[retry] erreur:", e.message);
+      }
+    }
+
+    // ── 2. Alertes admin : ordres "En attente" > 15 min sans aucune décision ──
+    const alerteSnap = await db.collection("orders")
+      .where("status", "==", "En attente")
+      .where("createdAt", "<", il_y_a_15min)
+      .limit(20).get();
+
+    for (const ordreDoc of alerteSnap.docs) {
+      const ordre    = ordreDoc.data();
+      const ordreRef = ordre.orderId || ordre.ref || ordreDoc.id;
+
+      // Ne pas créer doublon d'alerte
+      const existant = await db.collection("alertes_admin")
+        .where("ordreRef", "==", ordreRef)
+        .where("type", "==", "attente_prolongee")
+        .where("traité", "==", false)
+        .limit(1).get();
+      if (!existant.empty) continue;
+
+      const ageMin = Math.round((maintenant - ordre.createdAt.toDate().getTime()) / 60000);
+      await db.collection("alertes_admin").add({
+        type:      "attente_prolongee",
+        ordreRef,
+        ordreId:   ordreDoc.id,
+        montant:   ordre.montant || 0,
+        type_tx:   ordre.type || "?",
+        id1xbet:   ordre.userId1xBet || ordre.id1x || "",
+        message:   `Ordre en attente depuis ${ageMin} minutes — vérification manuelle requise`,
+        ia_decision: ordre.ia_decision || "aucune",
+        createdAt: FieldValue.serverTimestamp(),
+        traité:    false,
+      });
+      console.log(`[alertes] ⚠️ ${ordreRef} en attente depuis ${ageMin} min → alerte créée`);
+    }
   }
 );
 

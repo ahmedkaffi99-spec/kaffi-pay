@@ -295,9 +295,6 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .reserve-save-btn{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#07101e;border:none;border-radius:10px;padding:8px 14px;font-family:'DM Sans',sans-serif;font-size:.75rem;font-weight:700;cursor:pointer;}
 
 /* ── EXPORT ── */
-.export-btns{display:flex;gap:10px;margin-bottom:12px;}
-.export-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:transparent;border:1px solid rgba(255,255,255,.07);border-radius:999px;padding:10px;font-size:.72rem;color:var(--muted);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500;}
-.export-btn:hover{border-color:rgba(255,215,0,.2);color:var(--gold);}
 
 /* ── AGENTS ── */
 .agent-list{display:flex;flex-direction:column;gap:7px;margin-bottom:12px;}
@@ -591,10 +588,6 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 
   <!-- ORDRES -->
   <div class="page-section" id="page-orders">
-    <div class="export-btns">
-      <div class="export-btn" onclick="exportCSV()">📄 Export CSV</div>
-      <div class="export-btn" onclick="exportPDF()">📋 Export PDF</div>
-    </div>
     <div class="order-filter">
       <div class="filter-chip active" onclick="filterTx('tous',this)">Tous</div>
       <div class="filter-chip" onclick="filterTx('attente',this)">⏳ En attente</div>
@@ -639,6 +632,12 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 
   <!-- NOTIFICATIONS -->
   <div class="page-section" id="page-notifs">
+    <!-- Alertes vérification manuelle -->
+    <div id="alertes-admin-section" style="margin-bottom:14px;display:none">
+      <div style="font-size:.72rem;font-weight:700;color:var(--warning);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">⚠️ Vérification manuelle requise</div>
+      <div id="alertes-admin-list" style="display:flex;flex-direction:column;gap:7px"></div>
+    </div>
+
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-family:'Playfair Display',serif;font-size:0.9rem;font-weight:700;">🔔 Notifications système</div>
       <button onclick="clearNotifs()" style="background:transparent;border:1px solid rgba(255,64,96,0.2);border-radius:999px;padding:5px 12px;font-size:0.65rem;color:var(--error);cursor:pointer;font-family:'DM Sans',sans-serif;">🗑 Effacer</button>
@@ -951,9 +950,9 @@ function loginSuccess(u){
       if(validPages.indexOf(page)>=0){ setTimeout(function(){ showPage(page); },300); }
     }
   }catch(e){}
-  // Démarrer l'écoute SMS Waafi automatique
-  if(window._firebaseReady || window.firebaseReady){ startSmsListener(); }
-  else{ window.addEventListener('firebase-ready', startSmsListener, {once:true}); }
+  // Démarrer l'écoute SMS Waafi + alertes admin automatique
+  if(window._firebaseReady || window.firebaseReady){ startSmsListener(); startAlertesListener(); }
+  else{ window.addEventListener('firebase-ready', function(){ startSmsListener(); startAlertesListener(); }, {once:true}); }
   showToast('✅ Connecté : '+u.role,'success');
 }
 
@@ -1708,58 +1707,6 @@ function deleteAgent(i){
   showToast('🗑 Agent supprimé','warning');
 }
 
-// ═══════════════════════════════════════════════════
-// ADMIN — EXPORT
-// ═══════════════════════════════════════════════════
-function exportCSV(){
-  const t=getTxs();
-  if(!t.length){showToast('⚠️ Aucune donnée','error');return;}
-  const rows=['Référence,Type,Montant,ID 1xBet,Code Retrait,Waafi,Transfer ID,Date,Statut',
-    ...t.map(x=>[x.ref,x.type,x.montant,x.userId1xBet||x.id1x||'',x.withdrawalCode||x.code||'',x.waafiNumber||x.tel||'',x.waafitranfertID||x.hash||'',x.date,x.status].join(','))
-  ];
-  const b=new Blob([rows.join('\n')],{type:'text/csv;charset=utf-8;'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(b);
-  a.download='kaffipay_'+new Date().toLocaleDateString('fr-FR').replace(/\//g,'-')+'.csv';
-  a.click();
-  showToast('📄 CSV téléchargé','success');
-}
-
-function exportPDF(){
-  const t=getTxs();
-  if(!t.length){showToast('⚠️ Aucune donnée','error');return;}
-  const pending=t.filter(x=>x.status==='En attente').length;
-  const confirmed=t.filter(x=>x.status==='Confirmé').length;
-  let h=`<html><head><title>Kaffi Pay — Rapport</title>
-  <style>body{font-family:sans-serif;padding:20px;color:#111;}h1{color:#07101e;border-bottom:3px solid #FFD700;padding-bottom:8px;}
-  .summary{display:flex;gap:16px;margin:12px 0 20px;}.summary div{padding:10px 16px;border-radius:8px;font-size:13px;}
-  .s-pend{background:#fff8e1;border:1px solid #ffcc02;}.s-conf{background:#e8f5e9;border:1px solid #4caf50;}.s-tot{background:#e3f2fd;border:1px solid #2196f3;}
-  table{width:100%;border-collapse:collapse;font-size:12px;}th{background:#07101e;color:#FFD700;padding:8px 10px;text-align:left;}
-  td{padding:6px 10px;border-bottom:1px solid #eee;}tr:nth-child(even){background:#fafafa;}
-  .d{color:green;font-weight:600;}.r{color:#c2185b;font-weight:600;}
-  .pending{color:orange;}.confirmed{color:green;font-weight:600;}.rejected{color:red;}</style>
-  </head><body>
-  <h1>Kaffi Pay — Rapport des Ordres</h1>
-  <p style="color:#666;font-size:13px">Généré le ${new Date().toLocaleString('fr-FR')}</p>
-  <div class="summary">
-    <div class="s-tot">📊 Total : <strong>${t.length}</strong></div>
-    <div class="s-pend">⏳ En attente : <strong>${pending}</strong></div>
-    <div class="s-conf">✅ Confirmés : <strong>${confirmed}</strong></div>
-  </div>
-  <table><tr><th>Référence</th><th>Type</th><th>Montant</th><th>Contact</th><th>Date</th><th>Statut</th></tr>`;
-  t.forEach(x=>{
-    h+=`<tr><td>${x.ref||'—'}</td><td class="${x.type==='Dépôt'?'d':'r'}">${x.type}</td>
-    <td><strong>${Number(x.montant).toLocaleString()} DJF</strong></td>
-    <td>${x.userId1xBet||x.id1x||x.waafiNumber||x.tel||'—'}</td><td>${x.date||'—'}</td>
-    <td class="${(x.status||'').toLowerCase().replace(' ','-')}">${x.status||'—'}</td></tr>`;
-  });
-  h+='</table></body></html>';
-  const w=window.open('','_blank');
-  if(!w){ showToast('⚠️ Autorisez les popups pour PDF','warning'); return; }
-  w.document.write(h); w.document.close();
-  setTimeout(()=>w.print(),500);
-  showToast('📋 PDF ouvert','success');
-}
 
 let suiviRef=null, suiviInterval=null;
 
@@ -2180,6 +2127,67 @@ function renderNotifs(){
 }
 
 // ══════════════════════════════════════════════════════════════════
+// ALERTES ADMIN — Ordres en attente trop longtemps (vérif manuelle)
+// ══════════════════════════════════════════════════════════════════
+function startAlertesListener(){
+  if(!window.db) return;
+  var q = window.fsQuery(
+    window.fsCollection(window.db, 'alertes_admin'),
+    window.fsWhere('traité','==',false),
+    window.fsOrderBy('createdAt','desc'),
+    window.fsLimit(20)
+  );
+  window.fsOnSnapshot(q, function(snap){
+    var section = document.getElementById('alertes-admin-section');
+    var list    = document.getElementById('alertes-admin-list');
+    if(!section || !list) return;
+    if(snap.empty){ section.style.display='none'; return; }
+    section.style.display='block';
+    // Badge sur l'onglet Notifs
+    var dot = document.getElementById('notif-bell-dot');
+    if(dot) dot.classList.add('show');
+    list.innerHTML = snap.docs.map(function(d){
+      var a   = d.data();
+      var ref = a.ordreRef || '?';
+      var age = a.createdAt ? Math.round((Date.now()-a.createdAt.toDate().getTime())/60000) : '?';
+      return '<div style="border-radius:13px;padding:12px 14px;border:1px solid rgba(255,170,0,.2);background:rgba(255,170,0,.04);display:flex;flex-direction:column;gap:8px">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center">'
+        +   '<span style="font-size:.72rem;font-weight:700;color:var(--warning)">⏳ ' + ref + '</span>'
+        +   '<span style="font-size:.62rem;color:var(--muted)">' + age + ' min</span>'
+        + '</div>'
+        + '<div style="font-size:.7rem;color:var(--text)">' + (a.message||'') + '</div>'
+        + '<div style="font-size:.66rem;color:var(--muted)">'
+        +   (a.type_tx||'') + ' · ' + Number(a.montant||0).toLocaleString('fr-FR') + ' DJF'
+        +   (a.id1xbet ? ' · 1xBet: '+a.id1xbet : '')
+        +   ' · IA: ' + (a.ia_decision||'aucune')
+        + '</div>'
+        + '<div style="display:flex;gap:8px">'
+        +   '<button onclick="marquerAlerte(\''+d.id+'\',\''+a.ordreId+'\',\'traite\')" style="flex:1;background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);border-radius:999px;padding:6px;font-size:.65rem;color:#4caf50;cursor:pointer;font-family:\'DM Sans\',sans-serif">✅ Traité</button>'
+        +   '<button onclick="marquerAlerte(\''+d.id+'\',\''+a.ordreId+'\',\'manuel\')" style="flex:1;background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.3);border-radius:999px;padding:6px;font-size:.65rem;color:var(--warning);cursor:pointer;font-family:\'DM Sans\',sans-serif">🔍 Vérifier</button>'
+        + '</div>'
+        + '</div>';
+    }).join('');
+  });
+}
+
+async function marquerAlerte(alerteId, ordreDocId, action){
+  if(!window.db) return;
+  try {
+    await window.fsUpdateDoc(window.fsDoc(window.db,'alertes_admin',alerteId),{ traité: true });
+    if(action === 'manuel' && ordreDocId){
+      await window.fsUpdateDoc(window.fsDoc(window.db,'orders',ordreDocId),{
+        status: 'Vérification Manuelle 🔍',
+        manuelRequis: true,
+        manuelAt: new Date(),
+      });
+    }
+    showToast(action==='traite' ? '✅ Alerte marquée traitée' : '🔍 Ordre mis en vérification manuelle','success');
+  } catch(e){
+    showToast('❌ Erreur : '+e.message,'error');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
 // MACRODROID HELPERS — Config & Test
 // ══════════════════════════════════════════════════════════════════
 var MACRO_URL = 'https://firestore.googleapis.com/v1/projects/kaffi-pay/databases/(default)/documents/waafi_notifications';
@@ -2582,6 +2590,8 @@ try {
   if(typeof renderNotifs!=="undefined") window.renderNotifs=renderNotifs;
   if(typeof pushNotif!=="undefined") window.pushNotif=pushNotif;
   if(typeof startSmsListener!=="undefined") window.startSmsListener=startSmsListener;
+  if(typeof startAlertesListener!=="undefined") window.startAlertesListener=startAlertesListener;
+  if(typeof marquerAlerte!=="undefined") window.marquerAlerte=marquerAlerte;
   if(typeof saveTxFirebaseWithTimer!=="undefined") window.saveTxFirebaseWithTimer=saveTxFirebaseWithTimer;
   if(typeof demarrerTimerRejet!=="undefined") window.demarrerTimerRejet=demarrerTimerRejet;
   if(typeof clearSmsLog!=="undefined") window.clearSmsLog=clearSmsLog;
@@ -2598,8 +2608,6 @@ try {
   if(typeof doLogin!=="undefined") window.doLogin=doLogin;
   if(typeof doLogout!=="undefined") window.doLogout=doLogout;
   if(typeof executerPaiementWaafi!=="undefined") window.executerPaiementWaafi=executerPaiementWaafi;
-  if(typeof exportCSV!=="undefined") window.exportCSV=exportCSV;
-  if(typeof exportPDF!=="undefined") window.exportPDF=exportPDF;
   if(typeof filterTx!=="undefined") window.filterTx=filterTx;
   if(typeof goCorrection!=="undefined") window.goCorrection=goCorrection;
   if(typeof goOrders!=="undefined") window.goOrders=goOrders;
