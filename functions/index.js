@@ -447,3 +447,23 @@ exports.rechargeCallback = onRequest(
     res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
   }
 );
+
+// ══════════════════════════════════════════════════════════════
+// 8. GEMINI PING — Test de connectivité Gemini (GET uniquement)
+// ══════════════════════════════════════════════════════════════
+exports.geminiPing = onRequest(
+  { region: "europe-west1", cors: true, secrets: [GEMINI_KEY] },
+  async (req, res) => {
+    if (req.method !== "GET") { res.status(405).json({ error: "GET uniquement" }); return; }
+    try {
+      const debut = Date.now();
+      const reponse = await geminiJson(
+        `Réponds en JSON avec exactement ces champs : {"salut":"un mot de bienvenue en français","plateforme":"Kaffi Pay","statut":"opérationnel","timestamp":"${new Date().toISOString()}"}`,
+        `Tu es l'IA de Kaffi Pay, plateforme de paiement Waafi↔1xBet à Djibouti. Réponds toujours en JSON valide.`
+      );
+      res.json({ gemini: "connecté ✅", latence_ms: Date.now() - debut, reponse });
+    } catch (e) {
+      res.status(500).json({ gemini: "erreur ❌", message: e.message });
+    }
+  }
+);
