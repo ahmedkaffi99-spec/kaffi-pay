@@ -97,33 +97,21 @@ async function geminiJson(prompt, systemInstruction) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// 0. VALIDER ORDRE — vérifie avant écriture Firestore
+// 0. VALIDER ORDRE — feedback UI avant écriture Firestore
+//    Retourne des erreurs pour l'affichage, ne rejette pas l'ordre.
 // ══════════════════════════════════════════════════════════════
 exports.validerOrdre = onRequest(
   { region: "europe-west1", cors: true },
   async (req, res) => {
     if (req.method !== "POST") { res.status(405).json({ error: "POST requis" }); return; }
-    const tx      = req.body || {};
-    const erreurs = validerReglesDor(tx);
-    if (erreurs.length > 0) { res.json({ valide: false, erreurs }); return; }
-
-    const transferId = String(tx.waafitranfertID || tx.transferId || "").trim();
-    if (transferId) {
-      const dup = await db.collection("orders")
-        .where("waafitranfertID", "==", transferId)
-        .where("status", "in", ["En attente", "Confirmé", "Rechargé ✅", "Intervention Manuelle 🚨"])
-        .limit(1).get();
-      if (!dup.empty) {
-        res.json({ valide: false, erreurs: [`Transfer ID déjà utilisé — ordre existant : ${dup.docs[0].data().status}`] });
-        return;
-      }
-    }
-    res.json({ valide: true, erreurs: [] });
+    const erreurs = validerReglesDor(req.body || {});
+    res.json({ valide: erreurs.length === 0, erreurs });
   }
 );
 
 // ══════════════════════════════════════════════════════════════
-// 1. NOUVEL ORDRE → Règles d'or + Doublon + Gemini fraude + Rétroactif SMS
+// 1. NOUVEL ORDRE → Gemini fraude + Rétroactif SMS
+//    Seul Gemini peut rejeter. Tout le reste = sauvegarder + transférer.
 // ══════════════════════════════════════════════════════════════
 exports.onNouvelOrdre = onDocumentCreated(
   { document: "orders/{docId}", region: "europe-west1", secrets: [GEMINI_KEY], minInstances: 1, concurrency: 80 },
@@ -133,30 +121,10 @@ exports.onNouvelOrdre = onDocumentCreated(
     const transferId = tx.waafitranfertID || tx.hash || "";
     const ordreRef   = tx.orderId || tx.ref || docId;
 
-    // ── Règles d'or ──────────────────────────────────────────
-    const erreurs = validerReglesDor(tx);
-    if (erreurs.length > 0) {
-      await db.collection("orders").doc(docId).update({
-        status: "Rejeté", flagRaison: "Règles: " + erreurs.join(" | "), rejetedAt: FieldValue.serverTimestamp(),
-      });
-      await rtdbUpdateStatus(ordreRef, "Rejeté");
-      return;
-    }
-
+    // Enregistrer dans Realtime DB pour dashboard live
     await rtdbUpdateStatus(ordreRef, tx.status || "En attente", { montant: Number(tx.montant || 0), type: tx.type });
 
-    // ── Doublon ───────────────────────────────────────────────
-    if (transferId) {
-      const existingSnap = await db.collection("orders").where("waafitranfertID", "==", transferId).limit(2).get();
-      if (existingSnap.docs.some(d => d.id !== docId)) {
-        await db.collection("orders").doc(docId).update({
-          status: "Rejeté", flagRaison: "Doublon — Transfer ID déjà utilisé", flaggedAt: FieldValue.serverTimestamp(),
-        });
-        return;
-      }
-    }
-
-    // ── Gemini fraude ─────────────────────────────────────────
+    // ── Gemini fraude — seul juge autorisé à rejeter ──────────
     try {
       const fraud = await geminiJson(
         `Transaction à analyser :
@@ -166,22 +134,23 @@ exports.onNouvelOrdre = onDocumentCreated(
 - N° Expéditeur: ${tx.numeroPayment || "?"}
 - Heure: ${new Date().getHours()}h
 
-Règles : montant > 50000 → suspect | transferId < 6 chiffres → invalide | numéro ≠ 77xxxxxx → suspect
 Réponds en JSON : {"score_fraude":0-100,"risque":"faible|moyen|élevé","action":"valider|vérifier|rejeter","raisons":[]}`,
-        `Tu es le système de sécurité de Kaffi Pay (Djibouti, plateforme 1xBet↔Waafi).
-Expert en détection de fraude. Ne valide jamais une transaction douteuse par politesse.`
+        `Tu es le seul système autorisé à rejeter des transactions sur Kaffi Pay (Djibouti, 1xBet↔Waafi).
+Ne rejette que les fraudes évidentes : montant irréaliste, Transfer ID incohérent, pattern d'arnaque.
+En cas de doute, valide — le SMS Waafi confirmera ou non le paiement.`
       );
 
+      // Sauvegarder le score IA sur l'ordre (transfert de données)
       const updates = { ia_score_fraude: fraud.score_fraude, ia_risque: fraud.risque, ia_raisons: fraud.raisons, ia_action: fraud.action, ia_analysedAt: FieldValue.serverTimestamp() };
-      if (fraud.action === "rejeter" || fraud.risque === "élevé") {
+      if (fraud.action === "rejeter") {
         updates.status     = "Rejeté";
         updates.flagRaison = "IA Fraude: " + (fraud.raisons || []).join(", ");
-        await db.collection("orders").doc(docId).update(updates);
-        return;
+        updates.rejetedAt  = FieldValue.serverTimestamp();
       }
       await db.collection("orders").doc(docId).update(updates);
+      if (fraud.action === "rejeter") return;
     } catch (e) {
-      console.error("[onNouvelOrdre] Gemini erreur:", e.message);
+      console.error("[onNouvelOrdre] Gemini erreur (ordre conservé En attente):", e.message);
     }
 
     // ── Correspondance rétroactive — SMS déjà arrivé avant l'ordre ──
