@@ -579,23 +579,33 @@ exports.smsWebhook = onRequest(
       return;
     }
 
-    const { notification, not_title } = req.body;
+    // Accepte tous les noms de champs possibles envoyés par MacroDroid
+    const body = req.body || {};
+    const notification =
+      body.notification     ||
+      body.notificationText ||
+      body.not_body         ||
+      body.texte            ||
+      body.message          ||
+      body.sms_body         ||
+      body.sms              ||
+      body.text             ||
+      "";
 
-    if (!notification) {
-      res.status(400).json({ error: "Champ 'notification' requis" });
+    if (!notification || notification === "[notification]" || notification === "{notification}") {
+      res.status(400).json({ error: "Champ SMS vide ou format invalide", recu: body });
       return;
     }
 
-    // Écrire dans Firestore → déclenche autoConfirmation automatiquement
     const docRef = await db.collection("waafi_notifications").add({
       notification,
-      not_title:  not_title || "Waafi SMS",
+      not_title:  body.not_title || body.title || "Waafi SMS",
       source:     "macrodroid_http",
       createdAt:  FieldValue.serverTimestamp(),
       status:     "nouveau",
     });
 
-    console.log(`[smsWebhook] SMS reçu → doc ${docRef.id}`);
+    console.log(`[smsWebhook] SMS reçu → doc ${docRef.id} | "${notification.substring(0,80)}"`);
     res.json({ success: true, docId: docRef.id });
   }
 );
