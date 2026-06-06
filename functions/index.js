@@ -135,66 +135,113 @@ exports.onNouvelOrdre = onDocumentCreated(
       }
     }
 
-    // ── 1b. Cherche waafi_notification déjà reçue (paiement avant ordre) ──
-    // Le client paie Waafi d'abord → MacroDroid → waafi_notifications
-    // Quand l'ordre arrive, on cherche la notification correspondante
-    if (isDepot && transferId) {
-      const waafiSnap = await db.collection("waafi_notifications")
-        .where("transferId", "==", transferId)
-        .where("status", "==", "nouveau")
-        .limit(1)
-        .get();
+    // ── 1b. Vérification paiement Waafi — scoring 3 critères ─────────
+    // Critères : Transfer ID + Montant (±5 DJF) + Numéro expéditeur
+    // 3/3 → Confirmé | 2/3 → Rejeté + vérif fraude | <2 → Rejeté
+    if (isDepot) {
+      const montantOrdre = Number(tx.montant || 0);
+      const numOrdre     = (tx.numeroPayment || "").trim();
 
-      if (!waafiSnap.empty) {
-        const waafiDoc  = waafiSnap.docs[0];
-        const waafiData = waafiDoc.data();
+      // Cherche par Transfer ID si fourni
+      let waafiDoc  = null;
+      let waafiData = null;
 
-        // Confirmation atomique
+      if (transferId) {
+        const snap = await db.collection("waafi_notifications")
+          .where("transferId", "==", transferId)
+          .where("status", "==", "nouveau")
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          waafiDoc  = snap.docs[0];
+          waafiData = waafiDoc.data();
+        }
+      }
+
+      // Calcul du score de correspondance
+      let score         = 0;
+      let details       = [];
+      const montantWaafi = waafiData ? (waafiData.montant || 0) : 0;
+      const numWaafi     = waafiData ? (waafiData.numClient || "").trim() : "";
+
+      if (waafiDoc)                                                score++; // Transfer ID ✓
+      if (waafiDoc && Math.abs(montantOrdre - montantWaafi) <= 5) { score++; details.push(`Montant: ${montantWaafi} DJF`); }
+      if (waafiDoc && numOrdre && numWaafi && numOrdre === numWaafi) { score++; details.push(`N°: ${numWaafi}`); }
+
+      // ── 3/3 : Confirmation instantanée ──────────────────────────
+      if (score === 3) {
         const claimed = await claimOrder(
           db.collection("orders").doc(docId),
           "En attente", "Confirmé",
           {
-            confirmedBy:     "auto_match_waafi",
-            montantRecu:     waafiData.montant || Number(tx.montant),
-            expediteurRecu:  waafiData.numClient || tx.numeroPayment || "",
-            confirmedAt:     FieldValue.serverTimestamp(),
+            confirmedBy:    "auto_match_3_3",
+            montantRecu:    montantWaafi,
+            expediteurRecu: numWaafi,
+            confirmedAt:    FieldValue.serverTimestamp(),
           }
         );
-
         if (claimed) {
           await waafiDoc.ref.update({ status: "matché", ordreRef: ref });
           await sendTelegram(
             TELEGRAM_TOKEN.value(),
             TELEGRAM_ADMIN_ID.value(),
-            `✅ <b>Dépôt confirmé instantanément</b>\n\n` +
+            `✅ <b>Dépôt confirmé (3/3)</b>\n\n` +
             `Réf: <b>#${ref}</b>\n` +
-            `Montant: <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
+            `Montant: <b>${montantOrdre.toLocaleString()} DJF</b>\n` +
             `ID 1xBet: <code>${tx.userId1xBet || "?"}</code>\n` +
             `Transfer-ID: <code>${transferId}</code>\n` +
-            `Expéditeur: <code>${waafiData.numClient || tx.numeroPayment || "?"}</code>\n\n` +
-            `🤖 Paiement Waafi déjà reçu — confirmation automatique`
+            `Expéditeur: <code>${numWaafi}</code>\n\n` +
+            `🤖 Transfer ID + Montant + Numéro — correspondance parfaite`
           );
           return;
         }
-      } else {
-        // Aucun paiement Waafi reçu → rejet automatique
-        await db.collection("orders").doc(docId).update({
-          status:     "Rejeté",
-          flagRaison: "Paiement non reçu — Transfer ID introuvable dans les notifications Waafi",
-          flaggedAt:  FieldValue.serverTimestamp(),
-        });
-        await sendTelegram(
-          TELEGRAM_TOKEN.value(),
-          TELEGRAM_ADMIN_ID.value(),
-          `❌ <b>Ordre rejeté — Paiement non reçu</b>\n\n` +
-          `Réf: <code>#${ref}</code>\n` +
-          `Transfer-ID soumis: <code>${transferId}</code>\n` +
-          `Montant: <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
-          `ID 1xBet: <code>${tx.userId1xBet || "?"}</code>\n\n` +
-          `⚠️ Aucun paiement Waafi correspondant détecté.`
-        );
-        return;
       }
+
+      // ── 2/3 ou moins : Rejet + vérif fraude ─────────────────────
+      // Vérifie si ces données ont déjà été utilisées dans un ordre confirmé
+      let fraudeRaison = score === 0
+        ? "Paiement non reçu — aucune notification Waafi correspondante"
+        : `Correspondance partielle (${score}/3 critères) — Transfer ID: ${transferId || "?"}, Montant: ${montantOrdre} DJF, N°: ${numOrdre || "?"}`;
+
+      // Recherche doublon dans les ordres récents (24h)
+      const hier = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const doublonSnap = await db.collection("orders")
+        .where("status", "==", "Confirmé")
+        .where("waafitranfertID", "==", transferId || "__none__")
+        .limit(1)
+        .get();
+      const doublonNum = await db.collection("orders")
+        .where("status", "==", "Confirmé")
+        .where("numeroPayment", "==", numOrdre || "__none__")
+        .where("montant", "==", montantOrdre)
+        .limit(1)
+        .get();
+
+      const estFraude = !doublonSnap.empty || !doublonNum.empty;
+      if (estFraude) {
+        fraudeRaison += " — FRAUDE SUSPECTÉE : données déjà utilisées dans un ordre confirmé";
+      }
+
+      await db.collection("orders").doc(docId).update({
+        status:     "Rejeté",
+        flagRaison: fraudeRaison,
+        flaggedAt:  FieldValue.serverTimestamp(),
+        matchScore: score,
+      });
+
+      await sendTelegram(
+        TELEGRAM_TOKEN.value(),
+        TELEGRAM_ADMIN_ID.value(),
+        `❌ <b>Ordre rejeté (${score}/3)</b>${estFraude ? " 🚨 FRAUDE" : ""}\n\n` +
+        `Réf: <code>#${ref}</code>\n` +
+        `Transfer-ID: <code>${transferId || "?"}</code>\n` +
+        `Montant ordre: <b>${montantOrdre.toLocaleString()} DJF</b>` +
+        (waafiData ? ` / Waafi: <b>${montantWaafi.toLocaleString()} DJF</b>` : "") + `\n` +
+        `N° ordre: <code>${numOrdre || "?"}</code>` +
+        (waafiData ? ` / Waafi: <code>${numWaafi || "?"}</code>` : "") + `\n\n` +
+        `${estFraude ? "🚨 Données déjà utilisées dans un ordre confirmé !" : "⚠️ Paiement non vérifié."}`
+      );
+      return;
     }
 
     // ── 1c. Analyse fraude Gemini (Vertex AI) ─────────────────────
