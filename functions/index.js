@@ -767,32 +767,4 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
   }
 );
 
-// ══════════════════════════════════════════════════════════════
-// AUTO-REJET SERVEUR — toutes les 5 min, rejette les ordres
-// "En attente" de plus de 20 minutes
-// ══════════════════════════════════════════════════════════════
-exports.autoRejetServeur = onSchedule(
-  { schedule: "every 5 minutes", region: "europe-west1", timeoutSeconds: 60 },
-  async () => {
-    const cutoff = new Date(Date.now() - 20 * 60 * 1000);
-    const snap = await db.collection("orders")
-      .where("status", "==", "En attente")
-      .where("createdAt", "<", cutoff)
-      .limit(20).get();
-
-    if (snap.empty) return;
-
-    const batch = db.batch();
-    snap.docs.forEach((doc) => {
-      batch.update(doc.ref, {
-        status:      "Rejeté",
-        rejetBy:     "auto_serveur",
-        rejetRaison: "Paiement Waafi non reçu dans les 20 minutes imparties.",
-        rejetedAt:   FieldValue.serverTimestamp(),
-      });
-    });
-    await batch.commit();
-    console.log(`[autoRejetServeur] ${snap.size} ordre(s) rejeté(s) automatiquement.`);
-  }
-);
 
