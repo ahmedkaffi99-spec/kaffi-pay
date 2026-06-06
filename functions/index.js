@@ -998,3 +998,98 @@ Règles :
     }
   }
 );
+
+// ══════════════════════════════════════════════════════════════════
+// 8. BOT ADMIN — Questions & commandes (admin seulement)
+// ══════════════════════════════════════════════════════════════════
+exports.adminBot = onRequest(
+  {
+    region:         REGION,
+    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    timeoutSeconds: 60,
+  },
+  async (req, res) => {
+    res.status(200).send("OK");
+
+    try {
+      const update = req.body || {};
+      const msg    = update.message || update.edited_message;
+      if (!msg) return;
+
+      const chatId  = String(msg.chat.id);
+      const text    = (msg.text || "").trim();
+      const adminId = String(TELEGRAM_ADMIN_ID.value());
+      const token   = TELEGRAM_TOKEN.value();
+
+      // Sécurité : seul l'admin peut interagir
+      if (chatId !== adminId) {
+        console.warn(`adminBot: accès refusé pour chatId ${chatId}`);
+        return;
+      }
+
+      if (!text) return;
+      console.log(`adminBot commande: "${text}"`);
+
+      // Charger les données Firestore pour le contexte Gemini
+      const [ordersSnap, notifSnap] = await Promise.all([
+        db.collection("orders").orderBy("ts", "desc").limit(20).get().catch(() =>
+          db.collection("orders").limit(20).get()
+        ),
+        db.collection("waafi_notifications").orderBy("createdAt", "desc").limit(10).get().catch(() =>
+          db.collection("waafi_notifications").limit(10).get()
+        ),
+      ]);
+
+      const orders = ordersSnap.docs.map((d) => {
+        const o = d.data();
+        return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | N°${o.numeroPayment || "?"} | ${o.flagRaison || ""}`;
+      });
+
+      const notifs = notifSnap.docs.map((d) => {
+        const n = d.data();
+        return `• TransferID:${n.transferId || "?"} | ${n.montant || "?"}DJF | N°${n.numClient || "?"} | ${n.status || "?"}`;
+      });
+
+      // Appel Gemini
+      let reponse = "Je n'ai pas pu traiter votre demande.";
+      try {
+        const model  = getGemini();
+        const result = await model.generateContent({
+          contents: [{
+            role: "user",
+            parts: [{ text: `
+Tu es l'assistant IA de l'admin Kaffi-Pay (Djibouti) — plateforme 1xBet ↔ Waafi.
+Tu réponds aux questions et commandes de l'admin. Réponds en français, concis et précis.
+N'utilise pas de JSON — réponds en texte simple formaté pour Telegram (HTML ok).
+
+Question/commande admin : "${text}"
+
+20 derniers ordres :
+${orders.length ? orders.join("\n") : "Aucun ordre"}
+
+10 derniers SMS Waafi reçus :
+${notifs.length ? notifs.join("\n") : "Aucun SMS"}
+
+Règles :
+- Si l'admin demande un ordre spécifique → cherche dans la liste et donne tous les détails
+- Si l'admin demande les stats → calcule confirmés/rejetés/en attente/volume
+- Si l'admin demande les ordres en attente → liste-les avec Transfer ID et montant
+- Si l'admin demande les fraudes → liste les ordres rejetés raison fraude
+- Si l'admin demande de confirmer/rejeter un ordre → explique que l'action se fait dans Firestore directement
+- Kaffi-Pay est 24/7 — jamais mentionner les heures comme facteur suspect
+` }]
+          }]
+        });
+        reponse = aiText(result) || reponse;
+      } catch (e) {
+        console.error("adminBot Gemini error:", e.message);
+        reponse = `⚠️ Erreur Gemini : ${e.message}`;
+      }
+
+      await sendTelegram(token, adminId, reponse);
+
+    } catch (e) {
+      console.error("adminBot crash:", e.message, e.stack);
+    }
+  }
+);
