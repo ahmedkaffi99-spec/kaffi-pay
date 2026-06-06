@@ -166,14 +166,12 @@ exports.onNouvelOrdre = onDocumentCreated(
       }
     }
 
-    // ── 1b. Vérification paiement Waafi — scoring 3 critères ─────────
-    // Critères : Transfer ID + Montant (±5 DJF) + Numéro expéditeur
-    // 3/3 → Confirmé | 2/3 → Rejeté + vérif fraude | <2 → Rejeté
+    // ── 1b. Transfer ID = seule vérité du paiement ───────────────────
+    // Transfer ID trouvé → paiement réel → correction ordre + confirmation
+    // Transfer ID introuvable → rejet immédiat
     if (isDepot) {
       const montantOrdre = Number(tx.montant || 0);
-      const numOrdre     = (tx.numeroPayment || "").trim();
 
-      // Cherche par Transfer ID si fourni
       let waafiDoc  = null;
       let waafiData = null;
 
@@ -189,77 +187,68 @@ exports.onNouvelOrdre = onDocumentCreated(
         }
       }
 
-      // Calcul du score de correspondance
-      let score         = 0;
-      let details       = [];
-      const montantWaafi = waafiData ? (waafiData.montant || 0) : 0;
-      const numWaafi     = waafiData ? (waafiData.numClient || "").trim() : "";
+      // ── Transfer ID trouvé → paiement confirmé ────────────────────
+      if (waafiDoc) {
+        const montantReel = waafiData.montant  || montantOrdre;
+        const numReel     = waafiData.numClient || tx.numeroPayment || "";
 
-      if (waafiDoc)                                                score++; // Transfer ID ✓
-      if (waafiDoc && Math.abs(montantOrdre - montantWaafi) <= 5) { score++; details.push(`Montant: ${montantWaafi} DJF`); }
-      if (waafiDoc && numOrdre && numWaafi && numOrdre === numWaafi) { score++; details.push(`N°: ${numWaafi}`); }
+        // Signale les corrections si montant ou numéro différents
+        const corrections = [];
+        if (waafiData.montant && Math.abs(montantOrdre - waafiData.montant) > 1) {
+          corrections.push(`Montant corrigé: ${montantOrdre} → ${waafiData.montant} DJF`);
+        }
+        if (waafiData.numClient && tx.numeroPayment && waafiData.numClient !== tx.numeroPayment) {
+          corrections.push(`N° corrigé: ${tx.numeroPayment} → ${waafiData.numClient}`);
+        }
 
-      // ── 3/3 : Confirmation instantanée ──────────────────────────
-      if (score === 3) {
         const claimed = await claimOrder(
           db.collection("orders").doc(docId),
           "En attente", "Confirmé",
           {
-            confirmedBy:    "auto_match_3_3",
-            montantRecu:    montantWaafi,
-            expediteurRecu: numWaafi,
-            confirmedAt:    FieldValue.serverTimestamp(),
+            confirmedBy:       "auto_transfer_id",
+            montant:           montantReel,
+            montantRecu:       montantReel,
+            numeroPayment:     numReel,
+            expediteurRecu:    numReel,
+            correctionApplied: corrections.length > 0,
+            corrections:       corrections,
+            confirmedAt:       FieldValue.serverTimestamp(),
           }
         );
+
         if (claimed) {
           await waafiDoc.ref.update({ status: "matché", ordreRef: ref });
           await sendTelegram(
             TELEGRAM_TOKEN.value(),
             TELEGRAM_ADMIN_ID.value(),
-            `✅ <b>Dépôt confirmé (3/3)</b>\n\n` +
+            `✅ <b>Dépôt confirmé</b>${corrections.length ? " ✏️ (corrigé)" : ""}\n\n` +
             `Réf: <b>#${ref}</b>\n` +
-            `Montant: <b>${montantOrdre.toLocaleString()} DJF</b>\n` +
+            `Montant: <b>${Number(montantReel).toLocaleString()} DJF</b>\n` +
             `ID 1xBet: <code>${tx.userId1xBet || "?"}</code>\n` +
             `Transfer-ID: <code>${transferId}</code>\n` +
-            `Expéditeur: <code>${numWaafi}</code>\n\n` +
-            `🤖 Transfer ID + Montant + Numéro — correspondance parfaite`
+            `Expéditeur: <code>${numReel}</code>\n` +
+            (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "") +
+            `\n\n🤖 Transfer ID vérifié — confirmation automatique`
           );
           return;
         }
       }
 
-      // ── 2/3 ou moins : Rejet ─────────────────────────────────────
-      const fraudeRaison = score === 0
-        ? "Paiement non reçu — aucune notification Waafi correspondante"
-        : `Correspondance partielle (${score}/3) — ` +
-          `Transfer ID: ${waafiData?.transferId || "?"} / Montant Waafi: ${montantWaafi} DJF (ordre: ${montantOrdre} DJF) / N° Waafi: ${numWaafi || "?"} (ordre: ${numOrdre || "?"})`;
-
-
+      // ── Transfer ID introuvable → rejet ───────────────────────────
       await db.collection("orders").doc(docId).update({
         status:     "Rejeté",
-        flagRaison: fraudeRaison,
+        flagRaison: `Paiement non reçu — Transfer ID ${transferId || "(non fourni)"} introuvable dans les notifications Waafi`,
         flaggedAt:  FieldValue.serverTimestamp(),
-        matchScore: score,
       });
-
-      await db.collection("orders").doc(docId).update({
-        status:     "Rejeté",
-        flagRaison: fraudeRaison,
-        flaggedAt:  FieldValue.serverTimestamp(),
-        matchScore: score,
-      });
-
       await sendTelegram(
         TELEGRAM_TOKEN.value(),
         TELEGRAM_ADMIN_ID.value(),
-        `❌ <b>Ordre rejeté (${score}/3)</b>\n\n` +
+        `❌ <b>Ordre rejeté — Paiement non reçu</b>\n\n` +
         `Réf: <code>#${ref}</code>\n` +
-        `Transfer-ID: <code>${transferId || "?"}</code>\n` +
-        `Montant ordre: <b>${montantOrdre.toLocaleString()} DJF</b>` +
-        (waafiData ? ` / Waafi: <b>${montantWaafi.toLocaleString()} DJF</b>` : "") + `\n` +
-        `N° ordre: <code>${numOrdre || "?"}</code>` +
-        (waafiData ? ` / Waafi: <code>${numWaafi || "?"}</code>` : "") + `\n\n` +
-        `⚠️ ${score === 0 ? "Aucun paiement Waafi reçu." : "Données partiellement incorrectes."}`
+        `Transfer-ID soumis: <code>${transferId || "non fourni"}</code>\n` +
+        `Montant: <b>${montantOrdre.toLocaleString()} DJF</b>\n` +
+        `ID 1xBet: <code>${tx.userId1xBet || "?"}</code>\n\n` +
+        `⚠️ Aucun paiement Waafi avec ce Transfer ID.`
       );
       return;
     }
