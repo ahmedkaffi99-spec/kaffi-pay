@@ -1,54 +1,52 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║      KAFFI PAY — CLOUD FUNCTIONS v3.1 (Genkit + Firebase)   ║
- * ║  • Genkit flows nommés → visibles dans Firebase Console     ║
- * ║  • Télémétrie Firebase → traces + logs dans le dashboard    ║
- * ║  • Output structuré Zod (fraude, admin, vision)             ║
+ * ║       KAFFI PAY — CLOUD FUNCTIONS v4.0                      ║
+ * ║  • Gemini AI direct (@google/generative-ai)                 ║
  * ║  • Auto-confirmation SMS Waafi → MacroDroid 1xBet           ║
+ * ║  • Realtime DB dashboard live                               ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest }                    = require("firebase-functions/v2/https");
-const { onSchedule }                           = require("firebase-functions/v2/scheduler");
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
 const { getDatabase }                          = require("firebase-admin/database");
-const { genkit, z }                            = require("genkit");
-const { googleAI, gemini20Flash }              = require("@genkit-ai/googleai");
+const { GoogleGenerativeAI }                   = require("@google/generative-ai");
 
 initializeApp();
 const db   = getFirestore();
 const rtdb = getDatabase();
 
-// ── MacroDroid webhook URL ─────────────────────────────────────
 const MACRO_DEPOT_URL = "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2";
+const GEMINI_KEY      = defineSecret("GEMINI_KEY");
 
 // ══════════════════════════════════════════════════════════════
-// RÈGLES D'OR — Validation avant toute écriture Firestore
+// HELPERS
 // ══════════════════════════════════════════════════════════════
+
 const REGLES = {
   depot:   { min: 50,  max: 500000 },
   retrait: { min: 250, max: 100000 },
 };
 
 function validerReglesDor(tx) {
-  const erreurs   = [];
-  const montant   = Number(tx.montant || 0);
-  const type      = (tx.type || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu,"");
+  const erreurs    = [];
+  const montant    = Number(tx.montant || 0);
+  const type       = (tx.type || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
   const transferId = String(tx.waafitranfertID || tx.transferId || "").trim();
-  const numero    = String(tx.numeroPayment || tx.waafiNumber || "").trim();
-  const id1xbet   = tx.userId1xBet || tx.id1x || tx.idUser || "";
+  const numero     = String(tx.numeroPayment || tx.waafiNumber || "").trim();
+  const id1xbet    = tx.userId1xBet || tx.id1x || tx.idUser || "";
 
-  if (type === "depot" || type === "dépôt") {
-    if (montant < REGLES.depot.min)  erreurs.push(`Minimum dépôt: ${REGLES.depot.min} DJF`);
-    if (montant > REGLES.depot.max)  erreurs.push(`Maximum dépôt: ${REGLES.depot.max.toLocaleString()} DJF`);
+  if (type === "depot" || type === "depot") {
+    if (montant < REGLES.depot.min) erreurs.push(`Minimum dépôt: ${REGLES.depot.min} DJF`);
+    if (montant > REGLES.depot.max) erreurs.push(`Maximum dépôt: ${REGLES.depot.max.toLocaleString()} DJF`);
   } else if (type === "retrait") {
     if (montant < REGLES.retrait.min) erreurs.push(`Minimum retrait: ${REGLES.retrait.min} DJF`);
     if (montant > REGLES.retrait.max) erreurs.push(`Maximum retrait: ${REGLES.retrait.max.toLocaleString()} DJF`);
   }
-  if (!transferId || transferId.replace(/\D/g,"").length < 6)
+  if (!transferId || transferId.replace(/\D/g, "").length < 6)
     erreurs.push("Transfer ID invalide (min 6 chiffres)");
   if (!numero || !/^77\d{6}$/.test(numero))
     erreurs.push("Numéro Waafi invalide (77xxxxxx, 8 chiffres)");
@@ -58,9 +56,6 @@ function validerReglesDor(tx) {
   return erreurs;
 }
 
-// ══════════════════════════════════════════════════════════════
-// PARSER SMS WAAFI — utilisé par smsWebhook + autoConfirmation
-// ══════════════════════════════════════════════════════════════
 function parseSmsWaafi(notification) {
   const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i)
                      || notification.match(/Transfer\s*ID[:\s]+(\d+)/i)
@@ -78,213 +73,40 @@ function parseSmsWaafi(notification) {
   return { transferId, montantSMS, numClient };
 }
 
-// ══════════════════════════════════════════════════════════════
-// REALTIME DB — mise à jour statut live
-// ══════════════════════════════════════════════════════════════
 async function rtdbUpdateStatus(ordreRef, status, extra = {}) {
   try {
-    await rtdb.ref(`orders/${ordreRef}`).update({
-      status,
-      updatedAt: Date.now(),
-      ...extra,
-    });
+    await rtdb.ref(`orders/${ordreRef}`).update({ status, updatedAt: Date.now(), ...extra });
   } catch (e) {
     console.error("[RTDB]", e.message);
   }
 }
 
-// ── Secret Firebase ────────────────────────────────────────────
-const GEMINI_KEY = defineSecret("GEMINI_KEY");
+function getGemini() {
+  return new GoogleGenerativeAI(GEMINI_KEY.value())
+    .getGenerativeModel({ model: "gemini-2.0-flash" });
+}
 
-// ── Instance Genkit + Flows — initialisés au premier appel ────
-let _ai    = null;
-let _flows = null;
-
-function getFlows() {
-  if (_ai && _flows) return _flows;
-
-  _ai = genkit({
-    plugins: [googleAI({ apiKey: GEMINI_KEY.value() })],
-    model: gemini20Flash,
+async function geminiJson(prompt, systemInstruction) {
+  const model = new GoogleGenerativeAI(GEMINI_KEY.value()).getGenerativeModel({
+    model: "gemini-2.0-flash",
+    systemInstruction,
+    generationConfig: { responseMimeType: "application/json" },
   });
-
-  // ── Schemas Zod ───────────────────────────────────────────────
-  const FraudeSchema = z.object({
-    score_fraude: z.number().describe("Score de fraude 0-100"),
-    risque:       z.enum(["faible", "moyen", "élevé"]),
-    raisons:      z.array(z.string()),
-    action:       z.enum(["valider", "vérifier", "rejeter"]),
-  });
-
-  const AnalyseAdminSchema = z.object({
-    resume:            z.string(),
-    alerte:            z.string().nullable(),
-    conseil:           z.string(),
-    prediction_demain: z.number(),
-    heure_pic:         z.string(),
-    score_sante:       z.number(),
-  });
-
-  const AdminDecisionSchema = z.object({
-    decision:     z.enum(["confirmer", "rejeter", "attendre"]),
-    raison:       z.string(),
-    confiance:    z.number().describe("0-100"),
-  });
-
-  const InputFraudeSchema = z.object({
-    type:          z.string(),
-    montant:       z.number(),
-    transferId:    z.string(),
-    numeroPayment: z.string(),
-    heure:         z.number(),
-  });
-
-  const InputAdminSchema = z.object({
-    confirmes: z.number(),
-    attente:   z.number(),
-    rejetes:   z.number(),
-    volume:    z.number(),
-    taux:      z.number(),
-    moyenne:   z.number(),
-    derniersTx: z.array(z.object({
-      type:    z.string(),
-      montant: z.number(),
-      status:  z.string(),
-      date:    z.string(),
-    })),
-  });
-
-  const InputAdminDecisionSchema = z.object({
-    ordreId:       z.string(),
-    type:          z.string(),
-    montantOrdre:  z.number(),
-    transferId:    z.string(),
-    numeroOrdre:   z.string(),
-    minutesAttente: z.number(),
-    smsTrouve:     z.boolean(),
-    montantSMS:    z.number(),
-    ecartMontant:  z.number(),
-    numeroSMS:     z.string(),
-  });
-
-  // ── Flow 1 : Analyse Fraude ────────────────────────────────────
-  const analyseFraude = _ai.defineFlow(
-    {
-      name:         "analyseFraude",
-      inputSchema:  InputFraudeSchema,
-      outputSchema: FraudeSchema,
-    },
-    async (input) => {
-      const { output } = await _ai.generate({
-        model: gemini20Flash,
-        system: `Tu es le système de sécurité de Kaffi Pay — expert en détection de fraude financière sur les plateformes de paris en ligne à Djibouti.
-Ton seul rôle est d'analyser les transactions Waafi↔1xBet et de protéger la plateforme contre les arnaques, les doublons et le blanchiment.
-Sois précis, concis et factuel. Ne valide jamais une transaction douteuse par politesse.`,
-        prompt: `Transaction à analyser :
-- Type: ${input.type}
-- Montant: ${input.montant} DJF
-- Transfer ID: ${input.transferId || "?"}
-- N° Expéditeur: ${input.numeroPayment || "?"}
-- Heure soumission: ${input.heure}h
-
-Règles :
-1. Montant > 50 000 DJF → suspect
-2. Transfer ID < 6 chiffres → invalide
-3. Numéro ne commence pas par 77 → suspect
-4. Montant < 50 DJF → invalide`,
-        output: { schema: FraudeSchema },
-      });
-      return output || { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
-    }
-  );
-
-  // ── Flow 2 : Analyse Admin ─────────────────────────────────────
-  const analyseAdmin = _ai.defineFlow(
-    {
-      name:         "analyseAdmin",
-      inputSchema:  InputAdminSchema,
-      outputSchema: AnalyseAdminSchema,
-    },
-    async (input) => {
-      const { output } = await _ai.generate({
-        model: gemini20Flash,
-        system: `Tu es le conseiller IA de la direction de Kaffi Pay (Djibouti, plateforme d'échange 1xBet↔Waafi).
-Tu analyses les performances opérationnelles, identifies les anomalies et donnes des recommandations concrètes en DJF.
-Sois direct, professionnel et actionnable. Priorise la rentabilité et la sécurité de la plateforme.`,
-        prompt: `Données des 100 dernières transactions :
-- Confirmées: ${input.confirmes} — Volume: ${input.volume.toLocaleString()} DJF
-- En attente: ${input.attente}
-- Rejetées: ${input.rejetes}
-- Taux confirmation: ${input.taux}%
-- Montant moyen: ${input.moyenne} DJF
-
-5 dernières transactions :
-${input.derniersTx.map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} — ${t.date}`).join("\n")}
-
-Donne un résumé opérationnel, une alerte si nécessaire, un conseil stratégique et une prédiction pour demain.`,
-        output: { schema: AnalyseAdminSchema },
-      });
-      return output;
-    }
-  );
-
-  // ── Flow 3 : Décision Admin IA — remplace l'humain pour les cas bloqués ──
-  const adminDecision = _ai.defineFlow(
-    {
-      name:         "adminDecision",
-      inputSchema:  InputAdminDecisionSchema,
-      outputSchema: AdminDecisionSchema,
-    },
-    async (input) => {
-      const { output } = await _ai.generate({
-        model: gemini20Flash,
-        system: `Tu es l'administrateur automatique de Kaffi Pay (Djibouti, plateforme 1xBet↔Waafi).
-Tu prends des décisions définitives sur les ordres bloqués ou en attente prolongée.
-Tu remplaces entièrement l'admin humain. Tes décisions sont exécutées immédiatement dans le système.
-Règles de décision :
-- SMS trouvé + écart montant ≤ 50 DJF + même numéro (ou numéro inconnu) → confirmer
-- SMS trouvé + écart > 50 DJF → rejeter (fraude probable)
-- SMS non trouvé + attente > 15 min → rejeter (paiement non reçu)
-- SMS non trouvé + attente ≤ 15 min → attendre
-- Numéro SMS différent de l'ordre → rejeter sauf si écart minime et context cohérent`,
-        prompt: `Ordre à décider :
-- ID : ${input.ordreId}
-- Type : ${input.type}
-- Montant attendu : ${input.montantOrdre} DJF
-- Transfer ID : ${input.transferId}
-- N° client : ${input.numeroOrdre}
-- En attente depuis : ${input.minutesAttente} minutes
-
-SMS Waafi reçu : ${input.smsTrouve ? "OUI" : "NON"}
-${input.smsTrouve ? `- Montant SMS : ${input.montantSMS} DJF (écart : ${input.ecartMontant} DJF)
-- N° expéditeur SMS : ${input.numeroSMS || "inconnu"}` : ""}
-
-Quelle décision prends-tu ?`,
-        output: { schema: AdminDecisionSchema },
-      });
-      return output || { decision: "attendre", raison: "IA indisponible", confiance: 0 };
-    }
-  );
-
-  _flows = { analyseFraude, analyseAdmin, adminDecision };
-  return _flows;
+  const result = await model.generateContent(prompt);
+  return JSON.parse(result.response.text());
 }
 
 // ══════════════════════════════════════════════════════════════
-// 0. VALIDER ORDRE — HTTP endpoint appelé par le frontend
-//    AVANT que l'ordre soit écrit dans Firestore
+// 0. VALIDER ORDRE — vérifie avant écriture Firestore
 // ══════════════════════════════════════════════════════════════
 exports.validerOrdre = onRequest(
   { region: "europe-west1", cors: true },
   async (req, res) => {
     if (req.method !== "POST") { res.status(405).json({ error: "POST requis" }); return; }
-    const tx = req.body || {};
+    const tx      = req.body || {};
     const erreurs = validerReglesDor(tx);
-    if (erreurs.length > 0) {
-      res.json({ valide: false, erreurs });
-      return;
-    }
-    // Vérifier doublon Transfer ID
+    if (erreurs.length > 0) { res.json({ valide: false, erreurs }); return; }
+
     const transferId = String(tx.waafitranfertID || tx.transferId || "").trim();
     if (transferId) {
       const dup = await db.collection("orders")
@@ -292,8 +114,7 @@ exports.validerOrdre = onRequest(
         .where("status", "in", ["En attente", "Confirmé", "Rechargé ✅", "Intervention Manuelle 🚨"])
         .limit(1).get();
       if (!dup.empty) {
-        const s = dup.docs[0].data().status;
-        res.json({ valide: false, erreurs: [`Transfer ID déjà utilisé — ordre existant : ${s}`] });
+        res.json({ valide: false, erreurs: [`Transfer ID déjà utilisé — ordre existant : ${dup.docs[0].data().status}`] });
         return;
       }
     }
@@ -302,7 +123,7 @@ exports.validerOrdre = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════
-// 1. NOUVEL ORDRE → Règles d'or + Doublon + Gemini fraude
+// 1. NOUVEL ORDRE → Règles d'or + Doublon + Gemini fraude + Rétroactif SMS
 // ══════════════════════════════════════════════════════════════
 exports.onNouvelOrdre = onDocumentCreated(
   { document: "orders/{docId}", region: "europe-west1", secrets: [GEMINI_KEY], minInstances: 1, concurrency: 80 },
@@ -312,106 +133,99 @@ exports.onNouvelOrdre = onDocumentCreated(
     const transferId = tx.waafitranfertID || tx.hash || "";
     const ordreRef   = tx.orderId || tx.ref || docId;
 
-    // ── 0. Règles d'or — rejet immédiat si invalide ──────────
+    // ── Règles d'or ──────────────────────────────────────────
     const erreurs = validerReglesDor(tx);
     if (erreurs.length > 0) {
       await db.collection("orders").doc(docId).update({
-        status:    "Rejeté",
-        flagRaison: "Règles: " + erreurs.join(" | "),
-        rejetedAt:  FieldValue.serverTimestamp(),
+        status: "Rejeté", flagRaison: "Règles: " + erreurs.join(" | "), rejetedAt: FieldValue.serverTimestamp(),
       });
       await rtdbUpdateStatus(ordreRef, "Rejeté");
       return;
     }
 
-    // ── Enregistrer dans Realtime DB pour dashboard live ─────
     await rtdbUpdateStatus(ordreRef, tx.status || "En attente", { montant: Number(tx.montant || 0), type: tx.type });
 
-    // ── 1a+1b. Doublon + Fraude lancés en parallèle ───────────
-    const { analyseFraude } = getFlows();
-
-    const [existingSnap, fraud] = await Promise.all([
-      transferId
-        ? db.collection("orders").where("waafitranfertID","==",transferId).limit(2).get()
-        : Promise.resolve({ docs: [], empty: true }),
-      analyseFraude({
-        type:          tx.type || "?",
-        montant:       Number(tx.montant || 0),
-        transferId:    transferId,
-        numeroPayment: tx.numeroPayment || "",
-        heure:         new Date().getHours(),
-      }).catch(() => ({ score_fraude:0, risque:"faible", raisons:[], action:"valider" })),
-    ]);
-
-    const hasDoublon = existingSnap.docs.some(d => d.id !== docId);
-    if (hasDoublon) {
-      await db.collection("orders").doc(docId).update({
-        status:"Rejeté", flagRaison:"Doublon — Transfer ID déjà utilisé", flaggedAt:FieldValue.serverTimestamp(),
-      });
-      return;
+    // ── Doublon ───────────────────────────────────────────────
+    if (transferId) {
+      const existingSnap = await db.collection("orders").where("waafitranfertID", "==", transferId).limit(2).get();
+      if (existingSnap.docs.some(d => d.id !== docId)) {
+        await db.collection("orders").doc(docId).update({
+          status: "Rejeté", flagRaison: "Doublon — Transfer ID déjà utilisé", flaggedAt: FieldValue.serverTimestamp(),
+        });
+        return;
+      }
     }
 
-    const updates = { ia_score_fraude:fraud.score_fraude, ia_risque:fraud.risque, ia_raisons:fraud.raisons, ia_action:fraud.action, ia_analysedAt:FieldValue.serverTimestamp() };
-    if (fraud.action === "rejeter" || fraud.risque === "élevé") {
-      updates.status     = "Rejeté";
-      updates.flagRaison = "IA Fraude: " + (fraud.raisons||[]).join(", ");
+    // ── Gemini fraude ─────────────────────────────────────────
+    try {
+      const fraud = await geminiJson(
+        `Transaction à analyser :
+- Type: ${tx.type || "?"}
+- Montant: ${Number(tx.montant || 0)} DJF
+- Transfer ID: ${transferId || "?"}
+- N° Expéditeur: ${tx.numeroPayment || "?"}
+- Heure: ${new Date().getHours()}h
+
+Règles : montant > 50000 → suspect | transferId < 6 chiffres → invalide | numéro ≠ 77xxxxxx → suspect
+Réponds en JSON : {"score_fraude":0-100,"risque":"faible|moyen|élevé","action":"valider|vérifier|rejeter","raisons":[]}`,
+        `Tu es le système de sécurité de Kaffi Pay (Djibouti, plateforme 1xBet↔Waafi).
+Expert en détection de fraude. Ne valide jamais une transaction douteuse par politesse.`
+      );
+
+      const updates = { ia_score_fraude: fraud.score_fraude, ia_risque: fraud.risque, ia_raisons: fraud.raisons, ia_action: fraud.action, ia_analysedAt: FieldValue.serverTimestamp() };
+      if (fraud.action === "rejeter" || fraud.risque === "élevé") {
+        updates.status     = "Rejeté";
+        updates.flagRaison = "IA Fraude: " + (fraud.raisons || []).join(", ");
+        await db.collection("orders").doc(docId).update(updates);
+        return;
+      }
       await db.collection("orders").doc(docId).update(updates);
-      return;
+    } catch (e) {
+      console.error("[onNouvelOrdre] Gemini erreur:", e.message);
     }
-    await db.collection("orders").doc(docId).update(updates);
 
-    // ── 1c. Correspondance rétroactive — SMS déjà stocké avant l'ordre ──
-    // Le client a envoyé l'argent Waafi avant de soumettre le formulaire.
-    // On cherche un SMS non-matché des dernières 24h avec le même Transfer ID.
+    // ── Correspondance rétroactive — SMS déjà arrivé avant l'ordre ──
     if (!transferId) return;
     try {
-      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const cutoff  = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const smsSnap = await db.collection("waafi_notifications")
-        .where("transferIdSMS", "==", transferId)
-        .limit(5).get();
+        .where("transferIdSMS", "==", transferId).limit(5).get();
 
       for (const smsDoc of smsSnap.docs) {
         const smsData   = smsDoc.data();
         const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date();
-        if (createdAt < cutoff) continue; // SMS trop ancien (> 24h)
+        if (createdAt < cutoff) continue;
 
         const montantSMS   = Number(smsData.montantSMS || 0);
         const montantOrdre = Number(tx.montant || 0);
-        if (Math.abs(montantOrdre - montantSMS) > 5) continue; // montant incompatible
+        if (Math.abs(montantOrdre - montantSMS) > 5) continue;
 
-        // Vérifier expéditeur si disponible
-        const numSMS    = smsData.numSMS || "";
-        const numOrdre  = tx.numeroPayment || tx.waafiNumber || "";
-        if (numSMS && numOrdre && numSMS !== numOrdre) continue; // expéditeur différent
+        const numSMS   = smsData.numClient || "";
+        const numOrdre = tx.numeroPayment || tx.waafiNumber || "";
+        if (numSMS && numOrdre && numSMS !== numOrdre) continue;
 
-        // ✅ Match rétroactif trouvé — confirmer l'ordre
         const id1xbet = tx.userId1xBet || tx.id1x || tx.idUser || "";
-
         await db.collection("orders").doc(docId).update({
-          status:      "Confirmé",
-          confirmedAt: FieldValue.serverTimestamp(),
-          confirmedBy: "auto_waafi_retroactif",
-          montantRecu: montantSMS,
+          status: "Confirmé", confirmedAt: FieldValue.serverTimestamp(),
+          confirmedBy: "auto_waafi_retroactif", montantRecu: montantSMS,
         });
-
         console.log(`[RetroMatch] ✅ Ordre ${ordreRef} confirmé via SMS ${smsDoc.id}`);
-
         if (id1xbet) {
           const url = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
           fetch(url, { signal: AbortSignal.timeout(8000) })
-            .then(r => db.collection("orders").doc(docId).update({ webhookStatus: r.ok?"ok":"erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
-            .catch(() => db.collection("orders").doc(docId).update({ webhookStatus:"erreur_timeout" }));
+            .then(r => db.collection("orders").doc(docId).update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
+            .catch(() => db.collection("orders").doc(docId).update({ webhookStatus: "erreur_timeout" }));
         }
-        break; // Un seul match suffit
+        break;
       }
-    } catch(e) {
+    } catch (e) {
       console.error("[RetroMatch] erreur:", e.message);
     }
   }
 );
 
 // ══════════════════════════════════════════════════════════════
-// 2. ORDRE MODIFIÉ → Notification statut client
+// 2. ORDRE MODIFIÉ → Realtime DB live
 // ══════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
   { document: "orders/{docId}", region: "europe-west1", secrets: [] },
@@ -421,201 +235,79 @@ exports.onOrdreUpdated = onDocumentUpdated(
     if (before.status === after.status) return;
     const ref = after.orderId || after.ref || event.params.docId;
     console.log(`[onOrdreUpdated] Ordre ${ref} : ${before.status} → ${after.status}`);
-    // Mettre à jour Realtime DB pour dashboard live
     await rtdbUpdateStatus(ref, after.status, { montant: Number(after.montant || 0) });
   }
 );
 
 // ══════════════════════════════════════════════════════════════
-// 3. GENKIT FLOW — Analyse admin (résumé + prédictions)
+// 3. GEMINI ANALYSE ADMIN — résumé + prédictions
 // ══════════════════════════════════════════════════════════════
 exports.geminiAnalyseAdmin = onCall(
   { region: "europe-west1", secrets: [GEMINI_KEY] },
   async () => {
-    const snap = await db.collection("orders")
-      .orderBy("createdAt", "desc").limit(100).get();
-
-    const txs       = snap.docs.map((d) => d.data());
-    const confirmes = txs.filter((t) => t.status === "Confirmé");
-    const attente   = txs.filter((t) => t.status === "En attente");
-    const rejetes   = txs.filter((t) => t.status === "Rejeté");
+    const snap = await db.collection("orders").orderBy("createdAt", "desc").limit(100).get();
+    const txs       = snap.docs.map(d => d.data());
+    const confirmes = txs.filter(t => t.status === "Confirmé");
+    const attente   = txs.filter(t => t.status === "En attente");
+    const rejetes   = txs.filter(t => t.status === "Rejeté");
     const volume    = confirmes.reduce((s, t) => s + Number(t.montant || 0), 0);
     const taux      = txs.length ? Math.round((confirmes.length / txs.length) * 100) : 0;
     const moyenne   = confirmes.length ? Math.round(volume / confirmes.length) : 0;
 
-    const { analyseAdmin } = getFlows();
+    const derniers = txs.slice(0, 5).map(t => {
+      const date = t.createdAt ? t.createdAt.toDate().toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "?";
+      return `• ${t.type || "?"} ${Number(t.montant || 0)} DJF — ${t.status || "?"} — ${date}`;
+    }).join("\n");
+
     try {
-      const data = await analyseAdmin({
-        confirmes: confirmes.length,
-        attente:   attente.length,
-        rejetes:   rejetes.length,
-        volume,
-        taux,
-        moyenne,
-        derniersTx: txs.slice(0, 5).map((t) => ({
-          type:    t.type || "?",
-          montant: Number(t.montant || 0),
-          status:  t.status || "?",
-          date:    t.createdAt ? t.createdAt.toDate().toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : "?",
-        })),
-      });
-      return {
-        success: true,
-        data,
-        stats: { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume },
-      };
+      const data = await geminiJson(
+        `Données des 100 dernières transactions :
+- Confirmées: ${confirmes.length} — Volume: ${volume.toLocaleString()} DJF
+- En attente: ${attente.length}
+- Rejetées: ${rejetes.length}
+- Taux confirmation: ${taux}%
+- Montant moyen: ${moyenne} DJF
+
+5 dernières transactions :
+${derniers}
+
+Réponds en JSON : {"resume":"...","alerte":null,"conseil":"...","prediction_demain":0,"heure_pic":"?","score_sante":0-100}`,
+        `Tu es le conseiller IA de la direction de Kaffi Pay (Djibouti, 1xBet↔Waafi).
+Analyse les performances, identifie les anomalies, donne des recommandations concrètes en DJF.`
+      );
+      return { success: true, data, stats: { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume } };
     } catch (e) {
-      console.error("[Genkit] analyseAdmin error:", e.message);
+      console.error("[geminiAnalyseAdmin] erreur:", e.message);
       return { success: false, error: "Erreur analyse IA" };
     }
   }
 );
 
 // ══════════════════════════════════════════════════════════════
-// 4. GEMINI ADMIN AUTO — Remplace l'admin humain toutes les 10 min
-//    Revoit les ordres bloqués et prend des décisions définitives
-// ══════════════════════════════════════════════════════════════
-exports.geminiAdminAuto = onSchedule(
-  { schedule: "every 10 minutes", region: "europe-west1", timeoutSeconds: 120, secrets: [GEMINI_KEY] },
-  async () => {
-    const { adminDecision } = getFlows();
-    const cutoff10  = new Date(Date.now() - 10 * 60 * 1000); // > 10 min en attente
-    const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    const snap = await db.collection("orders")
-      .where("status", "==", "En attente")
-      .where("createdAt", "<", cutoff10)
-      .limit(10).get();
-
-    if (snap.empty) return;
-
-    for (const ordreDoc of snap.docs) {
-      const ordre         = ordreDoc.data();
-      const ordreId       = ordre.orderId || ordreDoc.id;
-      const transferId    = ordre.waafitranfertID || "";
-      const montantOrdre  = Number(ordre.montant || 0);
-      const numeroOrdre   = ordre.numeroPayment || ordre.waafiNumber || "";
-      const minutesAttente = Math.floor((Date.now() - (ordre.createdAt ? ordre.createdAt.toDate() : new Date()).getTime()) / 60000);
-
-      // Chercher un SMS correspondant dans les 24h
-      let smsTrouve = false, montantSMS = 0, ecartMontant = 0, numeroSMS = "";
-      if (transferId) {
-        const smsSnap = await db.collection("waafi_notifications")
-          .where("transferIdSMS", "==", transferId)
-          .where("createdAt", ">", cutoff24h)
-          .limit(1).get();
-        if (!smsSnap.empty) {
-          const smsData = smsSnap.docs[0].data();
-          smsTrouve    = true;
-          montantSMS   = Number(smsData.montantSMS || 0);
-          ecartMontant = Math.abs(montantOrdre - montantSMS);
-          numeroSMS    = smsData.numClient || "";
-        }
-      }
-
-      try {
-        const result = await adminDecision({
-          ordreId, type: ordre.type || "?",
-          montantOrdre, transferId, numeroOrdre, minutesAttente,
-          smsTrouve, montantSMS, ecartMontant, numeroSMS,
-        });
-
-        console.log(`[AdminAuto] Ordre ${ordreId} → ${result.decision} (confiance ${result.confiance}%) : ${result.raison}`);
-
-        if (result.decision === "confirmer") {
-          const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
-          await ordreDoc.ref.update({
-            status:      "Confirmé",
-            confirmedAt: FieldValue.serverTimestamp(),
-            confirmedBy: "gemini_admin_auto",
-            montantRecu: smsTrouve ? montantSMS : montantOrdre,
-            ia_admin_decision: result.decision,
-            ia_admin_raison:   result.raison,
-            ia_admin_confiance: result.confiance,
-          });
-          if (id1xbet) {
-            const url = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${smsTrouve ? montantSMS : montantOrdre}&ref=${encodeURIComponent(ordreId)}`;
-            fetch(url, { signal: AbortSignal.timeout(8000) })
-              .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status }))
-              .catch(() => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
-          }
-        } else if (result.decision === "rejeter") {
-          await ordreDoc.ref.update({
-            status:            "Rejeté",
-            rejetBy:           "gemini_admin_auto",
-            rejetRaison:       result.raison,
-            rejetedAt:         FieldValue.serverTimestamp(),
-            ia_admin_decision: result.decision,
-            ia_admin_raison:   result.raison,
-            ia_admin_confiance: result.confiance,
-          });
-        }
-        // "attendre" → on ne fait rien, autoRejetServeur prendra le relais à 20 min
-      } catch (e) {
-        console.error(`[AdminAuto] Erreur ordre ${ordreId}:`, e.message);
-      }
-    }
-  }
-);
-
-// ══════════════════════════════════════════════════════════════
-// 5. AUTO-CONFIRMATION — SMS Waafi → Ordre confirmé → 1xBet
+// 4. AUTO-CONFIRMATION — SMS Waafi écrit directement en Firestore
+//    (backup pour docs sans source=macrodroid_http)
 // ══════════════════════════════════════════════════════════════
 exports.autoConfirmation = onDocumentCreated(
   { document: "waafi_notifications/{docId}", region: "europe-west1", secrets: [], minInstances: 1, concurrency: 80 },
   async (event) => {
-    const sms   = event.data.data();
-    const docId = event.params.docId;
+    const sms = event.data.data();
+    if (sms.source === "macrodroid_http") return; // smsWebhook gère déjà
 
-    // smsWebhook gère déjà son propre flux complet — évite le double traitement
-    if (sms.source === "macrodroid_http") return;
-
-    // ── Parser SMS Waafi (pour docs écrits directement dans Firestore) ──
     const notification = sms.notification || sms.notificationText || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
-
     if (!notification || notification === "[notification]" || notification === "{notification}") return;
-
-    const isWaafi = /Transfer-?Id|DJF|Waafi|WAAFI/i.test(notification);
-    if (!isWaafi) return;
+    if (!/Transfer-?Id|DJF|Waafi|WAAFI/i.test(notification)) return;
 
     const { transferId, montantSMS, numClient } = parseSmsWaafi(notification);
+    console.log(`[AutoConfirm] TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
+    if (!transferId || !montantSMS) return;
 
-    console.log(`[AutoConfirm] SMS="${notification.substring(0,100)}" | TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
-
-    if (!transferId || !montantSMS) {
-      console.warn(`[AutoConfirm] Parsing échoué — TransferID=${transferId}, Montant=${montantSMS} | "${notification.substring(0,80)}"`);
-      return;
-    }
-
-    // ── Chercher l'ordre par Transfer ID — "En attente" d'abord ───
-    let ordreSnap = await db.collection("orders")
+    const ordreSnap = await db.collection("orders")
       .where("waafitranfertID", "==", transferId)
       .where("status", "==", "En attente")
       .limit(1).get();
 
-    // ── Si pas trouvé en attente → chercher ordre auto-rejeté récent ─
-    // L'auto-rejet arrive si le SMS MacroDroid est retardé > 10 min.
-    // On réactive l'ordre si le SMS est valide et l'ordre < 30 min.
     if (ordreSnap.empty) {
-      const cutoffRetro = new Date(Date.now() - 30 * 60 * 1000);
-      const rejetSnap = await db.collection("orders")
-        .where("waafitranfertID", "==", transferId)
-        .where("rejetBy", "==", "auto_serveur")
-        .limit(1).get();
-
-      if (!rejetSnap.empty) {
-        const ordreData = rejetSnap.docs[0].data();
-        const createdAt = ordreData.createdAt ? ordreData.createdAt.toDate() : new Date(0);
-        if (createdAt > cutoffRetro) {
-          // Réactiver l'ordre rejeté par erreur
-          ordreSnap = rejetSnap;
-          console.log(`[AutoConfirm] ♻️ Ordre auto-rejeté réactivé : ${ordreData.orderId || rejetSnap.docs[0].id}`);
-        }
-      }
-    }
-
-    if (ordreSnap.empty) {
-      console.log(`[AutoConfirm] Aucun ordre pour Transfer ID ${transferId} — SMS en attente rétroactive`);
+      console.log(`[AutoConfirm] Aucun ordre pour Transfer ID ${transferId}`);
       return;
     }
 
@@ -623,33 +315,26 @@ exports.autoConfirmation = onDocumentCreated(
     const ordre        = ordreDoc.data();
     const ordreRef     = ordre.orderId || ordre.ref || ordreDoc.id;
     const montantOrdre = Number(ordre.montant || 0);
+    const numeroOrdre  = ordre.numeroPayment || ordre.waafiNumber || "";
 
-    const numeroOrdre = ordre.numeroPayment || ordre.waafiNumber || "";
     if (numClient && numeroOrdre && numClient !== numeroOrdre) {
-      console.warn(`[AutoConfirm] N° SMS (${numClient}) ≠ N° ordre (${numeroOrdre}) — Transfer ID ${transferId}`);
+      console.warn(`[AutoConfirm] N° SMS (${numClient}) ≠ N° ordre (${numeroOrdre})`);
       return;
     }
-
     if (Math.abs(montantOrdre - montantSMS) > 5) {
-      console.warn(`[AutoConfirm] Montant SMS ${montantSMS} ≠ Ordre ${montantOrdre} DJF — Transfer ID ${transferId}`);
+      console.warn(`[AutoConfirm] Montant SMS ${montantSMS} ≠ Ordre ${montantOrdre} DJF`);
       return;
     }
 
-    // ✅ 3/3 confirmé — Transfer ID + Montant + Numéro
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
     await ordreDoc.ref.update({
-      status:          "Confirmé",
-      confirmedAt:     FieldValue.serverTimestamp(),
-      confirmedBy:     "auto_waafi_sms",
-      waafitranfertID: transferId,
-      montantRecu:     montantSMS,
-      rejetBy:         FieldValue.delete(),
-      rejetRaison:     FieldValue.delete(),
+      status: "Confirmé", confirmedAt: FieldValue.serverTimestamp(),
+      confirmedBy: "auto_waafi_sms", waafitranfertID: transferId,
+      montantRecu: montantSMS, rejetBy: FieldValue.delete(), rejetRaison: FieldValue.delete(),
     });
-
     if (id1xbet) {
-      const webhookUrl = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
-      fetch(webhookUrl, { signal: AbortSignal.timeout(8000) })
+      const url = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+      fetch(url, { signal: AbortSignal.timeout(8000) })
         .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
         .catch(() => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
     }
@@ -657,111 +342,50 @@ exports.autoConfirmation = onDocumentCreated(
 );
 
 // ══════════════════════════════════════════════════════════════
-// 6. AUTO-REJET SERVEUR — ordres En attente depuis > 20 min
-// ══════════════════════════════════════════════════════════════
-exports.autoRejetServeur = onSchedule(
-  { schedule: "every 5 minutes", region: "europe-west1", timeoutSeconds: 60 },
-  async () => {
-    const cutoff = new Date(Date.now() - 20 * 60 * 1000); // 20 minutes
-    const snap   = await db.collection("orders")
-      .where("status", "==", "En attente")
-      .where("createdAt", "<", cutoff)
-      .limit(20).get();
-
-    if (snap.empty) return;
-
-    const batch = db.batch();
-    snap.docs.forEach(doc => {
-      batch.update(doc.ref, {
-        status:      "Rejeté",
-        rejetRaison: "Paiement Waafi non reçu dans le délai imparti (20 minutes). Vérifiez votre Transfer ID et réessayez.",
-        rejetedAt:   FieldValue.serverTimestamp(),
-        rejetBy:     "auto_serveur",
-      });
-    });
-    await batch.commit();
-    console.log(`[AutoRejet] ${snap.size} ordre(s) rejeté(s) après 20 min sans paiement`);
-  }
-);
-
-// ══════════════════════════════════════════════════════════════
-// 7. ENDPOINT HTTP — MacroDroid envoie SMS ici
-// Parse + Match + Confirme en une seule requête HTTP
-// POST https://smswebhook-tqisrvjuka-ew.a.run.app
-// Body : { notification: "texte SMS Waafi" }
+// 5. SMS WEBHOOK — MacroDroid → Parse + Match + Confirme
+// POST body: { notification: "texte SMS Waafi" }
 // ══════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
   { region: "europe-west1", cors: true, minInstances: 1, concurrency: 80 },
   async (req, res) => {
-    if (req.method !== "POST") {
-      res.status(405).json({ error: "Méthode non autorisée" });
-      return;
-    }
+    if (req.method !== "POST") { res.status(405).json({ error: "Méthode non autorisée" }); return; }
 
-    // ── 1. Extraire le texte SMS (tous noms de champs MacroDroid) ──
-    const body = req.body || {};
-    const notification =
-      body.notification || body.notificationText || body.not_body ||
-      body.texte || body.message || body.sms_body || body.sms || body.text || "";
+    const body         = req.body || {};
+    const notification = body.notification || body.notificationText || body.not_body || body.texte || body.message || body.sms_body || body.sms || body.text || "";
 
     if (!notification || notification === "[notification]" || notification === "{notification}") {
       res.status(400).json({ error: "SMS vide ou format invalide" });
       return;
     }
 
-    // ── 2. Vérifier que c'est un SMS Waafi ────────────────────────
-    const isWaafi = /Transfer-?Id|DJF|Waafi|WAAFI/i.test(notification);
-    if (!isWaafi) {
+    if (!/Transfer-?Id|DJF|Waafi|WAAFI/i.test(notification)) {
       res.json({ success: true, status: "ignoré_non_waafi" });
       return;
     }
 
-    // ── 3. Parser le SMS ──────────────────────────────────────────
     const { transferId, montantSMS, numClient } = parseSmsWaafi(notification);
-    console.log(`[smsWebhook] SMS reçu | TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
+    console.log(`[smsWebhook] TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
 
-    // ── 4. Sauvegarder dans waafi_notifications (brut, sans status) ──
+    // Sauvegarder brut dans waafi_notifications
     const docRef = await db.collection("waafi_notifications").add({
-      notification,
-      source:        "macrodroid_http",
-      transferIdSMS: transferId || null,
-      montantSMS:    montantSMS || null,
-      numClient:     numClient  || null,
-      createdAt:     FieldValue.serverTimestamp(),
+      notification, source: "macrodroid_http",
+      transferIdSMS: transferId || null, montantSMS: montantSMS || null,
+      numClient: numClient || null, createdAt: FieldValue.serverTimestamp(),
     });
 
-    // ── 5. Valider le parsing ─────────────────────────────────────
     if (!transferId || !montantSMS) {
-      console.warn(`[smsWebhook] Parsing échoué TransferID=${transferId} Montant=${montantSMS} | "${notification.substring(0,80)}"`);
-      res.status(200).json({ success: false, status: "erreur_parsing", docId: docRef.id });
+      console.warn(`[smsWebhook] Parsing échoué | "${notification.substring(0, 80)}"`);
+      res.json({ success: false, status: "erreur_parsing", docId: docRef.id });
       return;
     }
 
-    // ── 6. Chercher l'ordre ───────────────────────────────────────
-    let ordreSnap = await db.collection("orders")
+    const ordreSnap = await db.collection("orders")
       .where("waafitranfertID", "==", transferId)
       .where("status", "==", "En attente")
       .limit(1).get();
 
-    // Matching rétroactif — ordre auto-rejeté < 30 min
     if (ordreSnap.empty) {
-      const cutoff   = new Date(Date.now() - 30 * 60 * 1000);
-      const rejetSnap = await db.collection("orders")
-        .where("waafitranfertID", "==", transferId)
-        .where("rejetBy", "==", "auto_serveur")
-        .limit(1).get();
-      if (!rejetSnap.empty) {
-        const d = rejetSnap.docs[0].data();
-        const createdAt = d.createdAt ? d.createdAt.toDate() : new Date(0);
-        if (createdAt > cutoff) {
-          ordreSnap = rejetSnap;
-          console.log(`[smsWebhook] ♻️ Ordre auto-rejeté réactivé : ${d.orderId || rejetSnap.docs[0].id}`);
-        }
-      }
-    }
-
-    if (ordreSnap.empty) {
-      console.log(`[smsWebhook] Aucun ordre pour Transfer ID ${transferId} — SMS stocké, attente ordre client`);
+      console.log(`[smsWebhook] Aucun ordre pour ${transferId} — SMS stocké, attente ordre client`);
       res.json({ success: false, status: "non_matché", transferId, docId: docRef.id });
       return;
     }
@@ -772,198 +396,131 @@ exports.smsWebhook = onRequest(
     const montantOrdre = Number(ordre.montant || 0);
     const numeroOrdre  = ordre.numeroPayment || ordre.waafiNumber || "";
 
-    // ── 7. Vérifier numéro expéditeur ────────────────────────────
     if (numClient && numeroOrdre && numClient !== numeroOrdre) {
-      console.warn(`[smsWebhook] N° SMS (${numClient}) ≠ N° ordre (${numeroOrdre}) — Transfer ID ${transferId}`);
+      console.warn(`[smsWebhook] N° SMS (${numClient}) ≠ N° ordre (${numeroOrdre})`);
       res.json({ success: false, status: "expediteur_mismatch", docId: docRef.id });
       return;
     }
-
-    // ── 8. Vérifier montant (±5 DJF) ─────────────────────────────
     if (Math.abs(montantOrdre - montantSMS) > 5) {
-      console.warn(`[smsWebhook] Montant SMS ${montantSMS} ≠ Ordre ${montantOrdre} DJF — Transfer ID ${transferId}`);
+      console.warn(`[smsWebhook] Montant SMS ${montantSMS} ≠ Ordre ${montantOrdre} DJF`);
       res.json({ success: false, status: "montant_incorrect", docId: docRef.id });
       return;
     }
 
-    // ── 9. ✅ 3/3 — Confirmer l'ordre ────────────────────────────
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
     await ordreDoc.ref.update({
-      status:          "Confirmé",
-      confirmedAt:     FieldValue.serverTimestamp(),
-      confirmedBy:     "auto_waafi_sms",
-      waafitranfertID: transferId,
-      montantRecu:     montantSMS,
-      rejetBy:         FieldValue.delete(),
-      rejetRaison:     FieldValue.delete(),
+      status: "Confirmé", confirmedAt: FieldValue.serverTimestamp(),
+      confirmedBy: "auto_waafi_sms", waafitranfertID: transferId,
+      montantRecu: montantSMS, rejetBy: FieldValue.delete(), rejetRaison: FieldValue.delete(),
     });
     console.log(`[smsWebhook] ✅ Ordre ${ordreRef} CONFIRMÉ — ${montantSMS} DJF`);
 
-    // ── 10. Déclencher MacroDroid → recharge 1xBet ───────────────
     if (id1xbet) {
-      const webhookUrl = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
-      fetch(webhookUrl, { signal: AbortSignal.timeout(8000) })
-        .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_" + r.status, webhookAt: FieldValue.serverTimestamp() }))
+      const url = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+      fetch(url, { signal: AbortSignal.timeout(8000) })
+        .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
         .catch(() => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
     }
-
     res.json({ success: true, status: "confirmé", ordreRef, montantSMS, transferId, docId: docRef.id });
   }
 );
 
-
 // ══════════════════════════════════════════════════════════════
-// 7. CALLBACK MacroDroid → Résultat recharge 1xBet
+// 6. RECHARGE CALLBACK — MacroDroid → résultat recharge 1xBet
+// POST body: { ref, resultat, id1xbet, montant, ecran? }
 // ══════════════════════════════════════════════════════════════
-// MacroDroid lit l'écran MobCash et envoie le texte brut ici.
-// Gemini analyse le texte et décide succes ou echec.
-// POST https://europe-west1-kaffi-pay.cloudfunctions.net/rechargeCallback
-// Body : { ref, resultat, id1xbet, montant }
-// resultat = "succes" | "echec" | "inconnu"  (détecté par MacroDroid localement)
 exports.rechargeCallback = onRequest(
   { region: "europe-west1", cors: true, secrets: [GEMINI_KEY], minInstances: 1, concurrency: 80 },
   async (req, res) => {
-    if (req.method !== "POST") {
-      res.status(405).json({ error: "Méthode non autorisée" });
-      return;
-    }
+    if (req.method !== "POST") { res.status(405).json({ error: "Méthode non autorisée" }); return; }
 
-    const { ref, resultat, id1xbet, montant } = req.body;
+    const { ref, resultat, id1xbet, montant } = req.body || {};
+    if (!ref) { res.status(400).json({ error: "Champ 'ref' requis" }); return; }
 
-    if (!ref) {
-      res.status(400).json({ error: "Champ 'ref' requis" });
-      return;
-    }
-
-    // ── Déterminer succès/échec ───────────────────────────────
-    // Priorité 1 : ecran (texte écran MobCash) → Gemini analyse
-    // Priorité 2 : resultat ("succes"|"echec") → utilisation directe
-    // MacroDroid peut envoyer l'un ou l'autre ou les deux
     const texteEcran = req.body.ecran || "";
     let estSucces = false;
     let analyseIA = { statut: "inconnu", raison: "Non déterminé", confiance: 0 };
 
     if (texteEcran) {
-      // ── Gemini analyse le texte écran MobCash (méthode principale) ──
       try {
-        getFlows(); // initialise _ai
-        if (!_ai) throw new Error("IA non initialisée");
-        const { output } = await _ai.generate({
-          model: gemini20Flash,
-          system: `Tu es le système de vérification de recharge 1xBet pour Kaffi Pay (Djibouti).
-Tu analyses le texte affiché sur l'écran MobCash après une tentative de recharge.
-Réponds uniquement en fonction du texte fourni. En cas d'ambiguïté, réponds "inconnu".`,
-          prompt: `Texte lu sur l'écran MobCash après la recharge :
+        const result = await geminiJson(
+          `Texte écran MobCash après recharge :
 """
 ${texteEcran}
 """
-
-Mots-clés succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépôt", success, credited, completed
-Mots-clés échec : "Fonds insuffisants", "Rechargez votre compte", "actualisez la page", failed, error, insufficient`,
-          output: {
-            schema: z.object({
-              statut:    z.enum(["succes", "echec", "inconnu"]),
-              raison:    z.string(),
-              confiance: z.number().describe("0-100"),
-            }),
-          },
-        });
-        if (output) { analyseIA = output; estSucces = output.statut === "succes"; }
+Succès : "avec succès", "déposé avec", "Vous avez déposé", success, credited, completed
+Échec : "Fonds insuffisants", "Rechargez", "actualisez", failed, error, insufficient
+Réponds en JSON : {"statut":"succes|echec|inconnu","raison":"...","confiance":0-100}`,
+          `Tu es le système de vérification de recharge 1xBet pour Kaffi Pay (Djibouti).
+Tu analyses le texte MobCash. En cas d'ambiguïté, réponds "inconnu".`
+        );
+        analyseIA = result;
+        estSucces  = result.statut === "succes";
       } catch (e) {
-        console.error("[rechargeCallback] Gemini error:", e.message);
-        // Fallback mots-clés si Gemini indisponible
+        console.error("[rechargeCallback] Gemini erreur:", e.message);
         const txt = texteEcran.toLowerCase();
         estSucces = /avec succ|déposé avec|vous avez déposé|dépôt|success|credited|completed|deposited/.test(txt);
-        analyseIA = { statut: estSucces ? "succes" : "echec", raison: "Mots-clés MobCash (Gemini indisponible)", confiance: 70 };
+        analyseIA = { statut: estSucces ? "succes" : "echec", raison: "Mots-clés (Gemini indisponible)", confiance: 70 };
       }
     } else if (resultat === "succes") {
-      // Pas de texte écran — MacroDroid a détecté localement
       estSucces = true;
       analyseIA = { statut: "succes", raison: "Détecté par MacroDroid", confiance: 90 };
     } else if (resultat === "echec") {
-      estSucces = false;
       analyseIA = { statut: "echec", raison: "Détecté par MacroDroid — Fonds insuffisants", confiance: 90 };
     }
 
-    // ── Chercher l'ordre par ref ──────────────────────────────
-    const snap = await db.collection("orders")
-      .where("orderId", "==", ref)
-      .limit(1).get();
-
-    if (snap.empty) {
-      res.status(404).json({ error: `Ordre ${ref} non trouvé` });
-      return;
-    }
+    const snap = await db.collection("orders").where("orderId", "==", ref).limit(1).get();
+    if (snap.empty) { res.status(404).json({ error: `Ordre ${ref} non trouvé` }); return; }
 
     const ordreDoc = snap.docs[0];
     const ordre    = ordreDoc.data();
     const retries  = Number(ordre.rechargeRetries || 0);
 
-    // ── CAS 1 : Succès ────────────────────────────────────────
     if (estSucces) {
       await ordreDoc.ref.update({
-        status:             "Rechargé ✅",
-        rechargeStatus:     "rechargé",
-        rechargeAt:         FieldValue.serverTimestamp(),
-        rechargeMessage:    resultat === "succes" ? "Recharge confirmée par MacroDroid" : (req.body.ecran || "Recharge effectuée"),
-        rechargeId1xbet:    id1xbet || ordre.userId1xBet || "",
-        rechargeMontant:    Number(montant || ordre.montant || 0),
-        rechargeRetries:    retries,
-        ia_ecran_statut:    analyseIA.statut,
-        ia_ecran_raison:    analyseIA.raison,
-        ia_ecran_confiance: analyseIA.confiance,
+        status: "Rechargé ✅", rechargeStatus: "rechargé",
+        rechargeAt: FieldValue.serverTimestamp(),
+        rechargeMessage: texteEcran || "Recharge confirmée",
+        rechargeId1xbet: id1xbet || ordre.userId1xBet || "",
+        rechargeMontant: Number(montant || ordre.montant || 0),
+        rechargeRetries: retries,
+        ia_ecran_statut: analyseIA.statut, ia_ecran_raison: analyseIA.raison, ia_ecran_confiance: analyseIA.confiance,
       });
       console.log(`[rechargeCallback] ✅ Ordre ${ref} → RECHARGÉ (tentative ${retries + 1})`);
       res.json({ success: true, ref, recharge: "ok", tentative: retries + 1, ia: analyseIA });
       return;
     }
 
-    // ── CAS 2 : Échec < 3 tentatives → Retry MacroDroid ──────
     const nouvelleTentative = retries + 1;
-
     if (nouvelleTentative < 3) {
       await ordreDoc.ref.update({
-        status:          `Recharge Retry ${nouvelleTentative}/3 ⏳`,
-        rechargeStatus:  "retry",
-        rechargeRetries: nouvelleTentative,
-        rechargeMessage: "Échec recharge — retry automatique",
-        ia_ecran_statut: analyseIA.statut,
-        ia_ecran_raison: analyseIA.raison,
-        lastRetryAt:     FieldValue.serverTimestamp(),
+        status: `Recharge Retry ${nouvelleTentative}/3 ⏳`, rechargeStatus: "retry",
+        rechargeRetries: nouvelleTentative, rechargeMessage: "Échec recharge — retry automatique",
+        ia_ecran_statut: analyseIA.statut, ia_ecran_raison: analyseIA.raison,
+        lastRetryAt: FieldValue.serverTimestamp(),
       });
       try {
-        const id1xbetOrdre = id1xbet || ordre.userId1xBet || ordre.id1x || "";
-        const retryUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${id1xbetOrdre}&montant=${montant || ordre.montant}&ref=${ref}&retry=${nouvelleTentative}`;
+        const retryUrl = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet || ordre.userId1xBet || "")}&montant=${montant || ordre.montant}&ref=${ref}&retry=${nouvelleTentative}`;
         await fetch(retryUrl, { signal: AbortSignal.timeout(8000) });
-      } catch (e) {
-        console.error("[rechargeCallback] Retry webhook erreur:", e.message);
-      }
+      } catch (e) { console.error("[rechargeCallback] Retry erreur:", e.message); }
       console.log(`[rechargeCallback] ⏳ Ordre ${ref} → RETRY ${nouvelleTentative}/3`);
       res.json({ success: true, ref, recharge: "retry", tentative: nouvelleTentative });
       return;
     }
 
-    // ── CAS 3 : 3 échecs → Intervention manuelle 🚨 ──────────
     await ordreDoc.ref.update({
-      status:          "Intervention Manuelle 🚨",
-      rechargeStatus:  "manuel_requis",
-      rechargeRetries: nouvelleTentative,
-      rechargeMessage: "3 tentatives échouées",
-      manuelRequis:    true,
-      manuelRequsAt:   FieldValue.serverTimestamp(),
+      status: "Intervention Manuelle 🚨", rechargeStatus: "manuel_requis",
+      rechargeRetries: nouvelleTentative, rechargeMessage: "3 tentatives échouées",
+      manuelRequis: true, manuelRequsAt: FieldValue.serverTimestamp(),
     });
     await db.collection("alertes_admin").add({
-      type:      "recharge_echec_3x",
-      ordreRef:  ref,
-      id1xbet:   id1xbet || ordre.userId1xBet || "",
-      montant:   montant || ordre.montant || "",
-      message:   "3 tentatives échouées",
-      createdAt: FieldValue.serverTimestamp(),
-      traité:    false,
+      type: "recharge_echec_3x", ordreRef: ref,
+      id1xbet: id1xbet || ordre.userId1xBet || "",
+      montant: montant || ordre.montant || "",
+      message: "3 tentatives échouées",
+      createdAt: FieldValue.serverTimestamp(), traité: false,
     });
     console.error(`[rechargeCallback] 🚨 Ordre ${ref} → INTERVENTION MANUELLE`);
     res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
   }
 );
-
-
