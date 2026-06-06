@@ -924,7 +924,7 @@ ${orders.length ? orders.join("\n") : "Aucun ordre trouvé"}
 
 Règles :
 - Réponds directement à la question, pas de blabla inutile
-- Si le client n'a pas fourni son numéro d'ordre → demande uniquement le numéro d'ordre (ex: #KFP-001)
+- Si le client n'a pas fourni son numéro d'ordre → demande uniquement le numéro d'ordre (ex: 2606061)
 - Si ordre rejeté raison "Paiement non reçu" → explique les raisons possibles :
     1. Le Transfer ID saisi ne correspond à aucun paiement reçu
     2. Le montant ou le numéro expéditeur ne correspond pas

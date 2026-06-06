@@ -19,7 +19,7 @@
 // FIREBASE CONFIG — version 10.14.1 (stable)
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCILUjQPp_wO-IJrp6WwckMRDN5ISbcexU",
@@ -1146,7 +1146,25 @@ function logAction(action, data){
   }).catch(function(){});
 }
 
-function submitDepot(){
+async function genererOrderId(){
+  const now=new Date();
+  const yy=String(now.getFullYear()).slice(-2);
+  const mm=String(now.getMonth()+1).padStart(2,'0');
+  const dd=String(now.getDate()).padStart(2,'0');
+  const dateKey=yy+mm+dd;
+  const counterRef=doc(db,'counters','daily_'+dateKey);
+  let seq=1;
+  try{
+    await runTransaction(db,async(txn)=>{
+      const snap=await txn.get(counterRef);
+      seq=snap.exists()?(snap.data().seq||0)+1:1;
+      txn.set(counterRef,{seq,date:dateKey,updatedAt:new Date()});
+    });
+  }catch(e){ seq=Math.floor(Math.random()*90)+1; }
+  return dateKey+seq;
+}
+
+async function submitDepot(){
   const m=document.getElementById('depot-montant').value;
   const id=document.getElementById('depot-id').value;
   const h=document.getElementById('depot-hash').value;
@@ -1155,11 +1173,11 @@ function submitDepot(){
   if(!id){showToast('⚠️ ID 1xBet requis','error');return;}
   if(!h||!/^\d{8,10}$/.test(h)){showToast('⚠️ Waafi Transfer ID invalide (8-10 chiffres)','error');return;}
   setLoading('depot',true);
-  setTimeout(()=>{
-    setLoading('depot',false);
-    const now=new Date();
-    const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
-    const orderId = String(20260 + Math.floor(Date.now() / 1000) % 100000);
+  const orderId=await genererOrderId();
+  setLoading('depot',false);
+  const now=new Date();
+  const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+  {
     const tx={
       orderId:orderId,
       userId1xBet:id,
@@ -1179,7 +1197,6 @@ function submitDepot(){
     document.getElementById('depot-hash').value='';
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx);
-    // Attendre Firebase si pas encore prêt
     if(!window.db){
       showToast('⏳ Connexion Firebase en cours...','warning');
       var waitFb = setInterval(function(){
@@ -1187,12 +1204,12 @@ function submitDepot(){
       }, 500);
       setTimeout(function(){ clearInterval(waitFb); }, 15000);
     } else {
-      saveTxFirebaseWithTimer(tx); // active le timer rejet 10min
+      saveTxFirebaseWithTimer(tx);
     }
-  },1200);
+  }
 }
 
-function submitRetrait(){
+async function submitRetrait(){
   const c=document.getElementById('retrait-code').value;
   const t=document.getElementById('retrait-tel').value;
   const m=document.getElementById('retrait-montant').value;
@@ -1200,9 +1217,9 @@ function submitRetrait(){
   if(!t||t.length!==8||!t.startsWith('77')){showToast('⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)','error');return;}
   if(!m||Number(m)<250){showToast('⚠️ Minimum 250 DJF','error');return;}
   setLoading('retrait',true);
+  const orderId=await genererOrderId();
   const now=new Date();
   const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
-  const orderId = String(20260 + Math.floor(Date.now() / 1000) % 100000);
   const tx={
     orderId:orderId,
     withdrawalCode:c,
