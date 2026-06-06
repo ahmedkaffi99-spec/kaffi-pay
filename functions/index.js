@@ -110,26 +110,57 @@ exports.onNouvelOrdre = onDocumentCreated(
     const transferId = tx.waafitranfertID || tx.hash || "";
     const isDepot    = tx.type === "Dépôt";
 
-    // ── 1a. Détection doublons ─────────────────────────────────────
+    // ── 1a. Transfer ID déjà confirmé = fraude permanente ────────────
+    // Peu importe la date — Transfer ID d'un ordre confirmé ne peut jamais
+    // être réutilisé. Même un paiement confirmé il y a 1 an → fraude.
     if (transferId) {
-      const existing = await db.collection("orders")
+      const confirmeSnap = await db.collection("orders")
         .where("waafitranfertID", "==", transferId)
-        .limit(5)
+        .where("status", "==", "Confirmé")
+        .limit(1)
         .get();
 
-      const dupes = existing.docs.filter((d) => d.id !== docId);
-      if (dupes.length > 0) {
+      if (!confirmeSnap.empty) {
+        const ancienOrdre = confirmeSnap.docs[0].data();
+        const ancienRef   = ancienOrdre.orderId || confirmeSnap.docs[0].id;
         await db.collection("orders").doc(docId).update({
           status:     "Rejeté",
-          flagRaison: "Doublon — Transfer ID déjà utilisé",
+          flagRaison: `FRAUDE — Transfer ID ${transferId} déjà utilisé dans l'ordre confirmé #${ancienRef}`,
           flaggedAt:  FieldValue.serverTimestamp(),
         });
         await sendTelegram(
           TELEGRAM_TOKEN.value(),
           TELEGRAM_ADMIN_ID.value(),
-          `⚠️ <b>Doublon détecté</b>\n` +
-          `Ordre <code>#${ref}</code> rejeté automatiquement.\n` +
-          `Transfer ID <code>${transferId}</code> déjà utilisé.`
+          `🚨 <b>FRAUDE détectée</b>\n\n` +
+          `Ordre <code>#${ref}</code> rejeté.\n` +
+          `Transfer-ID <code>${transferId}</code> déjà utilisé\n` +
+          `dans l'ordre confirmé <code>#${ancienRef}</code>.\n\n` +
+          `⚠️ Tentative de réutilisation d'un ancien paiement.`
+        );
+        return;
+      }
+
+      // Vérifie aussi les waafi_notifications déjà matchées
+      const waafiMatcheSnap = await db.collection("waafi_notifications")
+        .where("transferId", "==", transferId)
+        .where("status", "==", "matché")
+        .limit(1)
+        .get();
+
+      if (!waafiMatcheSnap.empty) {
+        const ancienWaafi = waafiMatcheSnap.docs[0].data();
+        await db.collection("orders").doc(docId).update({
+          status:     "Rejeté",
+          flagRaison: `FRAUDE — Transfer ID ${transferId} déjà matché avec l'ordre #${ancienWaafi.ordreRef || "?"}`,
+          flaggedAt:  FieldValue.serverTimestamp(),
+        });
+        await sendTelegram(
+          TELEGRAM_TOKEN.value(),
+          TELEGRAM_ADMIN_ID.value(),
+          `🚨 <b>FRAUDE détectée</b>\n\n` +
+          `Transfer-ID <code>${transferId}</code> déjà utilisé\n` +
+          `pour confirmer l'ordre <code>#${ancienWaafi.ordreRef || "?"}</code>.\n\n` +
+          `⚠️ Paiement Waafi réutilisé.`
         );
         return;
       }
@@ -197,30 +228,19 @@ exports.onNouvelOrdre = onDocumentCreated(
         }
       }
 
-      // ── 2/3 ou moins : Rejet + vérif fraude ─────────────────────
-      // Vérifie si ces données ont déjà été utilisées dans un ordre confirmé
-      let fraudeRaison = score === 0
+      // ── 2/3 ou moins : Rejet ─────────────────────────────────────
+      const fraudeRaison = score === 0
         ? "Paiement non reçu — aucune notification Waafi correspondante"
-        : `Correspondance partielle (${score}/3 critères) — Transfer ID: ${transferId || "?"}, Montant: ${montantOrdre} DJF, N°: ${numOrdre || "?"}`;
+        : `Correspondance partielle (${score}/3) — ` +
+          `Transfer ID: ${waafiData?.transferId || "?"} / Montant Waafi: ${montantWaafi} DJF (ordre: ${montantOrdre} DJF) / N° Waafi: ${numWaafi || "?"} (ordre: ${numOrdre || "?"})`;
 
-      // Recherche doublon dans les ordres récents (24h)
-      const hier = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const doublonSnap = await db.collection("orders")
-        .where("status", "==", "Confirmé")
-        .where("waafitranfertID", "==", transferId || "__none__")
-        .limit(1)
-        .get();
-      const doublonNum = await db.collection("orders")
-        .where("status", "==", "Confirmé")
-        .where("numeroPayment", "==", numOrdre || "__none__")
-        .where("montant", "==", montantOrdre)
-        .limit(1)
-        .get();
 
-      const estFraude = !doublonSnap.empty || !doublonNum.empty;
-      if (estFraude) {
-        fraudeRaison += " — FRAUDE SUSPECTÉE : données déjà utilisées dans un ordre confirmé";
-      }
+      await db.collection("orders").doc(docId).update({
+        status:     "Rejeté",
+        flagRaison: fraudeRaison,
+        flaggedAt:  FieldValue.serverTimestamp(),
+        matchScore: score,
+      });
 
       await db.collection("orders").doc(docId).update({
         status:     "Rejeté",
@@ -232,14 +252,14 @@ exports.onNouvelOrdre = onDocumentCreated(
       await sendTelegram(
         TELEGRAM_TOKEN.value(),
         TELEGRAM_ADMIN_ID.value(),
-        `❌ <b>Ordre rejeté (${score}/3)</b>${estFraude ? " 🚨 FRAUDE" : ""}\n\n` +
+        `❌ <b>Ordre rejeté (${score}/3)</b>\n\n` +
         `Réf: <code>#${ref}</code>\n` +
         `Transfer-ID: <code>${transferId || "?"}</code>\n` +
         `Montant ordre: <b>${montantOrdre.toLocaleString()} DJF</b>` +
         (waafiData ? ` / Waafi: <b>${montantWaafi.toLocaleString()} DJF</b>` : "") + `\n` +
         `N° ordre: <code>${numOrdre || "?"}</code>` +
         (waafiData ? ` / Waafi: <code>${numWaafi || "?"}</code>` : "") + `\n\n` +
-        `${estFraude ? "🚨 Données déjà utilisées dans un ordre confirmé !" : "⚠️ Paiement non vérifié."}`
+        `⚠️ ${score === 0 ? "Aucun paiement Waafi reçu." : "Données partiellement incorrectes."}`
       );
       return;
     }
