@@ -407,7 +407,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
 // 3. ANALYSE IA ADMIN (résumé + prédictions)
 // ══════════════════════════════════════════════════════════════════
 exports.geminiAnalyseAdmin = onCall(
-  { region: REGION },
+  { region: REGION, secrets: [GEMINI_API_KEY] },
   async () => {
     const snap = await db.collection("orders")
       .orderBy("ts", "desc")
@@ -845,12 +845,16 @@ exports.supportClient = onRequest(
       }
 
       // ── Appel Gemini ────────────────────────────────────────────
+      const FALLBACK_MSG =
+        "Bonjour ! Pour vous aider, merci d'indiquer votre <b>numéro d'ordre</b> " +
+        "(ex : <code>2606061</code>).\n\n— <i>Support Kaffi-Pay</i>";
+
       let geminiDecision = {
-        reponse_client:   "Je n'ai pas pu traiter votre demande. Réessayez dans quelques instants.",
-        decision:         "escalade",
-        action_prise:     "Aucune action automatique",
-        niveau_urgence:   "faible",
-        resume_audit:     "Erreur Gemini",
+        reponse_client: FALLBACK_MSG,
+        decision:       "info_manquante",
+        action_prise:   "Fallback — Gemini indisponible",
+        niveau_urgence: "faible",
+        resume_audit:   "Gemini n'a pas répondu, message de fallback envoyé",
       };
 
       try {
@@ -886,8 +890,16 @@ Règles :
   "resume_audit": "résumé pour l'admin en 1-2 phrases"
 }
 `);
-        geminiDecision = JSON.parse(txt.replace(/```json|```/g, "").trim());
-        console.log("Gemini décision:", geminiDecision.decision);
+        const cleaned = txt.replace(/```json|```/g, "").trim();
+        try {
+          geminiDecision = JSON.parse(cleaned);
+          console.log("Gemini décision:", geminiDecision.decision);
+        } catch {
+          // Gemini a répondu mais pas en JSON valide — on envoie le texte brut
+          console.warn("Gemini JSON parse failed, using raw text");
+          geminiDecision.reponse_client = cleaned || FALLBACK_MSG;
+          geminiDecision.resume_audit   = "Gemini a répondu hors-JSON";
+        }
       } catch (e) {
         console.error("Gemini support error:", e.message);
       }
