@@ -29,7 +29,7 @@
       "collectionGroup": "alertes_admin",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "traité",    "order": "ASCENDING" },
+        { "fieldPath": "traite",    "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
@@ -39,7 +39,7 @@
       "fields": [
         { "fieldPath": "ordreRef", "order": "ASCENDING" },
         { "fieldPath": "type",     "order": "ASCENDING" },
-        { "fieldPath": "traité",   "order": "ASCENDING" }
+        { "fieldPath": "traite",   "order": "ASCENDING" }
       ]
     }
   ],

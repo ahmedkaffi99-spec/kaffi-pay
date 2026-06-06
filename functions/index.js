@@ -464,7 +464,7 @@ exports.rechargeCallback = onRequest(
       id1xbet: id1xbet || ordre.userId1xBet || "",
       montant: montant || ordre.montant || "",
       message: "3 tentatives échouées",
-      createdAt: FieldValue.serverTimestamp(), traité: false,
+      createdAt: FieldValue.serverTimestamp(), traite: false,
     });
     console.error(`[rechargeCallback] 🚨 ${ref} → INTERVENTION MANUELLE`);
     res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
@@ -561,7 +561,7 @@ exports.retryEtAlertes = onSchedule(
       const existant = await db.collection("alertes_admin")
         .where("ordreRef", "==", ordreRef)
         .where("type", "==", "attente_prolongee")
-        .where("traité", "==", false)
+        .where("traite", "==", false)
         .limit(1).get();
       if (!existant.empty) continue;
 
@@ -576,7 +576,7 @@ exports.retryEtAlertes = onSchedule(
         message:   `Ordre en attente depuis ${ageMin} minutes — vérification manuelle requise`,
         ia_decision: ordre.ia_decision || "aucune",
         createdAt: FieldValue.serverTimestamp(),
-        traité:    false,
+        traite:    false,
       });
       console.log(`[alertes] ⚠️ ${ordreRef} en attente depuis ${ageMin} min → alerte créée`);
     }

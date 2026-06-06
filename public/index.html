@@ -2133,7 +2133,7 @@ function startAlertesListener(){
   if(!window.db) return;
   var q = window.fsQuery(
     window.fsCollection(window.db, 'alertes_admin'),
-    window.fsWhere('traité','==',false),
+    window.fsWhere('traite','==',false),
     window.fsOrderBy('createdAt','desc'),
     window.fsLimit(20)
   );
@@ -2173,7 +2173,7 @@ function startAlertesListener(){
 async function marquerAlerte(alerteId, ordreDocId, action){
   if(!window.db) return;
   try {
-    await window.fsUpdateDoc(window.fsDoc(window.db,'alertes_admin',alerteId),{ traité: true });
+    await window.fsUpdateDoc(window.fsDoc(window.db,'alertes_admin',alerteId),{ traite: true });
     if(action === 'manuel' && ordreDocId){
       await window.fsUpdateDoc(window.fsDoc(window.db,'orders',ordreDocId),{
         status: 'Vérification Manuelle 🔍',
