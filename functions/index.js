@@ -60,33 +60,44 @@ async function geminiJson(prompt, systemInstruction) {
   return JSON.parse(result.response.text());
 }
 
-// Gemini décide : confirmer (+ créditer 1xBet) | rejeter | attendre
+// Gemini décide en vérifiant lui-même les documents bruts complets
 async function geminiDecider(ordre, sms) {
+  // Nettoyer les Timestamps Firestore avant sérialisation JSON
+  function toSerializable(obj) {
+    if (!obj || typeof obj !== "object") return obj;
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && typeof v.toDate === "function") out[k] = v.toDate().toISOString();
+      else out[k] = v;
+    }
+    return out;
+  }
+
+  const ordreRaw = JSON.stringify(toSerializable(ordre), null, 2);
+  const smsRaw   = JSON.stringify(toSerializable(sms),   null, 2);
+
   return await geminiJson(
-    `Ordre client :
-- Type : ${ordre.type || "?"}
-- Montant attendu : ${Number(ordre.montant || 0)} DJF
-- Transfer ID ordre : ${ordre.waafitranfertID || "?"}
-- N° Waafi client : ${ordre.numeroPayment || ordre.waafiNumber || "?"}
+    `Voici les deux documents Firestore bruts. Vérifie-les toi-même.
 
-SMS Waafi reçu :
-- Transfer ID SMS : ${sms.transferIdSMS || "?"}
-- Montant SMS : ${sms.montantSMS || 0} DJF
-- N° expéditeur : ${sms.numClient || "non disponible"}
-- Texte brut : "${(sms.notification || "").substring(0, 200)}"
+=== DOCUMENT ORDRE (Firestore : orders/) ===
+${ordreRaw}
 
-Réponds en JSON : {"decision":"confirmer|rejeter|attendre","raison":"..."}`,
+=== DOCUMENT SMS WAAFI (Firestore : waafi_notifications/) ===
+${smsRaw}
+
+Réponds en JSON : {"decision":"confirmer|rejeter|attendre","raison":"explication précise basée sur les champs que tu as vérifiés"}`,
     `Tu es le moteur de décision de Kaffi Pay (Djibouti, plateforme 1xBet↔Waafi).
+Tu reçois les documents Firestore BRUTS et COMPLETS. Tu vérifies toi-même chaque champ.
 Tu as DEUX responsabilités :
 1. Confirmer le paiement et créditer le compte 1xBet (decision="confirmer")
 2. Rejeter les fraudes et arnaques (decision="rejeter")
 
-Règles de décision :
-- confirmer : Transfer ID identique ET montant correspondant (tolérance ±10 DJF) → paiement valide, créditer
-- rejeter : Transfer ID différent OU montant très différent (>50 DJF) OU fraude évidente
-- attendre : données SMS incomplètes ou insuffisantes pour décider
+Règles de décision — vérifie dans les documents :
+- confirmer : champ "waafitranfertID" de l'ordre == champ "transferIdSMS" du SMS ET montants cohérents (±10 DJF)
+- rejeter : Transfer ID différent OU montant incohérent (écart >50 DJF) OU signes de fraude
+- attendre : données insuffisantes dans le SMS (transferIdSMS manquant ou null)
 
-En cas de doute léger, confirme — le Transfer ID est la clé principale.`
+Le Transfer ID est la clé principale. En cas de doute léger sur le montant seul, confirme.`
   );
 }
 
