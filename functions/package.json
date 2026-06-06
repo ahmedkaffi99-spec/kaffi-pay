@@ -1,13 +1,13 @@
 {
   "name": "kaffi-pay-functions",
-  "description": "Kaffi Pay Cloud Functions v4.0",
+  "description": "Kaffi Pay Cloud Functions v5.0",
   "scripts": {
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"
   },
   "engines": {
-    "node": "22"
+    "node": ">=22"
   },
   "main": "index.js",
   "dependencies": {
