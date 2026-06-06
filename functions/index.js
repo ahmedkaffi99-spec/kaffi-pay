@@ -15,7 +15,7 @@ const { onCall, onRequest }                    = require("firebase-functions/v2/
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
-const { GoogleGenAI }                          = require("@google/genai");
+const { GoogleGenerativeAI }                   = require("@google/generative-ai");
 
 initializeApp();
 const db = getFirestore();
@@ -33,12 +33,10 @@ const GEMINI_API_KEY    = defineSecret("GEMINI_API_KEY");
 // ── Helpers ─────────────────────────────────────────────────────────
 
 async function geminiGenerate(prompt) {
-  const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY.value() });
-  const response = await ai.models.generateContent({
-    model:    "gemini-2.0-flash",
-    contents: prompt,
-  });
-  return response.text || "";
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY.value());
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const result = await model.generateContent(prompt);
+  return result.response.text();
 }
 
 async function sendTelegramToBot(token, chatId, text, opts = {}) {
