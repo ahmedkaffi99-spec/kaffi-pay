@@ -65,12 +65,13 @@ function validerReglesDor(tx) {
 // ══════════════════════════════════════════════════════════════
 function parseSmsWaafi(notification) {
   const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i)
-                     || notification.match(/Transfer\s*ID[:\s]+(\d+)/i);
+                     || notification.match(/Transfer\s*ID[:\s]+(\d+)/i)
+                     || notification.match(/Ref[:\s#]+(\d{6,})/i);
   const transferId = transferMatch ? transferMatch[1].trim() : null;
 
   const montantMatch = notification.match(/(?:Received|transferred|reçu|sent)\s+DJF\s*([\d,. ]+)/i)
                     || notification.match(/DJF\s*([\d,. ]+)/i);
-  const montantStr = montantMatch ? montantMatch[1].trim().replace(/[\s,]/g, "") : null;
+  const montantStr = montantMatch ? montantMatch[1].trim().replace(/[\s,. ]/g, "") : null;
   const montantSMS = montantStr ? Number(montantStr) : null;
 
   const numMatch  = notification.match(/\((\d{7,9})\)/);
@@ -321,8 +322,8 @@ exports.onNouvelOrdre = onDocumentCreated(
 
     const [existingSnap, fraud] = await Promise.all([
       transferId
-        ? db.collection("orders").where("waafitranfertID","==",transferId).where("__name__","!=",docId).limit(1).get()
-        : Promise.resolve({ empty: true }),
+        ? db.collection("orders").where("waafitranfertID","==",transferId).limit(2).get()
+        : Promise.resolve({ docs: [], empty: true }),
       analyseFraude({
         type:          tx.type || "?",
         montant:       Number(tx.montant || 0),
@@ -332,7 +333,8 @@ exports.onNouvelOrdre = onDocumentCreated(
       }).catch(() => ({ score_fraude:0, risque:"faible", raisons:[], action:"valider" })),
     ]);
 
-    if (!existingSnap.empty) {
+    const hasDoublon = existingSnap.docs.some(d => d.id !== docId);
+    if (hasDoublon) {
       await db.collection("orders").doc(docId).update({
         status:"Rejeté", flagRaison:"Doublon — Transfer ID déjà utilisé", flaggedAt:FieldValue.serverTimestamp(),
       });
@@ -373,18 +375,14 @@ exports.onNouvelOrdre = onDocumentCreated(
         if (numSMS && numOrdre && numSMS !== numOrdre) continue; // expéditeur différent
 
         // ✅ Match rétroactif trouvé — confirmer l'ordre
-        const ordreRef = tx.orderId || tx.ref || docId;
-        const id1xbet  = tx.userId1xBet || tx.id1x || tx.idUser || "";
+        const id1xbet = tx.userId1xBet || tx.id1x || tx.idUser || "";
 
-        await Promise.all([
-          db.collection("orders").doc(docId).update({
-            status:          "Confirmé",
-            confirmedAt:     FieldValue.serverTimestamp(),
-            confirmedBy:     "auto_waafi_retroactif",
-            montantRecu:     montantSMS,
-          }),
-          Promise.resolve(), // waafi_notifications immuable
-        ]);
+        await db.collection("orders").doc(docId).update({
+          status:      "Confirmé",
+          confirmedAt: FieldValue.serverTimestamp(),
+          confirmedBy: "auto_waafi_retroactif",
+          montantRecu: montantSMS,
+        });
 
         console.log(`[RetroMatch] ✅ Ordre ${ordreRef} confirmé via SMS ${smsDoc.id}`);
 
@@ -406,7 +404,7 @@ exports.onNouvelOrdre = onDocumentCreated(
 // 2. ORDRE MODIFIÉ → Notification statut client
 // ══════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
-  { document: "orders/{docId}", secrets: [] },
+  { document: "orders/{docId}", region: "europe-west1", secrets: [] },
   async (event) => {
     const before = event.data.before.data();
     const after  = event.data.after.data();
@@ -422,7 +420,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
 // 3. GENKIT FLOW — Analyse admin (résumé + prédictions)
 // ══════════════════════════════════════════════════════════════
 exports.geminiAnalyseAdmin = onCall(
-  { secrets: [GEMINI_KEY] },
+  { region: "europe-west1", secrets: [GEMINI_KEY] },
   async () => {
     const snap = await db.collection("orders")
       .orderBy("createdAt", "desc").limit(100).get();
@@ -467,7 +465,7 @@ exports.geminiAnalyseAdmin = onCall(
 // 4. GENKIT VISION — Vérification preuve paiement (image)
 // ══════════════════════════════════════════════════════════════
 exports.geminiVerifPreuve = onCall(
-  { secrets: [GEMINI_KEY] },
+  { region: "europe-west1", secrets: [GEMINI_KEY] },
   async (request) => {
     const { imageBase64, mimeType, ordreRef, montantAttendu, transferIdAttendu } = request.data;
     if (!imageBase64) throw new Error("Image requise");
@@ -510,9 +508,10 @@ exports.autoConfirmation = onDocumentCreated(
     const sms   = event.data.data();
     const docId = event.params.docId;
 
-    // Doc brut — pas de status, pas de mise à jour. L'ordre "En attente" sert de verrou naturel.
+    // smsWebhook gère déjà son propre flux complet — évite le double traitement
+    if (sms.source === "macrodroid_http") return;
 
-    // ── Parser SMS Waafi ───────────────────────────────────────
+    // ── Parser SMS Waafi (pour docs écrits directement dans Firestore) ──
     const notification = sms.notification || sms.notificationText || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
 
     if (!notification || notification === "[notification]" || notification === "{notification}") return;
@@ -520,22 +519,7 @@ exports.autoConfirmation = onDocumentCreated(
     const isWaafi = /Transfer-?Id|DJF|Waafi|WAAFI/i.test(notification);
     if (!isWaafi) return;
 
-    // ── Transfer ID ───────────────────────────────────────────────
-    const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i)
-                       || notification.match(/Transfer\s*ID[:\s]+(\d+)/i)
-                       || notification.match(/Ref[:\s#]+(\d{6,})/i);
-    const transferId = transferMatch ? transferMatch[1].trim() : null;
-
-    // ── Montant DJF — plusieurs formats Waafi ─────────────────────
-    // "Received DJF 100" / "transferred DJF 1,000" / "DJF1,000"
-    const montantMatch = notification.match(/(?:Received|transferred|reçu|sent)\s+DJF\s*([\d,. ]+)/i)
-                      || notification.match(/DJF\s*([\d,. ]+)/i);
-    const montantStr   = montantMatch ? montantMatch[1].trim().replace(/[\s,]/g, "") : null;
-    const montantSMS   = montantStr ? Number(montantStr) : null;
-
-    // ── Numéro expéditeur ─────────────────────────────────────────
-    const numMatch  = notification.match(/\((\d{7,9})\)/);
-    const numClient = numMatch ? numMatch[1] : null;
+    const { transferId, montantSMS, numClient } = parseSmsWaafi(notification);
 
     console.log(`[AutoConfirm] SMS="${notification.substring(0,100)}" | TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
 
@@ -594,18 +578,15 @@ exports.autoConfirmation = onDocumentCreated(
 
     // ✅ 3/3 confirmé — Transfer ID + Montant + Numéro
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
-    await Promise.all([
-      ordreDoc.ref.update({
-        status:          "Confirmé",
-        confirmedAt:     FieldValue.serverTimestamp(),
-        confirmedBy:     "auto_waafi_sms",
-        waafitranfertID: transferId,
-        montantRecu:     montantSMS,
-        rejetBy:         FieldValue.delete(),
-        rejetRaison:     FieldValue.delete(),
-      }),
-      Promise.resolve(), // waafi_notifications immuable
-    ]);
+    await ordreDoc.ref.update({
+      status:          "Confirmé",
+      confirmedAt:     FieldValue.serverTimestamp(),
+      confirmedBy:     "auto_waafi_sms",
+      waafitranfertID: transferId,
+      montantRecu:     montantSMS,
+      rejetBy:         FieldValue.delete(),
+      rejetRaison:     FieldValue.delete(),
+    });
 
     if (id1xbet) {
       const webhookUrl = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
@@ -677,18 +658,7 @@ exports.smsWebhook = onRequest(
     }
 
     // ── 3. Parser le SMS ──────────────────────────────────────────
-    const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i)
-                       || notification.match(/Transfer\s*ID[:\s]+(\d+)/i);
-    const transferId = transferMatch ? transferMatch[1].trim() : null;
-
-    const montantMatch = notification.match(/(?:Received|transferred|reçu|sent)\s+DJF\s*([\d,. ]+)/i)
-                      || notification.match(/DJF\s*([\d,. ]+)/i);
-    const montantStr = montantMatch ? montantMatch[1].trim().replace(/[\s,]/g, "") : null;
-    const montantSMS = montantStr ? Number(montantStr) : null;
-
-    const numMatch  = notification.match(/\((\d{7,9})\)/);
-    const numClient = numMatch ? numMatch[1] : null;
-
+    const { transferId, montantSMS, numClient } = parseSmsWaafi(notification);
     console.log(`[smsWebhook] SMS reçu | TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
 
     // ── 4. Sauvegarder dans waafi_notifications (brut, sans status) ──
@@ -759,18 +729,15 @@ exports.smsWebhook = onRequest(
 
     // ── 9. ✅ 3/3 — Confirmer l'ordre ────────────────────────────
     const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
-    await Promise.all([
-      ordreDoc.ref.update({
-        status:          "Confirmé",
-        confirmedAt:     FieldValue.serverTimestamp(),
-        confirmedBy:     "auto_waafi_sms",
-        waafitranfertID: transferId,
-        montantRecu:     montantSMS,
-        rejetBy:         FieldValue.delete(),
-        rejetRaison:     FieldValue.delete(),
-      }),
-      Promise.resolve(), // waafi_notifications immuable
-    ]);
+    await ordreDoc.ref.update({
+      status:          "Confirmé",
+      confirmedAt:     FieldValue.serverTimestamp(),
+      confirmedBy:     "auto_waafi_sms",
+      waafitranfertID: transferId,
+      montantRecu:     montantSMS,
+      rejetBy:         FieldValue.delete(),
+      rejetRaison:     FieldValue.delete(),
+    });
     console.log(`[smsWebhook] ✅ Ordre ${ordreRef} CONFIRMÉ — ${montantSMS} DJF`);
 
     // ── 10. Déclencher MacroDroid → recharge 1xBet ───────────────
