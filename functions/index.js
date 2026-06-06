@@ -876,11 +876,15 @@ exports.supportClient = onRequest(
 
       // Si pas encore identifié → demander numéro
       if (!session.phone) {
-        console.log(`Demande numéro Waafi à ${firstName} (${chatId})`);
+        console.log(`Demande numéro Waafi à (${chatId})`);
         await sendTelegramToBot(
           supportToken, chatId,
-          `👋 Bienvenue sur le support <b>Kaffi Pay</b>, ${firstName} !\n\n` +
-          `Pour consulter vos ordres, entrez votre <b>numéro Waafi</b> :\n` +
+          `👋 Bienvenue sur le support <b>Kaffi-Pay</b> !\n\n` +
+          `Je suis votre assistant 24h/24 — je peux vous aider pour :\n` +
+          `• Vérifier le statut de votre dépôt\n` +
+          `• Résoudre un problème de paiement\n` +
+          `• Signaler une réclamation\n\n` +
+          `Pour commencer, entrez votre <b>numéro Waafi</b> :\n` +
           `<i>Exemple : 77123456</i>`
         );
         return;
@@ -930,22 +934,25 @@ exports.supportClient = onRequest(
           contents: [{
             role: "user",
             parts: [{ text: `
-Tu es l'assistant support de Kaffi Pay (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
+Tu es l'assistant support de <b>Kaffi-Pay</b> (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
 Tu PRENDS DES DÉCISIONS et tu gères les demandes clients de A à Z.
 Réponds UNIQUEMENT en JSON valide.
 
-Client : ${firstName} | N° Waafi : ${session.phone}
+Client N° Waafi : ${session.phone}
 Message client : "${text}"
 
 Historique (10 derniers ordres) :
-${orders.length ? orders.join("\n") : "Aucun ordre trouvé"}
+${orders.length ? orders.join("\n") : "Aucun ordre trouvé pour ce numéro"}
 
 Règles :
-- Si ordre rejeté "Paiement non reçu" et client dit avoir payé → demande Transfer ID
-- Si Transfer ID fourni → indique à l'admin de vérifier manuellement
-- Si ordre en attente non traité → signaler comme urgent (Kaffi Pay est 24/7, tout ordre doit être traité rapidement)
-- Si fraude confirmée → ne pas aider, expliquer le rejet poliment
+- Si le client parle d'un ordre sans donner de numéro → demande le numéro d'ordre (ex: #KFP-001)
+- Si ordre rejeté "Paiement non reçu" et client dit avoir payé → demande le Transfer ID Waafi
+- Si Transfer ID fourni → décision "escalade" et indique à l'admin de vérifier manuellement
+- Si ordre en attente non traité → urgence "élevé" (Kaffi-Pay est 24/7, tout ordre doit être traité rapidement)
+- Si fraude confirmée → ne pas aider, expliquer le rejet poliment sans détails techniques
+- Ne jamais mentionner le prénom du client
 - Répondre toujours en français, ton professionnel et concis
+- Signer chaque réponse avec : "\n\n— <i>Support Kaffi-Pay</i>"
 
 {
   "reponse_client": "message à envoyer au client (HTML Telegram ok)",
