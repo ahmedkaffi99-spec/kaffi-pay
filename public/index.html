@@ -1569,7 +1569,7 @@ async function pingGemini(){
   result.textContent = 'Connexion à Gemini...';
   try {
     var t0 = Date.now();
-    var r = await fetch('https://geminipping-tqirvjuka-ew.a.run.app');
+    var r = await fetch('https://europe-west1-kaffi-pay.cloudfunctions.net/geminiPing');
     var data = await r.json();
     var ms = Date.now() - t0;
     if(data.gemini && data.gemini.includes('connecté')){
