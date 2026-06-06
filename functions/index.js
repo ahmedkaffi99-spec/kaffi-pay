@@ -176,6 +176,24 @@ exports.onNouvelOrdre = onDocumentCreated(
           );
           return;
         }
+      } else {
+        // Aucun paiement Waafi reçu → rejet automatique
+        await db.collection("orders").doc(docId).update({
+          status:     "Rejeté",
+          flagRaison: "Paiement non reçu — Transfer ID introuvable dans les notifications Waafi",
+          flaggedAt:  FieldValue.serverTimestamp(),
+        });
+        await sendTelegram(
+          TELEGRAM_TOKEN.value(),
+          TELEGRAM_ADMIN_ID.value(),
+          `❌ <b>Ordre rejeté — Paiement non reçu</b>\n\n` +
+          `Réf: <code>#${ref}</code>\n` +
+          `Transfer-ID soumis: <code>${transferId}</code>\n` +
+          `Montant: <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
+          `ID 1xBet: <code>${tx.userId1xBet || "?"}</code>\n\n` +
+          `⚠️ Aucun paiement Waafi correspondant détecté.`
+        );
+        return;
       }
     }
 
