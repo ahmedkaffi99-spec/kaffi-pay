@@ -28,16 +28,14 @@ const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
 const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
+const GEMINI_API_KEY    = defineSecret("GEMINI_API_KEY");
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 async function geminiGenerate(prompt) {
-  const ai = new GoogleGenAI({
-    vertexai: true,
-    project:  "kaffi-pay",
-    location: "us-central1",
-  });
+  const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY.value() });
   const response = await ai.models.generateContent({
-    model:    "gemini-2.0-flash-001",
+    model:    "gemini-2.0-flash",
     contents: prompt,
   });
   return response.text || "";
@@ -127,7 +125,7 @@ exports.onNouvelOrdre = onDocumentCreated(
   {
     document:  "orders/{docId}",
     region:    REGION,
-    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -359,7 +357,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
   {
     document: "orders/{docId}",
     region:   REGION,
-    secrets:  [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:  [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
   },
   async (event) => {
     const before = event.data.before.data();
@@ -756,7 +754,7 @@ exports.healthCheck = onRequest(
 exports.supportClient = onRequest(
   {
     region:         REGION,
-    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
     timeoutSeconds: 60,
   },
   async (req, res) => {
@@ -928,7 +926,7 @@ Règles :
 exports.adminBot = onRequest(
   {
     region:         REGION,
-    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
     timeoutSeconds: 60,
   },
   async (req, res) => {
