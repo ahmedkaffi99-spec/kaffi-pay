@@ -1,6 +1,6 @@
 {
   "name": "kaffi-pay-functions",
-  "description": "Kaffi Pay Cloud Functions v3.1 — Vertex AI Gemini + Telegram + Auto-confirmation SMS",
+  "description": "Kaffi Pay Cloud Functions v3.3 — Google GenAI + Telegram + Auto-confirmation SMS",
   "scripts": {
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
@@ -13,7 +13,7 @@
   "dependencies": {
     "firebase-admin": "^12.0.0",
     "firebase-functions": "^5.0.0",
-    "@google-cloud/vertexai": "^1.0.0"
+    "@google/genai": "^0.7.0"
   },
   "devDependencies": {
     "firebase-functions-test": "^3.1.0"

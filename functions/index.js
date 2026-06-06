@@ -15,14 +15,12 @@ const { onCall, onRequest }                    = require("firebase-functions/v2/
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
-const { VertexAI }                             = require("@google-cloud/vertexai");
+const { GoogleGenAI }                          = require("@google/genai");
 
 initializeApp();
 const db = getFirestore();
 
-const REGION     = "europe-west1";
-const PROJECT_ID = "kaffi-pay";
-const AI_LOC     = "us-central1";
+const REGION = "europe-west1";
 
 // ── Secrets ────────────────────────────────────────────────────────
 const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
@@ -30,12 +28,21 @@ const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
 const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
+const GEMINI_API_KEY    = defineSecret("GEMINI_API_KEY");
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function getGemini() {
-  return new VertexAI({ project: PROJECT_ID, location: AI_LOC })
-    .getGenerativeModel({ model: "gemini-2.0-flash-001" });
+  return new GoogleGenAI({ apiKey: GEMINI_API_KEY.value() });
+}
+
+async function geminiGenerate(prompt) {
+  const ai = getGemini();
+  const response = await ai.models.generateContent({
+    model:    "gemini-2.0-flash",
+    contents: prompt,
+  });
+  return response.text || "";
 }
 
 async function sendTelegramToBot(token, chatId, text, opts = {}) {
@@ -63,9 +70,6 @@ async function sendTelegramToBot(token, chatId, text, opts = {}) {
 }
 
 // Extrait le texte de la réponse Vertex AI
-function aiText(result) {
-  return result.response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-}
 
 async function sendTelegram(token, chatId, text) {
   if (!token || !chatId) return;
@@ -125,7 +129,7 @@ exports.onNouvelOrdre = onDocumentCreated(
   {
     document:  "orders/{docId}",
     region:    REGION,
-    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -281,11 +285,7 @@ exports.onNouvelOrdre = onDocumentCreated(
     // ── 1c. Analyse fraude Gemini (Vertex AI) ─────────────────────
     let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
     try {
-      const model  = getGemini();
-      const result = await model.generateContent({
-        contents: [{
-          role: "user",
-          parts: [{ text: `
+      const txt = await geminiGenerate(`
 Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
 Réponds UNIQUEMENT en JSON valide, sans texte autour.
 
@@ -303,10 +303,8 @@ Transaction :
 - N° Expéditeur: ${tx.numeroPayment || "?"}
 Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numéro ne commence pas par 77 = suspect.
 Note : Kaffi Pay fonctionne 24h/24 7j/7 — l'heure de la transaction n'est jamais un facteur suspect.
-` }]
-        }]
-      });
-      fraud = JSON.parse(aiText(result).replace(/```json|```/g, "").trim());
+`);
+      fraud = JSON.parse(txt.replace(/```json|```/g, "").trim());
     } catch (e) {
       console.error("Gemini fraud error:", e.message);
     }
@@ -363,7 +361,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
   {
     document: "orders/{docId}",
     region:   REGION,
-    secrets:  [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:  [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
   },
   async (event) => {
     const before = event.data.before.data();
@@ -419,12 +417,8 @@ exports.geminiAnalyseAdmin = onCall(
     const attente   = txs.filter((t) => t.status === "En attente");
     const rejetes   = txs.filter((t) => t.status === "Rejeté");
     const volume    = confirmes.reduce((s, t) => s + Number(t.montant || 0), 0);
-    const model     = getGemini();
 
-    const result = await model.generateContent({
-      contents: [{
-        role: "user",
-        parts: [{ text: `
+    const txt = await geminiGenerate(`
 Tu es l'assistant IA de Kaffi Pay (Djibouti).
 Réponds UNIQUEMENT en JSON valide.
 
@@ -446,15 +440,11 @@ ${txs.slice(0, 5).map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} —
   "score_sante": 0-100
 }
 Note : Kaffi Pay est 24h/24 7j/7 — ne jamais mentionner les heures comme facteur d'analyse.
-` }]
-      }]
-    });
-
-    const txt = aiText(result).replace(/```json|```/g, "").trim();
+`);
     try {
       return {
         success: true,
-        data:    JSON.parse(txt),
+        data:    JSON.parse(txt.replace(/```json|```/g, "").trim()),
         stats:   { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume },
       };
     } catch {
@@ -768,7 +758,7 @@ exports.healthCheck = onRequest(
 exports.supportClient = onRequest(
   {
     region:         REGION,
-    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
     timeoutSeconds: 60,
   },
   async (req, res) => {
@@ -850,11 +840,7 @@ exports.supportClient = onRequest(
       };
 
       try {
-        const model  = getGemini();
-        const result = await model.generateContent({
-          contents: [{
-            role: "user",
-            parts: [{ text: `
+        const txt = await geminiGenerate(`
 Tu es l'assistant support de Kaffi-Pay (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
 Tu réponds directement à ce que le client demande. Réponds UNIQUEMENT en JSON valide.
 
@@ -872,9 +858,8 @@ Règles :
     2. Le montant ou le numéro expéditeur ne correspond pas
     3. Le paiement Waafi n'a pas encore été effectué avant la soumission de l'ordre
   Puis demande en complément : Transfer ID Waafi, montant payé, numéro expéditeur
-- Si Transfer ID fourni est correct (correspond à un paiement réel) → décision "escalade" avec demande de correction de l'ordre par l'admin
-- Si Transfer ID ET les autres infos sont tous faux/incorrects → décision "fraude_signalée", refuser poliment
-- Si fraude confirmée → refuser poliment sans détails techniques
+- Si Transfer ID fourni est correct → décision "escalade", l'admin corrigera l'ordre
+- Si Transfer ID ET les autres infos sont faux → décision "fraude_signalée", refuser poliment
 - Ne jamais demander le numéro Waafi du client
 - Répondre en français, ton professionnel et concis
 - Signer chaque réponse : "\n\n— <i>Support Kaffi-Pay</i>"
@@ -886,10 +871,8 @@ Règles :
   "niveau_urgence": "faible" | "moyen" | "élevé",
   "resume_audit": "résumé pour l'admin en 1-2 phrases"
 }
-` }]
-          }]
-        });
-        geminiDecision = JSON.parse(aiText(result).replace(/```json|```/g, "").trim());
+`);
+        geminiDecision = JSON.parse(txt.replace(/```json|```/g, "").trim());
         console.log("Gemini décision:", geminiDecision.decision);
       } catch (e) {
         console.error("Gemini support error:", e.message);
@@ -947,7 +930,7 @@ Règles :
 exports.adminBot = onRequest(
   {
     region:         REGION,
-    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
     timeoutSeconds: 60,
   },
   async (req, res) => {
@@ -995,11 +978,7 @@ exports.adminBot = onRequest(
       // Appel Gemini
       let reponse = "Je n'ai pas pu traiter votre demande.";
       try {
-        const model  = getGemini();
-        const result = await model.generateContent({
-          contents: [{
-            role: "user",
-            parts: [{ text: `
+        reponse = await geminiGenerate(`
 Tu es l'assistant IA de l'admin Kaffi-Pay (Djibouti) — plateforme 1xBet ↔ Waafi.
 Tu réponds aux questions et commandes de l'admin. Réponds en français, concis et précis.
 N'utilise pas de JSON — réponds en texte simple formaté pour Telegram (HTML ok).
@@ -1019,10 +998,7 @@ Règles :
 - Si l'admin demande les fraudes → liste les ordres rejetés raison fraude
 - Si l'admin demande de confirmer/rejeter un ordre → explique que l'action se fait dans Firestore directement
 - Kaffi-Pay est 24/7 — jamais mentionner les heures comme facteur suspect
-` }]
-          }]
-        });
-        reponse = aiText(result) || reponse;
+`);
       } catch (e) {
         console.error("adminBot Gemini error:", e.message);
         reponse = `⚠️ Erreur Gemini : ${e.message}`;
