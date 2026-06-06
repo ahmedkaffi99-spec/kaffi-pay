@@ -15,14 +15,12 @@ const { defineSecret }                         = require("firebase-functions/par
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
 const { getDatabase }                          = require("firebase-admin/database");
-const { getStorage }                           = require("firebase-admin/storage");
 const { genkit, z }                            = require("genkit");
 const { googleAI, gemini20Flash }              = require("@genkit-ai/googleai");
 
 initializeApp();
-const db      = getFirestore();
-const rtdb    = getDatabase();
-const storage = getStorage();
+const db   = getFirestore();
+const rtdb = getDatabase();
 
 // ── MacroDroid webhook URL ─────────────────────────────────────
 const MACRO_DEPOT_URL = "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2";
@@ -127,15 +125,10 @@ function getFlows() {
     score_sante:       z.number(),
   });
 
-  const PreuveSchema = z.object({
-    est_valide:                 z.boolean(),
-    transfer_id_detecte:        z.string().nullable(),
-    montant_detecte:            z.number().nullable(),
-    expediteur_detecte:         z.string().nullable(),
-    correspondance_montant:     z.boolean(),
-    correspondance_transfer_id: z.boolean(),
-    confiance:                  z.number(),
-    raison:                     z.string(),
+  const AdminDecisionSchema = z.object({
+    decision:     z.enum(["confirmer", "rejeter", "attendre"]),
+    raison:       z.string(),
+    confiance:    z.number().describe("0-100"),
   });
 
   const InputFraudeSchema = z.object({
@@ -161,11 +154,17 @@ function getFlows() {
     })),
   });
 
-  const InputPreuveSchema = z.object({
-    imageBase64:         z.string(),
-    mimeType:            z.string(),
-    montantAttendu:      z.number(),
-    transferIdAttendu:   z.string(),
+  const InputAdminDecisionSchema = z.object({
+    ordreId:       z.string(),
+    type:          z.string(),
+    montantOrdre:  z.number(),
+    transferId:    z.string(),
+    numeroOrdre:   z.string(),
+    minutesAttente: z.number(),
+    smsTrouve:     z.boolean(),
+    montantSMS:    z.number(),
+    ecartMontant:  z.number(),
+    numeroSMS:     z.string(),
   });
 
   // ── Flow 1 : Analyse Fraude ────────────────────────────────────
@@ -229,38 +228,45 @@ Donne un résumé opérationnel, une alerte si nécessaire, un conseil stratégi
     }
   );
 
-  // ── Flow 3 : Vérification Preuve (Vision) ─────────────────────
-  const verifPreuve = _ai.defineFlow(
+  // ── Flow 3 : Décision Admin IA — remplace l'humain pour les cas bloqués ──
+  const adminDecision = _ai.defineFlow(
     {
-      name:         "verifPreuve",
-      inputSchema:  InputPreuveSchema,
-      outputSchema: PreuveSchema,
+      name:         "adminDecision",
+      inputSchema:  InputAdminDecisionSchema,
+      outputSchema: AdminDecisionSchema,
     },
     async (input) => {
       const { output } = await _ai.generate({
         model: gemini20Flash,
-        system: `Tu es un expert en vérification de documents financiers et captures d'écran de paiement Waafi (Djibouti).
-Ton rôle est d'authentifier les preuves de paiement soumises par les clients de Kaffi Pay.
-Sois rigoureux : une erreur de 1 DJF ou un Transfer ID incorrect = preuve invalide. Ne valide jamais en cas de doute.`,
-        prompt: [
-          {
-            text: `Vérifie cette capture d'écran de paiement Waafi.
-Montant attendu : ${input.montantAttendu} DJF
-Transfer ID attendu : ${input.transferIdAttendu}
+        system: `Tu es l'administrateur automatique de Kaffi Pay (Djibouti, plateforme 1xBet↔Waafi).
+Tu prends des décisions définitives sur les ordres bloqués ou en attente prolongée.
+Tu remplaces entièrement l'admin humain. Tes décisions sont exécutées immédiatement dans le système.
+Règles de décision :
+- SMS trouvé + écart montant ≤ 50 DJF + même numéro (ou numéro inconnu) → confirmer
+- SMS trouvé + écart > 50 DJF → rejeter (fraude probable)
+- SMS non trouvé + attente > 15 min → rejeter (paiement non reçu)
+- SMS non trouvé + attente ≤ 15 min → attendre
+- Numéro SMS différent de l'ordre → rejeter sauf si écart minime et context cohérent`,
+        prompt: `Ordre à décider :
+- ID : ${input.ordreId}
+- Type : ${input.type}
+- Montant attendu : ${input.montantOrdre} DJF
+- Transfer ID : ${input.transferId}
+- N° client : ${input.numeroOrdre}
+- En attente depuis : ${input.minutesAttente} minutes
 
-Extrais les données visibles et dis si le paiement correspond exactement.`,
-          },
-          {
-            media: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
-          },
-        ],
-        output: { schema: PreuveSchema },
+SMS Waafi reçu : ${input.smsTrouve ? "OUI" : "NON"}
+${input.smsTrouve ? `- Montant SMS : ${input.montantSMS} DJF (écart : ${input.ecartMontant} DJF)
+- N° expéditeur SMS : ${input.numeroSMS || "inconnu"}` : ""}
+
+Quelle décision prends-tu ?`,
+        output: { schema: AdminDecisionSchema },
       });
-      return output;
+      return output || { decision: "attendre", raison: "IA indisponible", confiance: 0 };
     }
   );
 
-  _flows = { analyseFraude, analyseAdmin, verifPreuve };
+  _flows = { analyseFraude, analyseAdmin, adminDecision };
   return _flows;
 }
 
@@ -466,39 +472,88 @@ exports.geminiAnalyseAdmin = onCall(
 );
 
 // ══════════════════════════════════════════════════════════════
-// 4. GENKIT VISION — Vérification preuve paiement (image)
+// 4. GEMINI ADMIN AUTO — Remplace l'admin humain toutes les 10 min
+//    Revoit les ordres bloqués et prend des décisions définitives
 // ══════════════════════════════════════════════════════════════
-exports.geminiVerifPreuve = onCall(
-  { region: "europe-west1", secrets: [GEMINI_KEY] },
-  async (request) => {
-    const { imageBase64, mimeType, ordreRef, montantAttendu, transferIdAttendu } = request.data;
-    if (!imageBase64) throw new Error("Image requise");
+exports.geminiAdminAuto = onSchedule(
+  { schedule: "every 10 minutes", region: "europe-west1", timeoutSeconds: 120, secrets: [GEMINI_KEY] },
+  async () => {
+    const { adminDecision } = getFlows();
+    const cutoff10  = new Date(Date.now() - 10 * 60 * 1000); // > 10 min en attente
+    const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const { verifPreuve } = getFlows();
-    try {
-      const parsed = await verifPreuve({
-        imageBase64,
-        mimeType:          mimeType || "image/jpeg",
-        montantAttendu:    Number(montantAttendu || 0),
-        transferIdAttendu: transferIdAttendu || "",
-      });
+    const snap = await db.collection("orders")
+      .where("status", "==", "En attente")
+      .where("createdAt", "<", cutoff10)
+      .limit(10).get();
 
-      if (ordreRef && parsed) {
-        const snap = await db.collection("orders")
-          .where("orderId", "==", ordreRef).limit(1).get();
-        if (!snap.empty) {
-          await snap.docs[0].ref.update({
-            ia_preuve_valide:    parsed.est_valide,
-            ia_preuve_confiance: parsed.confiance,
-            ia_preuve_raison:    parsed.raison,
-            ia_preuve_checkedAt: FieldValue.serverTimestamp(),
-          });
+    if (snap.empty) return;
+
+    for (const ordreDoc of snap.docs) {
+      const ordre         = ordreDoc.data();
+      const ordreId       = ordre.orderId || ordreDoc.id;
+      const transferId    = ordre.waafitranfertID || "";
+      const montantOrdre  = Number(ordre.montant || 0);
+      const numeroOrdre   = ordre.numeroPayment || ordre.waafiNumber || "";
+      const minutesAttente = Math.floor((Date.now() - (ordre.createdAt ? ordre.createdAt.toDate() : new Date()).getTime()) / 60000);
+
+      // Chercher un SMS correspondant dans les 24h
+      let smsTrouve = false, montantSMS = 0, ecartMontant = 0, numeroSMS = "";
+      if (transferId) {
+        const smsSnap = await db.collection("waafi_notifications")
+          .where("transferIdSMS", "==", transferId)
+          .where("createdAt", ">", cutoff24h)
+          .limit(1).get();
+        if (!smsSnap.empty) {
+          const smsData = smsSnap.docs[0].data();
+          smsTrouve    = true;
+          montantSMS   = Number(smsData.montantSMS || 0);
+          ecartMontant = Math.abs(montantOrdre - montantSMS);
+          numeroSMS    = smsData.numClient || "";
         }
       }
-      return { success: true, data: parsed };
-    } catch (e) {
-      console.error("[Genkit] verifPreuve error:", e.message);
-      return { success: false, error: "Impossible d'analyser l'image" };
+
+      try {
+        const result = await adminDecision({
+          ordreId, type: ordre.type || "?",
+          montantOrdre, transferId, numeroOrdre, minutesAttente,
+          smsTrouve, montantSMS, ecartMontant, numeroSMS,
+        });
+
+        console.log(`[AdminAuto] Ordre ${ordreId} → ${result.decision} (confiance ${result.confiance}%) : ${result.raison}`);
+
+        if (result.decision === "confirmer") {
+          const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
+          await ordreDoc.ref.update({
+            status:      "Confirmé",
+            confirmedAt: FieldValue.serverTimestamp(),
+            confirmedBy: "gemini_admin_auto",
+            montantRecu: smsTrouve ? montantSMS : montantOrdre,
+            ia_admin_decision: result.decision,
+            ia_admin_raison:   result.raison,
+            ia_admin_confiance: result.confiance,
+          });
+          if (id1xbet) {
+            const url = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${smsTrouve ? montantSMS : montantOrdre}&ref=${encodeURIComponent(ordreId)}`;
+            fetch(url, { signal: AbortSignal.timeout(8000) })
+              .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status }))
+              .catch(() => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
+          }
+        } else if (result.decision === "rejeter") {
+          await ordreDoc.ref.update({
+            status:            "Rejeté",
+            rejetBy:           "gemini_admin_auto",
+            rejetRaison:       result.raison,
+            rejetedAt:         FieldValue.serverTimestamp(),
+            ia_admin_decision: result.decision,
+            ia_admin_raison:   result.raison,
+            ia_admin_confiance: result.confiance,
+          });
+        }
+        // "attendre" → on ne fait rien, autoRejetServeur prendra le relais à 20 min
+      } catch (e) {
+        console.error(`[AdminAuto] Erreur ordre ${ordreId}:`, e.message);
+      }
     }
   }
 );
@@ -756,39 +811,6 @@ exports.smsWebhook = onRequest(
   }
 );
 
-// ══════════════════════════════════════════════════════════════
-// UPLOAD PREUVE — Sauvegarde image paiement dans Firebase Storage
-// POST body: { imageBase64, mimeType, ordreRef }
-// ══════════════════════════════════════════════════════════════
-exports.uploadPreuve = onRequest(
-  { region: "europe-west1", cors: true },
-  async (req, res) => {
-    if (req.method !== "POST") { res.status(405).json({ error: "POST requis" }); return; }
-    const { imageBase64, mimeType, ordreRef } = req.body || {};
-    if (!imageBase64 || !ordreRef) {
-      res.status(400).json({ error: "imageBase64 et ordreRef requis" });
-      return;
-    }
-    try {
-      const bucket   = storage.bucket();
-      const fileName = `preuves/${ordreRef}_${Date.now()}.jpg`;
-      const file     = bucket.file(fileName);
-      await file.save(Buffer.from(imageBase64, "base64"), {
-        contentType: mimeType || "image/jpeg",
-        metadata:    { metadata: { ordreRef } },
-      });
-      const [url] = await file.getSignedUrl({ action: "read", expires: "01-01-2100" });
-      // Mettre à jour l'ordre avec l'URL de la preuve
-      const snap = await db.collection("orders").where("orderId", "==", ordreRef).limit(1).get();
-      if (!snap.empty) await snap.docs[0].ref.update({ preuveUrl: url, preuveAt: FieldValue.serverTimestamp() });
-      console.log(`[uploadPreuve] Preuve ordre ${ordreRef} → Storage: ${fileName}`);
-      res.json({ success: true, url });
-    } catch (e) {
-      console.error("[uploadPreuve]", e.message);
-      res.status(500).json({ error: e.message });
-    }
-  }
-);
 
 // ══════════════════════════════════════════════════════════════
 // 7. CALLBACK MacroDroid → Résultat recharge 1xBet
