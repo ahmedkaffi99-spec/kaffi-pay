@@ -291,9 +291,8 @@ Transaction :
 - Montant: ${tx.montant} DJF
 - Transfer ID: ${transferId}
 - N° Expéditeur: ${tx.numeroPayment || "?"}
-- Heure: ${new Date().getHours()}h
-
 Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numéro ne commence pas par 77 = suspect.
+Note : Kaffi Pay fonctionne 24h/24 7j/7 — l'heure de la transaction n'est jamais un facteur suspect.
 ` }]
         }]
       });
@@ -434,9 +433,9 @@ ${txs.slice(0, 5).map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} —
   "alerte": "problème urgent ou null",
   "conseil": "1 conseil",
   "prediction_demain": nombre_djf,
-  "heure_pic": "ex: 14h-16h",
   "score_sante": 0-100
 }
+Note : Kaffi Pay est 24h/24 7j/7 — ne jamais mentionner les heures comme facteur d'analyse.
 ` }]
       }]
     });
@@ -903,7 +902,7 @@ ${orders.length ? orders.join("\n") : "Aucun ordre trouvé"}
 Règles :
 - Si ordre rejeté "Paiement non reçu" et client dit avoir payé → demande Transfer ID
 - Si Transfer ID fourni → indique à l'admin de vérifier manuellement
-- Si ordre en attente depuis > 30min → signaler comme urgent
+- Si ordre en attente non traité → signaler comme urgent (Kaffi Pay est 24/7, tout ordre doit être traité rapidement)
 - Si fraude confirmée → ne pas aider, expliquer le rejet poliment
 - Répondre toujours en français, ton professionnel et concis
 
