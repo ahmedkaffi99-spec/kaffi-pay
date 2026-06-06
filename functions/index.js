@@ -926,7 +926,7 @@ Règles :
         TELEGRAM_TOKEN.value(),
         TELEGRAM_ADMIN_ID.value(),
         `${urgenceEmoji} <b>Support Client</b> ${decisionEmoji}\n\n` +
-        `👤 ${firstName} | <code>${session.phone}</code>\n` +
+        `👤 ${firstName} | <code>${session.phone || "Non renseigné"}</code>\n` +
         `💬 <i>"${text.substring(0, 100)}"</i>\n\n` +
         `🤖 <b>Décision Gemini :</b> ${geminiDecision.decision.toUpperCase()}\n` +
         `⚡ Action : ${geminiDecision.action_prise}\n\n` +
