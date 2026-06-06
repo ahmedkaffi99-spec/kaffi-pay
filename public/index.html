@@ -13,6 +13,7 @@
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getFirestore, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCILUjQPp_wO-IJrp6WwckMRDN5ISbcexU",
@@ -57,6 +58,8 @@ window.fsEnableNetwork = enableNetwork;
     loadReservesFromFirestore();
   }, 2000);
 window.fsDisableNetwork = disableNetwork;
+const _functions = getFunctions(app, 'europe-west1');
+window.fsCallable = (name) => httpsCallable(_functions, name);
 window._firebaseReady = true;
 window.firebaseReady = true;
 
@@ -557,6 +560,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
     <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>🔔</span>Notifs<div class="notif-dot" id="notif-bell-dot"></div></button>
+    <button class="nav-tab" onclick="showPage('ia')" id="ntab-ia"><span>🤖</span>IA</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -667,6 +671,44 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
       <button class="add-agent-btn" onclick="addAgent()">✅ Ajouter l'agent</button>
     </div>
     <div class="agent-list" id="agent-list"></div>
+  </div>
+
+  <!-- IA GEMINI -->
+  <div class="page-section" id="page-ia">
+
+    <!-- Statut connexion -->
+    <div class="reserve-card" id="ia-ping-card" style="cursor:pointer" onclick="pingGemini()">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:.78rem;font-weight:700;color:var(--gold)">🤖 Gemini — Statut</div>
+        <div id="ia-ping-badge" style="font-size:.66rem;background:rgba(255,255,255,.06);border-radius:999px;padding:3px 10px;color:var(--muted)">Appuyer pour tester</div>
+      </div>
+      <div id="ia-ping-result" style="font-size:.72rem;color:var(--muted);line-height:1.7;min-height:32px">Appuyez sur cette carte pour vérifier la connexion Gemini.</div>
+      <div style="margin-top:10px;text-align:right">
+        <button onclick="event.stopPropagation();pingGemini()" style="background:rgba(255,215,0,.1);border:1px solid rgba(255,215,0,.25);border-radius:999px;padding:6px 16px;font-size:.68rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">⚡ Tester la connexion</button>
+      </div>
+    </div>
+
+    <!-- Analyse IA -->
+    <div class="reserve-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-size:.78rem;font-weight:700;color:var(--gold)">📊 Analyse IA — Dernières transactions</div>
+        <button onclick="analyserIA()" id="ia-analyse-btn" style="background:rgba(255,215,0,.1);border:1px solid rgba(255,215,0,.25);border-radius:999px;padding:5px 14px;font-size:.65rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600">Analyser</button>
+      </div>
+      <div id="ia-analyse-result" style="font-size:.73rem;color:var(--muted);line-height:1.8;min-height:40px">Appuyez sur "Analyser" pour obtenir un rapport IA des 100 dernières transactions.</div>
+    </div>
+
+    <!-- Chat IA -->
+    <div class="reserve-card">
+      <div style="font-size:.78rem;font-weight:700;color:var(--gold);margin-bottom:12px">💬 Chat IA Admin</div>
+      <div id="ia-chat-log" style="min-height:80px;max-height:300px;overflow-y:auto;margin-bottom:12px;display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:.7rem;color:var(--muted);text-align:center;padding:20px 0">Le chat IA est prêt. Posez une question sur Kaffi Pay.</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="ia-chat-input" type="text" placeholder="Ex: Combien d'ordres en attente ?" style="flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,215,0,.15);border-radius:999px;padding:9px 14px;font-size:.73rem;color:#fff;font-family:'DM Sans',sans-serif;outline:none" onkeydown="if(event.key==='Enter')envoyerChatIA()">
+        <button onclick="envoyerChatIA()" style="background:rgba(255,215,0,.15);border:1px solid rgba(255,215,0,.3);border-radius:999px;padding:9px 16px;font-size:.7rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;white-space:nowrap">Envoyer →</button>
+      </div>
+    </div>
+
   </div>
 </div>
 </div>
@@ -1515,6 +1557,109 @@ function initDashboard(){
   calcAndUpdateReserves();
   renderRecentTx();
   initMainChart('7j');
+}
+
+// ═══════════════════════════════════════════════════
+// ADMIN — PAGE IA GEMINI
+// ═══════════════════════════════════════════════════
+async function pingGemini(){
+  var badge = document.getElementById('ia-ping-badge');
+  var result = document.getElementById('ia-ping-result');
+  badge.style.color = 'var(--muted)';
+  badge.textContent = '⏳ Test en cours...';
+  result.textContent = 'Connexion à Gemini...';
+  try {
+    var t0 = Date.now();
+    var r = await fetch('https://geminipping-tqirvjuka-ew.a.run.app');
+    var data = await r.json();
+    var ms = Date.now() - t0;
+    if(data.gemini && data.gemini.includes('connecté')){
+      badge.style.color = '#4caf50';
+      badge.textContent = '✅ Connecté';
+      result.innerHTML = '<span style="color:#4caf50;font-weight:600">✅ Gemini opérationnel</span><br>'
+        + (data.reponse ? '"' + (data.reponse.salut||'') + '" — ' + (data.reponse.plateforme||'') + '<br>' : '')
+        + '<span style="color:var(--muted)">Latence : ' + ms + ' ms</span>';
+    } else {
+      badge.style.color = 'var(--error)';
+      badge.textContent = '❌ Erreur';
+      result.innerHTML = '<span style="color:var(--error)">❌ ' + (data.message || JSON.stringify(data)) + '</span>';
+    }
+  } catch(e){
+    badge.style.color = 'var(--error)';
+    badge.textContent = '❌ Hors ligne';
+    result.innerHTML = '<span style="color:var(--error)">❌ Impossible de joindre Gemini : ' + e.message + '</span>';
+  }
+}
+
+async function analyserIA(){
+  var btn = document.getElementById('ia-analyse-btn');
+  var result = document.getElementById('ia-analyse-result');
+  btn.textContent = '⏳ Analyse...';
+  btn.disabled = true;
+  result.innerHTML = '<span style="color:var(--muted)">Gemini analyse les transactions...</span>';
+  try {
+    var fn = window.fsCallable('geminiAnalyseAdmin');
+    var res = await fn();
+    var d = res.data;
+    if(d && d.success && d.data){
+      var ia = d.data;
+      var s = d.stats || {};
+      result.innerHTML =
+        '<div style="margin-bottom:8px;color:#fff;font-weight:600">' + (ia.resume||'') + '</div>'
+        + (ia.alerte ? '<div style="color:var(--error);margin-bottom:6px">⚠️ ' + ia.alerte + '</div>' : '')
+        + '<div style="color:var(--muted);margin-bottom:4px">💡 ' + (ia.conseil||'') + '</div>'
+        + '<div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap">'
+        + '<span style="color:#4caf50">✅ ' + (s.confirmes||0) + ' confirmés</span>'
+        + '<span style="color:var(--warning)">⏳ ' + (s.attente||0) + ' en attente</span>'
+        + '<span style="color:var(--error)">❌ ' + (s.rejetes||0) + ' rejetés</span>'
+        + '</div>'
+        + '<div style="margin-top:8px;font-size:.68rem;color:var(--muted)">'
+        + '📈 Prévision demain : ' + (ia.prediction_demain||0) + ' ordres &nbsp;|&nbsp; 🕐 Pic : ' + (ia.heure_pic||'?') + ' &nbsp;|&nbsp; Score santé : ' + (ia.score_sante||0) + '/100'
+        + '</div>';
+    } else {
+      result.innerHTML = '<span style="color:var(--error)">Erreur : ' + (d&&d.error ? d.error : 'Réponse invalide') + '</span>';
+    }
+  } catch(e){
+    result.innerHTML = '<span style="color:var(--error)">❌ ' + e.message + '</span>';
+  }
+  btn.textContent = 'Analyser';
+  btn.disabled = false;
+}
+
+var _iaChatHistory = [];
+async function envoyerChatIA(){
+  var input = document.getElementById('ia-chat-input');
+  var log = document.getElementById('ia-chat-log');
+  var msg = (input.value||'').trim();
+  if(!msg) return;
+  input.value = '';
+
+  // Message utilisateur
+  var userDiv = document.createElement('div');
+  userDiv.style.cssText = 'background:rgba(255,215,0,.08);border-radius:10px;padding:7px 11px;font-size:.72rem;color:#fff;align-self:flex-end;max-width:85%';
+  userDiv.textContent = msg;
+  log.appendChild(userDiv);
+
+  // Indicateur chargement
+  var loadDiv = document.createElement('div');
+  loadDiv.style.cssText = 'background:rgba(255,255,255,.04);border-radius:10px;padding:7px 11px;font-size:.72rem;color:var(--muted);align-self:flex-start;max-width:85%';
+  loadDiv.textContent = '🤖 Gemini réfléchit...';
+  log.appendChild(loadDiv);
+  log.scrollTop = log.scrollHeight;
+
+  try {
+    var fn = window.fsCallable('geminiChatAdmin');
+    var res = await fn({ question: msg });
+    var data = res.data;
+    var rep = (data && data.success) ? data.reponse : ('Erreur : ' + (data && data.error ? data.error : '?'));
+
+    loadDiv.style.color = '#fff';
+    loadDiv.innerHTML = '🤖 <span style="color:var(--gold)">Gemini :</span> ' + rep;
+  } catch(e){
+    loadDiv.style.color = 'var(--error)';
+    loadDiv.textContent = '❌ Erreur : ' + e.message;
+  }
+  log.scrollTop = log.scrollHeight;
 }
 
 // ═══════════════════════════════════════════════════

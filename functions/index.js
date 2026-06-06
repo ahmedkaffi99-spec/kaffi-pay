@@ -449,7 +449,44 @@ exports.rechargeCallback = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════
-// 8. GEMINI PING — Test de connectivité Gemini (GET uniquement)
+// 8. GEMINI CHAT ADMIN — Question libre sur Kaffi Pay
+// ══════════════════════════════════════════════════════════════
+exports.geminiChatAdmin = onCall(
+  { region: "europe-west1", secrets: [GEMINI_KEY] },
+  async (req) => {
+    const question = (req.data && req.data.question) ? String(req.data.question).substring(0, 500) : "";
+    if (!question) return { success: false, error: "Question vide" };
+
+    const snap = await db.collection("orders").orderBy("createdAt", "desc").limit(50).get();
+    const txs       = snap.docs.map(d => d.data());
+    const confirmes = txs.filter(t => t.status === "Confirmé").length;
+    const attente   = txs.filter(t => t.status === "En attente").length;
+    const rejetes   = txs.filter(t => t.status === "Rejeté").length;
+    const volume    = txs.filter(t => t.status === "Confirmé").reduce((s, t) => s + Number(t.montant || 0), 0);
+
+    try {
+      const data = await geminiJson(
+        `Contexte Kaffi Pay (50 dernières transactions) :
+- Confirmées : ${confirmes} | En attente : ${attente} | Rejetées : ${rejetes}
+- Volume confirmé : ${volume.toLocaleString("fr-FR")} DJF
+
+Question de l'admin : "${question}"
+
+Réponds en JSON : {"reponse":"ta réponse claire et concise en français","type":"info|alerte|conseil"}`,
+        `Tu es l'assistant IA de la direction de Kaffi Pay (Djibouti, plateforme 1xBet↔Waafi).
+Tu réponds aux questions de l'admin de façon concise, précise et en français.
+Tu as accès aux stats en temps réel de la plateforme.`
+      );
+      return { success: true, reponse: data.reponse || "", type: data.type || "info" };
+    } catch (e) {
+      console.error("[geminiChatAdmin] erreur:", e.message);
+      return { success: false, error: "Erreur Gemini : " + e.message };
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// 9. GEMINI PING — Test de connectivité Gemini (GET uniquement)
 // ══════════════════════════════════════════════════════════════
 exports.geminiPing = onRequest(
   { region: "europe-west1", cors: true, secrets: [GEMINI_KEY] },
