@@ -14,11 +14,85 @@ const { onSchedule }                           = require("firebase-functions/v2/
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
+const { getDatabase }                          = require("firebase-admin/database");
+const { getStorage }                           = require("firebase-admin/storage");
 const { genkit, z }                            = require("genkit");
 const { googleAI, gemini20Flash }              = require("@genkit-ai/googleai");
 
 initializeApp();
-const db = getFirestore();
+const db      = getFirestore();
+const rtdb    = getDatabase();
+const storage = getStorage();
+
+// ── MacroDroid webhook URL ─────────────────────────────────────
+const MACRO_DEPOT_URL = "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2";
+
+// ══════════════════════════════════════════════════════════════
+// RÈGLES D'OR — Validation avant toute écriture Firestore
+// ══════════════════════════════════════════════════════════════
+const REGLES = {
+  depot:   { min: 50,  max: 500000 },
+  retrait: { min: 250, max: 100000 },
+};
+
+function validerReglesDor(tx) {
+  const erreurs   = [];
+  const montant   = Number(tx.montant || 0);
+  const type      = (tx.type || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu,"");
+  const transferId = String(tx.waafitranfertID || tx.transferId || "").trim();
+  const numero    = String(tx.numeroPayment || tx.waafiNumber || "").trim();
+  const id1xbet   = tx.userId1xBet || tx.id1x || tx.idUser || "";
+
+  if (type === "depot" || type === "dépôt") {
+    if (montant < REGLES.depot.min)  erreurs.push(`Minimum dépôt: ${REGLES.depot.min} DJF`);
+    if (montant > REGLES.depot.max)  erreurs.push(`Maximum dépôt: ${REGLES.depot.max.toLocaleString()} DJF`);
+  } else if (type === "retrait") {
+    if (montant < REGLES.retrait.min) erreurs.push(`Minimum retrait: ${REGLES.retrait.min} DJF`);
+    if (montant > REGLES.retrait.max) erreurs.push(`Maximum retrait: ${REGLES.retrait.max.toLocaleString()} DJF`);
+  }
+  if (!transferId || transferId.replace(/\D/g,"").length < 6)
+    erreurs.push("Transfer ID invalide (min 6 chiffres)");
+  if (!numero || !/^77\d{6}$/.test(numero))
+    erreurs.push("Numéro Waafi invalide (77xxxxxx, 8 chiffres)");
+  if (!id1xbet)
+    erreurs.push("ID 1xBet requis");
+
+  return erreurs;
+}
+
+// ══════════════════════════════════════════════════════════════
+// PARSER SMS WAAFI — utilisé par smsWebhook + autoConfirmation
+// ══════════════════════════════════════════════════════════════
+function parseSmsWaafi(notification) {
+  const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i)
+                     || notification.match(/Transfer\s*ID[:\s]+(\d+)/i);
+  const transferId = transferMatch ? transferMatch[1].trim() : null;
+
+  const montantMatch = notification.match(/(?:Received|transferred|reçu|sent)\s+DJF\s*([\d,. ]+)/i)
+                    || notification.match(/DJF\s*([\d,. ]+)/i);
+  const montantStr = montantMatch ? montantMatch[1].trim().replace(/[\s,]/g, "") : null;
+  const montantSMS = montantStr ? Number(montantStr) : null;
+
+  const numMatch  = notification.match(/\((\d{7,9})\)/);
+  const numClient = numMatch ? numMatch[1] : null;
+
+  return { transferId, montantSMS, numClient };
+}
+
+// ══════════════════════════════════════════════════════════════
+// REALTIME DB — mise à jour statut live
+// ══════════════════════════════════════════════════════════════
+async function rtdbUpdateStatus(ordreRef, status, extra = {}) {
+  try {
+    await rtdb.ref(`orders/${ordreRef}`).update({
+      status,
+      updatedAt: Date.now(),
+      ...extra,
+    });
+  } catch (e) {
+    console.error("[RTDB]", e.message);
+  }
+}
 
 // ── Secret Firebase ────────────────────────────────────────────
 const GEMINI_KEY = defineSecret("GEMINI_KEY");
@@ -186,7 +260,37 @@ Analyse l'image et vérifie si le paiement correspond exactement.`,
 }
 
 // ══════════════════════════════════════════════════════════════
-// 1. NOUVEL ORDRE → Fraude + Doublons
+// 0. VALIDER ORDRE — HTTP endpoint appelé par le frontend
+//    AVANT que l'ordre soit écrit dans Firestore
+// ══════════════════════════════════════════════════════════════
+exports.validerOrdre = onRequest(
+  { region: "europe-west1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") { res.status(405).json({ error: "POST requis" }); return; }
+    const tx = req.body || {};
+    const erreurs = validerReglesDor(tx);
+    if (erreurs.length > 0) {
+      res.json({ valide: false, erreurs });
+      return;
+    }
+    // Vérifier doublon Transfer ID
+    const transferId = String(tx.waafitranfertID || tx.transferId || "").trim();
+    if (transferId) {
+      const dup = await db.collection("orders")
+        .where("waafitranfertID", "==", transferId)
+        .where("status", "in", ["En attente", "Confirmé"])
+        .limit(1).get();
+      if (!dup.empty) {
+        res.json({ valide: false, erreurs: ["Transfer ID déjà utilisé pour un ordre actif"] });
+        return;
+      }
+    }
+    res.json({ valide: true, erreurs: [] });
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// 1. NOUVEL ORDRE → Règles d'or + Doublon + Gemini fraude
 // ══════════════════════════════════════════════════════════════
 exports.onNouvelOrdre = onDocumentCreated(
   { document: "orders/{docId}", region: "europe-west1", secrets: [GEMINI_KEY], minInstances: 1, concurrency: 80 },
@@ -194,6 +298,22 @@ exports.onNouvelOrdre = onDocumentCreated(
     const tx         = event.data.data();
     const docId      = event.params.docId;
     const transferId = tx.waafitranfertID || tx.hash || "";
+    const ordreRef   = tx.orderId || tx.ref || docId;
+
+    // ── 0. Règles d'or — rejet immédiat si invalide ──────────
+    const erreurs = validerReglesDor(tx);
+    if (erreurs.length > 0) {
+      await db.collection("orders").doc(docId).update({
+        status:    "Rejeté",
+        flagRaison: "Règles: " + erreurs.join(" | "),
+        rejetedAt:  FieldValue.serverTimestamp(),
+      });
+      await rtdbUpdateStatus(ordreRef, "Rejeté");
+      return;
+    }
+
+    // ── Enregistrer dans Realtime DB pour dashboard live ─────
+    await rtdbUpdateStatus(ordreRef, tx.status || "En attente", { montant: Number(tx.montant || 0), type: tx.type });
 
     // ── 1a+1b. Doublon + Fraude lancés en parallèle ───────────
     const { analyseFraude } = getFlows();
@@ -269,7 +389,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         console.log(`[RetroMatch] ✅ Ordre ${ordreRef} confirmé via SMS ${smsDoc.id}`);
 
         if (id1xbet) {
-          const url = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+          const url = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
           fetch(url, { signal: AbortSignal.timeout(8000) })
             .then(r => db.collection("orders").doc(docId).update({ webhookStatus: r.ok?"ok":"erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
             .catch(() => db.collection("orders").doc(docId).update({ webhookStatus:"erreur_timeout" }));
@@ -293,6 +413,8 @@ exports.onOrdreUpdated = onDocumentUpdated(
     if (before.status === after.status) return;
     const ref = after.orderId || after.ref || event.params.docId;
     console.log(`[onOrdreUpdated] Ordre ${ref} : ${before.status} → ${after.status}`);
+    // Mettre à jour Realtime DB pour dashboard live
+    await rtdbUpdateStatus(ref, after.status, { montant: Number(after.montant || 0) });
   }
 );
 
@@ -523,7 +645,7 @@ exports.autoConfirmation = onDocumentCreated(
     ]);
 
     if (id1xbet) {
-      const webhookUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+      const webhookUrl = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
       fetch(webhookUrl, { signal: AbortSignal.timeout(8000) })
         .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_"+r.status, webhookAt: FieldValue.serverTimestamp() }))
         .catch(() => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
@@ -707,13 +829,47 @@ exports.smsWebhook = onRequest(
 
     // ── 10. Déclencher MacroDroid → recharge 1xBet ───────────────
     if (id1xbet) {
-      const webhookUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+      const webhookUrl = `${MACRO_DEPOT_URL}&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
       fetch(webhookUrl, { signal: AbortSignal.timeout(8000) })
         .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_" + r.status, webhookAt: FieldValue.serverTimestamp() }))
         .catch(() => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
     }
 
     res.json({ success: true, status: "confirmé", ordreRef, montantSMS, transferId, docId: docRef.id });
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// UPLOAD PREUVE — Sauvegarde image paiement dans Firebase Storage
+// POST body: { imageBase64, mimeType, ordreRef }
+// ══════════════════════════════════════════════════════════════
+exports.uploadPreuve = onRequest(
+  { region: "europe-west1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") { res.status(405).json({ error: "POST requis" }); return; }
+    const { imageBase64, mimeType, ordreRef } = req.body || {};
+    if (!imageBase64 || !ordreRef) {
+      res.status(400).json({ error: "imageBase64 et ordreRef requis" });
+      return;
+    }
+    try {
+      const bucket   = storage.bucket();
+      const fileName = `preuves/${ordreRef}_${Date.now()}.jpg`;
+      const file     = bucket.file(fileName);
+      await file.save(Buffer.from(imageBase64, "base64"), {
+        contentType: mimeType || "image/jpeg",
+        metadata:    { metadata: { ordreRef } },
+      });
+      const [url] = await file.getSignedUrl({ action: "read", expires: "01-01-2100" });
+      // Mettre à jour l'ordre avec l'URL de la preuve
+      const snap = await db.collection("orders").where("orderId", "==", ordreRef).limit(1).get();
+      if (!snap.empty) await snap.docs[0].ref.update({ preuveUrl: url, preuveAt: FieldValue.serverTimestamp() });
+      console.log(`[uploadPreuve] Preuve ordre ${ordreRef} → Storage: ${fileName}`);
+      res.json({ success: true, url });
+    } catch (e) {
+      console.error("[uploadPreuve]", e.message);
+      res.status(500).json({ error: e.message });
+    }
   }
 );
 
