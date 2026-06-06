@@ -855,67 +855,46 @@ exports.supportClient = onRequest(
         return;
       }
 
-      // ── Session client ──────────────────────────────────────────
+      // ── Session client (sauvegarde numéro Waafi si fourni) ─────
       const sessionRef  = db.collection("support_sessions").doc(String(chatId));
       const sessionSnap = await sessionRef.get();
       const session     = sessionSnap.exists ? sessionSnap.data() : {};
 
-      // Si le client envoie son numéro Waafi pour s'identifier
       const cleanText = text.replace(/\s/g, "");
       const isPhone   = /^(77|78|70|71|21)\d{6}$/.test(cleanText);
       if (isPhone && !session.phone) {
-        await sessionRef.set({
-          phone:     cleanText,
-          firstName,
-          chatId,
-          startedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
+        await sessionRef.set({ phone: cleanText, chatId, startedAt: FieldValue.serverTimestamp() }, { merge: true });
         session.phone = cleanText;
-        console.log(`Session créée pour ${firstName}: ${cleanText}`);
+        console.log(`Numéro sauvegardé pour ${chatId}: ${cleanText}`);
       }
 
-      // Si pas encore identifié → demander numéro
-      if (!session.phone) {
-        console.log(`Demande numéro Waafi à (${chatId})`);
-        await sendTelegramToBot(
-          supportToken, chatId,
-          `👋 Bienvenue sur le support <b>Kaffi-Pay</b> !\n\n` +
-          `Je suis votre assistant 24h/24 — je peux vous aider pour :\n` +
-          `• Vérifier le statut de votre dépôt\n` +
-          `• Résoudre un problème de paiement\n` +
-          `• Signaler une réclamation\n\n` +
-          `Pour commencer, entrez votre <b>numéro Waafi</b> :\n` +
-          `<i>Exemple : 77123456</i>`
-        );
-        return;
-      }
-
-      // ── Historique ordres du client ─────────────────────────────
+      // ── Historique ordres (si numéro connu) ─────────────────────
       let orders = [];
-      try {
-        const ordersSnap = await db.collection("orders")
-          .where("numeroPayment", "==", session.phone)
-          .orderBy("ts", "desc")
-          .limit(10)
-          .get();
-        orders = ordersSnap.docs.map((d) => {
-          const o = d.data();
-          return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`;
-        });
-      } catch (e) {
-        console.warn("Erreur récupération ordres (index manquant?):", e.message);
-        // Fallback sans orderBy
+      if (session.phone) {
         try {
           const ordersSnap = await db.collection("orders")
             .where("numeroPayment", "==", session.phone)
+            .orderBy("ts", "desc")
             .limit(10)
             .get();
           orders = ordersSnap.docs.map((d) => {
             const o = d.data();
             return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`;
           });
-        } catch (e2) {
-          console.warn("Fallback ordres aussi échoué:", e2.message);
+        } catch (e) {
+          console.warn("Index manquant, fallback sans orderBy:", e.message);
+          try {
+            const ordersSnap = await db.collection("orders")
+              .where("numeroPayment", "==", session.phone)
+              .limit(10)
+              .get();
+            orders = ordersSnap.docs.map((d) => {
+              const o = d.data();
+              return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`;
+            });
+          } catch (e2) {
+            console.warn("Fallback ordres échoué:", e2.message);
+          }
         }
       }
 
@@ -934,30 +913,29 @@ exports.supportClient = onRequest(
           contents: [{
             role: "user",
             parts: [{ text: `
-Tu es l'assistant support de <b>Kaffi-Pay</b> (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
-Tu PRENDS DES DÉCISIONS et tu gères les demandes clients de A à Z.
-Réponds UNIQUEMENT en JSON valide.
+Tu es l'assistant support de Kaffi-Pay (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
+Tu réponds directement à ce que le client demande. Réponds UNIQUEMENT en JSON valide.
 
-Client N° Waafi : ${session.phone}
 Message client : "${text}"
+${session.phone ? `N° Waafi client : ${session.phone}` : "N° Waafi : non renseigné"}
 
-Historique (10 derniers ordres) :
-${orders.length ? orders.join("\n") : "Aucun ordre trouvé pour ce numéro"}
+Historique ordres :
+${orders.length ? orders.join("\n") : "Aucun ordre trouvé"}
 
 Règles :
-- Si le client parle d'un ordre sans donner de numéro → demande le numéro d'ordre (ex: #KFP-001)
+- Réponds directement à la question, pas de blabla inutile
+- Si le client mentionne un problème de paiement et le numéro Waafi n'est pas connu → demande son numéro Waafi
+- Si numéro Waafi connu mais pas de numéro d'ordre → demande le numéro d'ordre (ex: #KFP-001)
 - Si ordre rejeté "Paiement non reçu" et client dit avoir payé → demande le Transfer ID Waafi
-- Si Transfer ID fourni → décision "escalade" et indique à l'admin de vérifier manuellement
-- Si ordre en attente non traité → urgence "élevé" (Kaffi-Pay est 24/7, tout ordre doit être traité rapidement)
-- Si fraude confirmée → ne pas aider, expliquer le rejet poliment sans détails techniques
-- Ne jamais mentionner le prénom du client
-- Répondre toujours en français, ton professionnel et concis
-- Signer chaque réponse avec : "\n\n— <i>Support Kaffi-Pay</i>"
+- Si Transfer ID fourni → décision "escalade", admin vérifiera manuellement
+- Si fraude confirmée → refuser poliment sans détails techniques
+- Répondre en français, ton professionnel et concis
+- Signer chaque réponse : "\n\n— <i>Support Kaffi-Pay</i>"
 
 {
   "reponse_client": "message à envoyer au client (HTML Telegram ok)",
   "decision": "résolu" | "escalade" | "info_manquante" | "fraude_signalée",
-  "action_prise": "description courte de ce que tu as décidé",
+  "action_prise": "description courte",
   "niveau_urgence": "faible" | "moyen" | "élevé",
   "resume_audit": "résumé pour l'admin en 1-2 phrases"
 }
