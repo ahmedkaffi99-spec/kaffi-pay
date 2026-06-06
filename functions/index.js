@@ -578,9 +578,10 @@ exports.autoRejetServeur = onSchedule(
 
 // ══════════════════════════════════════════════════════════════
 // 7. ENDPOINT HTTP — MacroDroid envoie SMS ici
+// Parse + Match + Confirme en une seule requête HTTP
+// POST https://smswebhook-tqisrvjuka-ew.a.run.app
+// Body : { notification: "texte SMS Waafi" }
 // ══════════════════════════════════════════════════════════════
-// MacroDroid appelle : POST https://europe-west1-kaffi-pay.cloudfunctions.net/smsWebhook
-// Body JSON : { secret, notification, not_title }
 exports.smsWebhook = onRequest(
   { region: "europe-west1", cors: true, minInstances: 1, concurrency: 80 },
   async (req, res) => {
@@ -589,34 +590,147 @@ exports.smsWebhook = onRequest(
       return;
     }
 
-    // Accepte tous les noms de champs possibles envoyés par MacroDroid
+    // ── 1. Extraire le texte SMS (tous noms de champs MacroDroid) ──
     const body = req.body || {};
     const notification =
-      body.notification     ||
-      body.notificationText ||
-      body.not_body         ||
-      body.texte            ||
-      body.message          ||
-      body.sms_body         ||
-      body.sms              ||
-      body.text             ||
-      "";
+      body.notification || body.notificationText || body.not_body ||
+      body.texte || body.message || body.sms_body || body.sms || body.text || "";
 
     if (!notification || notification === "[notification]" || notification === "{notification}") {
-      res.status(400).json({ error: "Champ SMS vide ou format invalide", recu: body });
+      res.status(400).json({ error: "SMS vide ou format invalide" });
       return;
     }
 
+    // ── 2. Vérifier que c'est un SMS Waafi ────────────────────────
+    const isWaafi = /Transfer-?Id|DJF|Waafi|WAAFI/i.test(notification);
+    if (!isWaafi) {
+      await db.collection("waafi_notifications").add({
+        notification, source: "macrodroid_http",
+        status: "ignoré_non_waafi", createdAt: FieldValue.serverTimestamp(),
+      });
+      res.json({ success: true, status: "ignoré_non_waafi" });
+      return;
+    }
+
+    // ── 3. Parser le SMS ──────────────────────────────────────────
+    const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i)
+                       || notification.match(/Transfer\s*ID[:\s]+(\d+)/i);
+    const transferId = transferMatch ? transferMatch[1].trim() : null;
+
+    const montantMatch = notification.match(/(?:Received|transferred|reçu|sent)\s+DJF\s*([\d,. ]+)/i)
+                      || notification.match(/DJF\s*([\d,. ]+)/i);
+    const montantStr = montantMatch ? montantMatch[1].trim().replace(/[\s,]/g, "") : null;
+    const montantSMS = montantStr ? Number(montantStr) : null;
+
+    const numMatch  = notification.match(/\((\d{7,9})\)/);
+    const numClient = numMatch ? numMatch[1] : null;
+
+    console.log(`[smsWebhook] SMS reçu | TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
+
+    // ── 4. Sauvegarder dans waafi_notifications ───────────────────
     const docRef = await db.collection("waafi_notifications").add({
       notification,
-      not_title:  body.not_title || body.title || "Waafi SMS",
-      source:     "macrodroid_http",
-      createdAt:  FieldValue.serverTimestamp(),
-      status:     "nouveau",
+      not_title:     body.not_title || "Waafi SMS",
+      source:        "macrodroid_http",
+      transferIdSMS: transferId || null,
+      montantSMS:    montantSMS || null,
+      numClient:     numClient  || null,
+      createdAt:     FieldValue.serverTimestamp(),
+      status:        "en_cours",
     });
 
-    console.log(`[smsWebhook] SMS reçu → doc ${docRef.id} | "${notification.substring(0,80)}"`);
-    res.json({ success: true, docId: docRef.id });
+    // ── 5. Valider le parsing ─────────────────────────────────────
+    if (!transferId || !montantSMS) {
+      await docRef.update({
+        status:    "erreur_parsing",
+        erreurMsg: `TransferID=${transferId} | Montant=${montantSMS} | SMS: "${notification.substring(0, 120)}"`,
+      });
+      res.status(200).json({ success: false, status: "erreur_parsing", docId: docRef.id });
+      return;
+    }
+
+    // ── 6. Chercher l'ordre ───────────────────────────────────────
+    let ordreSnap = await db.collection("orders")
+      .where("waafitranfertID", "==", transferId)
+      .where("status", "==", "En attente")
+      .limit(1).get();
+
+    // Matching rétroactif — ordre auto-rejeté < 30 min
+    if (ordreSnap.empty) {
+      const cutoff   = new Date(Date.now() - 30 * 60 * 1000);
+      const rejetSnap = await db.collection("orders")
+        .where("waafitranfertID", "==", transferId)
+        .where("rejetBy", "==", "auto_serveur")
+        .limit(1).get();
+      if (!rejetSnap.empty) {
+        const d = rejetSnap.docs[0].data();
+        const createdAt = d.createdAt ? d.createdAt.toDate() : new Date(0);
+        if (createdAt > cutoff) {
+          ordreSnap = rejetSnap;
+          console.log(`[smsWebhook] ♻️ Ordre auto-rejeté réactivé : ${d.orderId || rejetSnap.docs[0].id}`);
+        }
+      }
+    }
+
+    if (ordreSnap.empty) {
+      await docRef.update({ status: "non_matché", erreurMsg: `Aucun ordre avec Transfer ID ${transferId}`, transferIdSMS: transferId });
+      res.json({ success: false, status: "non_matché", transferId, docId: docRef.id });
+      return;
+    }
+
+    const ordreDoc     = ordreSnap.docs[0];
+    const ordre        = ordreDoc.data();
+    const ordreRef     = ordre.orderId || ordre.ref || ordreDoc.id;
+    const montantOrdre = Number(ordre.montant || 0);
+    const numeroOrdre  = ordre.numeroPayment || ordre.waafiNumber || "";
+
+    // ── 7. Vérifier numéro expéditeur ────────────────────────────
+    if (numClient && numeroOrdre && numClient !== numeroOrdre) {
+      await docRef.update({
+        status:    "expediteur_mismatch",
+        ordreRef,
+        erreurMsg: `N° SMS (${numClient}) ≠ N° ordre (${numeroOrdre})`,
+      });
+      res.json({ success: false, status: "expediteur_mismatch", docId: docRef.id });
+      return;
+    }
+
+    // ── 8. Vérifier montant (±5 DJF) ─────────────────────────────
+    if (Math.abs(montantOrdre - montantSMS) > 5) {
+      await docRef.update({
+        status:    "montant_incorrect",
+        ordreRef,
+        erreurMsg: `Montant SMS ${montantSMS} DJF ≠ Montant ordre ${montantOrdre} DJF`,
+      });
+      res.json({ success: false, status: "montant_incorrect", docId: docRef.id });
+      return;
+    }
+
+    // ── 9. ✅ 3/3 — Confirmer l'ordre ────────────────────────────
+    const id1xbet = ordre.userId1xBet || ordre.id1x || ordre.idUser || "";
+    await Promise.all([
+      ordreDoc.ref.update({
+        status:          "Confirmé",
+        confirmedAt:     FieldValue.serverTimestamp(),
+        confirmedBy:     "auto_waafi_sms",
+        waafitranfertID: transferId,
+        montantRecu:     montantSMS,
+        rejetBy:         FieldValue.delete(),
+        rejetRaison:     FieldValue.delete(),
+      }),
+      docRef.update({ status: "traité", ordreRef }),
+    ]);
+    console.log(`[smsWebhook] ✅ Ordre ${ordreRef} CONFIRMÉ — ${montantSMS} DJF`);
+
+    // ── 10. Déclencher MacroDroid → recharge 1xBet ───────────────
+    if (id1xbet) {
+      const webhookUrl = `https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet?secret=f9f943cda999ac6771f5c600881b4f8aae2cf3af71dd86c2&id1xbet=${encodeURIComponent(id1xbet)}&montant=${montantSMS}&ref=${encodeURIComponent(ordreRef)}`;
+      fetch(webhookUrl, { signal: AbortSignal.timeout(8000) })
+        .then(r => ordreDoc.ref.update({ webhookStatus: r.ok ? "ok" : "erreur_" + r.status, webhookAt: FieldValue.serverTimestamp() }))
+        .catch(() => ordreDoc.ref.update({ webhookStatus: "erreur_timeout" }));
+    }
+
+    res.json({ success: true, status: "confirmé", ordreRef, montantSMS, transferId, docId: docRef.id });
   }
 );
 
