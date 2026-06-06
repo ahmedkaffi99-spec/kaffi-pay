@@ -1,12 +1,12 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════╗
- * ║           KAFFI PAY — CLOUD FUNCTIONS v3.1                      ║
- * ║  • Détection fraude & doublons (Vertex AI Gemini)               ║
- * ║  • Confirmation automatique SMS Waafi                           ║
+ * ║           KAFFI PAY — CLOUD FUNCTIONS v3.2                      ║
+ * ║  • Confirmation automatique dépôts (Transfer ID)                ║
+ * ║  • Fraude permanente (Transfer ID réutilisé)                    ║
  * ║  • Notifications Telegram admin                                 ║
- * ║  • Analyse admin Gemini (résumé, prédictions)                   ║
- * ║  • Vérification preuves paiement (Gemini Vision)                ║
- * ║  • Health check endpoint                                        ║
+ * ║  • Support client Telegram (Gemini AI)                         ║
+ * ║  • Audit Gemini → admin après chaque interaction client         ║
+ * ║  • Webhook MacroDroid SMS Waafi                                 ║
  * ╚══════════════════════════════════════════════════════════════════╝
  */
 
@@ -29,12 +29,27 @@ const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
+const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function getGemini() {
   return new VertexAI({ project: PROJECT_ID, location: AI_LOC })
     .getGenerativeModel({ model: "gemini-2.0-flash-001" });
+}
+
+async function sendTelegramToBot(token, chatId, text, opts = {}) {
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", ...opts }),
+      signal:  AbortSignal.timeout(8000),
+    });
+  } catch (e) {
+    console.warn("sendTelegramToBot failed:", e.message);
+  }
 }
 
 // Extrait le texte de la réponse Vertex AI
@@ -779,10 +794,175 @@ exports.healthCheck = onRequest(
         timestamp: new Date().toISOString(),
         region:    REGION,
         firestore: `connected (${ms}ms)`,
-        version:   "3.1",
+        version:   "3.2",
       });
     } catch (e) {
       res.status(500).json({ status: "error", message: e.message });
     }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// 8. SUPPORT CLIENT TELEGRAM — Gemini répond + audit admin
+//
+//  Flux :
+//    Client envoie message au bot @kaffipay_support_bot
+//    → Gemini analyse message + historique ordres client
+//    → Gemini décide et répond au client
+//    → Audit complet envoyé au bot admin
+//
+//  Setup webhook (une seule fois après déploiement) :
+//    curl "https://api.telegram.org/botSUPPORT_TOKEN/setWebhook?url=URL_FONCTION"
+// ══════════════════════════════════════════════════════════════════
+exports.supportClient = onRequest(
+  {
+    region:         REGION,
+    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    timeoutSeconds: 60,
+  },
+  async (req, res) => {
+    // Toujours répondre 200 immédiatement à Telegram
+    res.status(200).send("OK");
+
+    const update = req.body || {};
+    const msg    = update.message || update.edited_message;
+    if (!msg) return;
+
+    const chatId    = msg.chat.id;
+    const text      = (msg.text || "").trim();
+    const fromUser  = msg.from || {};
+    const firstName = fromUser.first_name || "Client";
+
+    if (!text) return;
+
+    // ── Session client ──────────────────────────────────────────
+    const sessionRef = db.collection("support_sessions").doc(String(chatId));
+    const sessionSnap = await sessionRef.get();
+    const session    = sessionSnap.exists ? sessionSnap.data() : {};
+
+    // Si le client envoie son numéro Waafi pour s'identifier
+    const isPhone = /^(77|78|70)\d{6}$/.test(text.replace(/\s/g, ""));
+    if (isPhone && !session.phone) {
+      await sessionRef.set({
+        phone:     text.replace(/\s/g, ""),
+        firstName,
+        chatId,
+        startedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      session.phone = text.replace(/\s/g, "");
+    }
+
+    // Si pas encore identifié → demander numéro
+    if (!session.phone) {
+      await sendTelegramToBot(
+        SUPPORT_BOT_TOKEN.value(), chatId,
+        `👋 Bienvenue sur le support <b>Kaffi Pay</b>, ${firstName} !\n\n` +
+        `Pour consulter vos ordres, entrez votre <b>numéro Waafi</b> :\n` +
+        `<i>Exemple : 77123456</i>`
+      );
+      return;
+    }
+
+    // ── Historique ordres du client ─────────────────────────────
+    const ordersSnap = await db.collection("orders")
+      .where("numeroPayment", "==", session.phone)
+      .orderBy("ts", "desc")
+      .limit(10)
+      .get();
+
+    const orders = ordersSnap.docs.map((d) => {
+      const o = d.data();
+      return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`;
+    });
+
+    // ── Appel Gemini ────────────────────────────────────────────
+    let geminiDecision = {
+      reponse_client:   "Je n'ai pas pu traiter votre demande. Réessayez dans quelques instants.",
+      decision:         "escalade",
+      action_prise:     "Aucune action automatique",
+      niveau_urgence:   "faible",
+      resume_audit:     "Erreur Gemini",
+    };
+
+    try {
+      const model  = getGemini();
+      const result = await model.generateContent({
+        contents: [{
+          role: "user",
+          parts: [{ text: `
+Tu es l'assistant support de Kaffi Pay (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
+Tu PRENDS DES DÉCISIONS et tu gères les demandes clients de A à Z.
+Réponds UNIQUEMENT en JSON valide.
+
+Client : ${firstName} | N° Waafi : ${session.phone}
+Message client : "${text}"
+
+Historique (10 derniers ordres) :
+${orders.length ? orders.join("\n") : "Aucun ordre trouvé"}
+
+Règles :
+- Si ordre rejeté "Paiement non reçu" et client dit avoir payé → demande Transfer ID
+- Si Transfer ID fourni → indique à l'admin de vérifier manuellement
+- Si ordre en attente depuis > 30min → signaler comme urgent
+- Si fraude confirmée → ne pas aider, expliquer le rejet poliment
+- Répondre toujours en français, ton professionnel et concis
+
+{
+  "reponse_client": "message à envoyer au client (HTML Telegram ok)",
+  "decision": "résolu" | "escalade" | "info_manquante" | "fraude_signalée",
+  "action_prise": "description courte de ce que tu as décidé",
+  "niveau_urgence": "faible" | "moyen" | "élevé",
+  "resume_audit": "résumé pour l'admin en 1-2 phrases"
+}
+` }]
+        }]
+      });
+      geminiDecision = JSON.parse(aiText(result).replace(/```json|```/g, "").trim());
+    } catch (e) {
+      console.error("Gemini support error:", e.message);
+    }
+
+    // ── Réponse au client ───────────────────────────────────────
+    await sendTelegramToBot(
+      SUPPORT_BOT_TOKEN.value(), chatId,
+      geminiDecision.reponse_client
+    );
+
+    // Sauvegarder l'interaction
+    await db.collection("support_sessions").doc(String(chatId))
+      .collection("messages").add({
+        text,
+        decision:      geminiDecision.decision,
+        action:        geminiDecision.action_prise,
+        urgence:       geminiDecision.niveau_urgence,
+        ts:            FieldValue.serverTimestamp(),
+      });
+
+    // ── Audit Telegram admin ────────────────────────────────────
+    const urgenceEmoji = {
+      "faible":  "🟢",
+      "moyen":   "🟡",
+      "élevé":   "🔴",
+    }[geminiDecision.niveau_urgence] || "⚪";
+
+    const decisionEmoji = {
+      "résolu":         "✅",
+      "escalade":       "🆘",
+      "info_manquante": "❓",
+      "fraude_signalée":"🚨",
+    }[geminiDecision.decision] || "ℹ️";
+
+    await sendTelegram(
+      TELEGRAM_TOKEN.value(),
+      TELEGRAM_ADMIN_ID.value(),
+      `${urgenceEmoji} <b>Support Client</b> ${decisionEmoji}\n\n` +
+      `👤 ${firstName} | <code>${session.phone}</code>\n` +
+      `💬 <i>"${text.substring(0, 100)}"</i>\n\n` +
+      `🤖 <b>Décision Gemini :</b> ${geminiDecision.decision.toUpperCase()}\n` +
+      `⚡ Action : ${geminiDecision.action_prise}\n\n` +
+      `📋 ${geminiDecision.resume_audit}\n\n` +
+      (geminiDecision.decision === "escalade"
+        ? `⚠️ <b>Intervention manuelle requise.</b>` : "")
+    );
   }
 );
