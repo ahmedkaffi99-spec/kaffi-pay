@@ -427,22 +427,32 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
-    const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i);
-    const transferId    = transferMatch ? transferMatch[1].trim() : null;
+    // ── Transfer ID ───────────────────────────────────────────────
+    const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i)
+                       || notification.match(/Transfer\s*ID[:\s]+(\d+)/i)
+                       || notification.match(/Ref[:\s#]+(\d{6,})/i);
+    const transferId = transferMatch ? transferMatch[1].trim() : null;
 
-    const montantMatch = notification.match(/(?:Received|transferred|reçu)\s+DJF\s*([\d,]+)/i);
-    const montantSMS   = montantMatch ? Number(montantMatch[1].replace(/,/g, "")) : null;
+    // ── Montant DJF — plusieurs formats Waafi ─────────────────────
+    // "Received DJF 100" / "transferred DJF 1,000" / "DJF1,000"
+    const montantMatch = notification.match(/(?:Received|transferred|reçu|sent)\s+DJF\s*([\d,. ]+)/i)
+                      || notification.match(/DJF\s*([\d,. ]+)/i);
+    const montantStr   = montantMatch ? montantMatch[1].trim().replace(/[\s,]/g, "") : null;
+    const montantSMS   = montantStr ? Number(montantStr) : null;
 
-    const numMatch  = notification.match(/\((\d{8})\)/);
+    // ── Numéro expéditeur ─────────────────────────────────────────
+    const numMatch  = notification.match(/\((\d{7,9})\)/);
     const numClient = numMatch ? numMatch[1] : null;
 
-    console.log(`[AutoConfirm] TransferID: ${transferId}, Montant: ${montantSMS} DJF, N°: ${numClient}`);
+    console.log(`[AutoConfirm] SMS="${notification.substring(0,100)}" | TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
 
     if (!transferId || !montantSMS) {
       await db.collection("waafi_notifications").doc(docId).update({
-        status:    "erreur_parsing",
-        erreurMsg: "Impossible d'extraire Transfer ID ou Montant du SMS",
-        createdAt: FieldValue.serverTimestamp(),
+        status:      "erreur_parsing",
+        erreurMsg:   `Parsing échoué — TransferID=${transferId}, Montant=${montantSMS} | SMS: "${notification.substring(0,120)}"`,
+        transferIdSMS: transferId || "non_extrait",
+        montantSMS:  montantSMS || 0,
+        createdAt:   FieldValue.serverTimestamp(),
       });
       return;
     }
