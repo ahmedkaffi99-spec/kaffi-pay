@@ -135,11 +135,9 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     if (!msg || !tel) return;
 
-    try {
-      const clientTel = tel.startsWith("+") ? tel : `+253${tel}`;
-    } catch (e) {
-      console.warn("WhatsApp client error:", e.message);
-    }
+    // TODO: configurer Meta WhatsApp Business API — intégration à venir
+    const clientTel = tel.startsWith("+") ? tel : `+253${tel}`;
+    console.log(`WhatsApp à envoyer → ${clientTel} : ${msg.substring(0, 60)}…`);
   }
 );
 
@@ -389,12 +387,11 @@ exports.autoConfirmation = onDocumentCreated(
       }
     }
 
-    // WhatsApp client
+    // TODO: configurer Meta WhatsApp Business API — intégration à venir
     const tel = ordre.waafiNumber || ordre.tel || ordre.numeroPayment || numClient || "";
     if (tel) {
-      try {
-        const clientTel = tel.startsWith("+") ? tel : `+253${tel}`;
-      } catch (e) { console.warn("WhatsApp client error:", e.message); }
+      const clientTel = tel.startsWith("+") ? tel : `+253${tel}`;
+      console.log(`WhatsApp à envoyer → ${clientTel} : Dépôt #${ordreRef} confirmé.`);
     }
   }
 );

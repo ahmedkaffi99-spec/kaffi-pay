@@ -346,6 +346,28 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
 
+/* ── ORDER DETAIL MODAL ── */
+.odm-row{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.05);}
+.odm-row:last-child{border-bottom:none;}
+.odm-label{font-size:.72rem;color:var(--muted);flex-shrink:0;}
+.odm-val-wrap{display:flex;align-items:center;gap:7px;justify-content:flex-end;max-width:65%;}
+.odm-val{font-size:.8rem;color:var(--text);text-align:right;word-break:break-all;}
+.odm-copy{background:transparent;border:1px solid rgba(255,215,0,.2);border-radius:999px;padding:3px 9px;font-size:.65rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;}
+
+/* ── SUIVI TIMELINE ── */
+.tl-step{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);}
+.tl-step:last-child{border-bottom:none;padding-bottom:0;}
+.tl-dot{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.75rem;flex-shrink:0;border:1.5px solid rgba(255,255,255,.1);}
+.tl-dot.done{border-color:var(--success);background:rgba(0,212,160,.1);}
+.tl-dot.active{border-color:var(--warning);background:rgba(255,170,0,.1);}
+.tl-dot.wait{border-color:rgba(255,255,255,.1);}
+.tl-title{font-size:.8rem;font-weight:600;margin-bottom:2px;}
+.tl-desc{font-size:.68rem;color:var(--muted);}
+
+/* ── CORRECTION PRESETS ── */
+.corr-preset{width:100%;background:rgba(255,64,96,.07);border:1px solid rgba(255,64,96,.18);border-radius:999px;padding:9px 14px;font-family:'DM Sans',sans-serif;font-size:.79rem;color:var(--text);cursor:pointer;text-align:left;transition:all .2s;display:block;}
+.corr-preset:hover{background:rgba(255,64,96,.14);border-color:rgba(255,64,96,.35);}
+
 </style>
 </head>
 <body>
@@ -1466,12 +1488,18 @@ function openOrderDetail(ref){
   // Actions
   var actDiv=document.getElementById('odm-actions');
   currentOdmRef=tx.ref;
+  var odmRef = tx.ref||tx.orderId||'';
   if(tx.status==='En attente'){
     var payBtn = !isDepot ?
       `<button onclick="executerPaiementWaafi('${tx.waafiNumber||tx.tel||''}',${tx.montant||0})" style="width:100%;padding:10px;border-radius:999px;border:none;background:linear-gradient(135deg,#e91e8c,#8b1a5e);color:#fff;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:700;cursor:pointer;margin-bottom:8px;">💸 Payer via Waafi USSD</button>` : '';
+    var bs='padding:10px 0;border-radius:999px;border:none;font-family:\'DM Sans\',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;flex:1;';
     actDiv.innerHTML=
       (payBtn ? payBtn : '')
-      +'<div style="padding:10px;text-align:center;color:var(--success);font-size:0.8rem;width:100%;">🤖 Traitement automatique en cours...</div>';
+      +'<div style="display:flex;gap:8px;width:100%;margin-bottom:6px;">'
+      +'<button onclick="updateStatus(\''+odmRef+'\',\'Confirmé\');document.getElementById(\'order-detail-modal\').classList.remove(\'show\')" style="'+bs+'background:rgba(0,212,160,.15);color:var(--success);border:1px solid rgba(0,212,160,.25);">✅ Confirmer</button>'
+      +'<button onclick="updateStatus(\''+odmRef+'\',\'Rejeté\');document.getElementById(\'order-detail-modal\').classList.remove(\'show\')" style="'+bs+'background:rgba(255,64,96,.1);color:var(--error);border:1px solid rgba(255,64,96,.2);">❌ Rejeter</button>'
+      +'</div>'
+      +'<button onclick="document.getElementById(\'order-detail-modal\').classList.remove(\'show\');openCorrection(\''+odmRef+'\')" style="width:100%;padding:9px;border-radius:999px;border:1px solid rgba(255,170,0,.2);background:rgba(255,170,0,.08);color:var(--warning);font-family:\'DM Sans\',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;">✏️ Correction</button>';
   } else {
     actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
   }
@@ -2481,7 +2509,7 @@ try {
   if(typeof saveReserve!=="undefined") window.saveReserve=saveReserve;
   if(typeof searchTx!=="undefined") window.searchTx=searchTx;
   if(typeof sendCorrection!=="undefined") window.sendCorrection=sendCorrection;
-  if(typeof setAdminPage!=="undefined") window.setAdminPage=setAdminPage;
+  window.setAdminPage=window.showPage; // alias — setAdminPage n'existait pas
   if(typeof setCorr!=="undefined") window.setCorr=setCorr;
   if(typeof showPage!=="undefined") window.showPage=showPage;
   if(typeof showScreen!=="undefined") window.showScreen=showScreen;

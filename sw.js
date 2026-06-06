@@ -4,7 +4,7 @@ const CACHE = 'kaffipay-v2';
 self.addEventListener('install', function(e){
   e.waitUntil(
     caches.open(CACHE).then(function(c){
-      return c.addAll(['/', '/index.html', '/manifest.json']).catch(function(){});
+      return c.addAll(['/', '/index.html', '/index-19-1.html', '/manifest.json']).catch(function(){});
     })
   );
   self.skipWaiting();
