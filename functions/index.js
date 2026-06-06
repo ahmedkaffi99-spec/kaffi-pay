@@ -463,64 +463,6 @@ Note : Kaffi Pay est 24h/24 7j/7 — ne jamais mentionner les heures comme facte
   }
 );
 
-// ══════════════════════════════════════════════════════════════════
-// 4. VÉRIFICATION PREUVE DE PAIEMENT (Gemini Vision)
-// ══════════════════════════════════════════════════════════════════
-exports.geminiVerifPreuve = onCall(
-  { region: REGION },
-  async (request) => {
-    const { imageBase64, mimeType, ordreRef, montantAttendu, transferIdAttendu } = request.data;
-    if (!imageBase64) throw new Error("Image requise");
-
-    const model  = getGemini();
-    const result = await model.generateContent({
-      contents: [{
-        role: "user",
-        parts: [
-          { text: `Tu vérifies une preuve de paiement Waafi pour Kaffi Pay (Djibouti).
-Réponds UNIQUEMENT en JSON valide.
-
-Montant attendu: ${montantAttendu} DJF
-Transfer ID attendu: ${transferIdAttendu}
-
-{
-  "est_valide": true|false,
-  "transfer_id_detecte": "ID ou null",
-  "montant_detecte": nombre ou null,
-  "expediteur_detecte": "numéro ou null",
-  "correspondance_montant": true|false,
-  "correspondance_transfer_id": true|false,
-  "confiance": 0-100,
-  "raison": "explication courte"
-}` },
-          { inlineData: { data: imageBase64, mimeType: mimeType || "image/jpeg" } },
-        ]
-      }]
-    });
-
-    const txt = aiText(result).replace(/```json|```/g, "").trim();
-    try {
-      const parsed = JSON.parse(txt);
-      if (ordreRef) {
-        const snap = await db.collection("orders")
-          .where("orderId", "==", ordreRef)
-          .limit(1)
-          .get();
-        if (!snap.empty) {
-          await snap.docs[0].ref.update({
-            ia_preuve_valide:    parsed.est_valide,
-            ia_preuve_confiance: parsed.confiance,
-            ia_preuve_raison:    parsed.raison,
-            ia_preuve_checkedAt: FieldValue.serverTimestamp(),
-          });
-        }
-      }
-      return { success: true, data: parsed };
-    } catch {
-      return { success: false, error: "Impossible d'analyser l'image" };
-    }
-  }
-);
 
 // ══════════════════════════════════════════════════════════════════
 // 5. AUTO-CONFIRMATION — SMS Waafi → Confirme l'ordre + Webhook
