@@ -24,6 +24,23 @@
         { "fieldPath": "status",    "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "alertes_admin",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "traité",    "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "alertes_admin",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ordreRef", "order": "ASCENDING" },
+        { "fieldPath": "type",     "order": "ASCENDING" },
+        { "fieldPath": "traité",   "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
