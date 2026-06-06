@@ -278,10 +278,11 @@ exports.validerOrdre = onRequest(
     if (transferId) {
       const dup = await db.collection("orders")
         .where("waafitranfertID", "==", transferId)
-        .where("status", "in", ["En attente", "Confirmé"])
+        .where("status", "in", ["En attente", "Confirmé", "Rechargé ✅", "Intervention Manuelle 🚨"])
         .limit(1).get();
       if (!dup.empty) {
-        res.json({ valide: false, erreurs: ["Transfer ID déjà utilisé pour un ordre actif"] });
+        const s = dup.docs[0].data().status;
+        res.json({ valide: false, erreurs: [`Transfer ID déjà utilisé — ordre existant : ${s}`] });
         return;
       }
     }
