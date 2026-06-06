@@ -358,10 +358,8 @@ exports.onNouvelOrdre = onDocumentCreated(
         .limit(5).get();
 
       for (const smsDoc of smsSnap.docs) {
-        const smsData   = smsDoc.data();
-        // Sauter les SMS déjà traités ; accepter "en_cours" (smsWebhook en train de tourner) et "non_matché"
-        const smsStatus = smsData.status || "";
-        if (smsStatus === "traité" || smsStatus === "traité_retroactif") continue;
+        const smsData = smsDoc.data();
+        if (smsData.matchedOrderId) continue; // SMS déjà utilisé
         const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date();
         if (createdAt < cutoff) continue; // SMS trop ancien (> 24h)
 
@@ -385,7 +383,7 @@ exports.onNouvelOrdre = onDocumentCreated(
             confirmedBy:     "auto_waafi_retroactif",
             montantRecu:     montantSMS,
           }),
-          smsDoc.ref.update({ status: "traité_retroactif", ordreRef }),
+          smsDoc.ref.update({ matchedOrderId: ordreRef }),
         ]);
 
         console.log(`[RetroMatch] ✅ Ordre ${ordreRef} confirmé via SMS ${smsDoc.id}`);
@@ -512,27 +510,16 @@ exports.autoConfirmation = onDocumentCreated(
     const sms   = event.data.data();
     const docId = event.params.docId;
 
-    if (sms.status === "traité" || sms.status === "en_cours") return;
-
-    await db.collection("waafi_notifications").doc(docId).update({
-      status:      "en_cours",
-      processedAt: FieldValue.serverTimestamp(),
-      createdAt:   FieldValue.serverTimestamp(),
-    });
+    // Doc brut — pas de status. Seul matchedOrderId indique un SMS déjà traité.
+    if (sms.matchedOrderId) return;
 
     // ── Parser SMS Waafi ───────────────────────────────────────
     const notification = sms.notification || sms.notificationText || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
 
-    if (!notification || notification === "[notification]" || notification === "{notification}") {
-      await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_format", createdAt: FieldValue.serverTimestamp() });
-      return;
-    }
+    if (!notification || notification === "[notification]" || notification === "{notification}") return;
 
-    const isWaafi = notification.includes("Transfer-Id") || notification.includes("DJF") || notification.includes("Waafi");
-    if (!isWaafi) {
-      await db.collection("waafi_notifications").doc(docId).update({ status: "ignoré_non_waafi", createdAt: FieldValue.serverTimestamp() });
-      return;
-    }
+    const isWaafi = /Transfer-?Id|DJF|Waafi|WAAFI/i.test(notification);
+    if (!isWaafi) return;
 
     // ── Transfer ID ───────────────────────────────────────────────
     const transferMatch = notification.match(/Transfer-?Id[:\s]+(\d+)/i)
@@ -554,13 +541,7 @@ exports.autoConfirmation = onDocumentCreated(
     console.log(`[AutoConfirm] SMS="${notification.substring(0,100)}" | TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
 
     if (!transferId || !montantSMS) {
-      await db.collection("waafi_notifications").doc(docId).update({
-        status:      "erreur_parsing",
-        erreurMsg:   `Parsing échoué — TransferID=${transferId}, Montant=${montantSMS} | SMS: "${notification.substring(0,120)}"`,
-        transferIdSMS: transferId || "non_extrait",
-        montantSMS:  montantSMS || 0,
-        createdAt:   FieldValue.serverTimestamp(),
-      });
+      console.warn(`[AutoConfirm] Parsing échoué — TransferID=${transferId}, Montant=${montantSMS} | "${notification.substring(0,80)}"`);
       return;
     }
 
@@ -592,14 +573,7 @@ exports.autoConfirmation = onDocumentCreated(
     }
 
     if (ordreSnap.empty) {
-      await db.collection("waafi_notifications").doc(docId).update({
-        status:        "non_matché",
-        erreurMsg:     `Aucun ordre soumis avec Transfer ID ${transferId}`,
-        transferIdSMS: transferId,
-        numSMS:        numClient,
-        montantSMS,
-        createdAt:     FieldValue.serverTimestamp(),
-      });
+      console.log(`[AutoConfirm] Aucun ordre pour Transfer ID ${transferId} — SMS en attente rétroactive`);
       return;
     }
 
@@ -610,22 +584,12 @@ exports.autoConfirmation = onDocumentCreated(
 
     const numeroOrdre = ordre.numeroPayment || ordre.waafiNumber || "";
     if (numClient && numeroOrdre && numClient !== numeroOrdre) {
-      await db.collection("waafi_notifications").doc(docId).update({
-        status:    "expediteur_mismatch",
-        erreurMsg: `N° expéditeur SMS (${numClient}) ≠ N° ordre (${numeroOrdre}) — Transfer ID ${transferId}`,
-        ordreRef,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+      console.warn(`[AutoConfirm] N° SMS (${numClient}) ≠ N° ordre (${numeroOrdre}) — Transfer ID ${transferId}`);
       return;
     }
 
     if (Math.abs(montantOrdre - montantSMS) > 5) {
-      await db.collection("waafi_notifications").doc(docId).update({
-        status:    "montant_incorrect",
-        erreurMsg: `Montant SMS (${montantSMS} DJF) ≠ Montant ordre (${montantOrdre} DJF)`,
-        ordreRef,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+      console.warn(`[AutoConfirm] Montant SMS ${montantSMS} ≠ Ordre ${montantOrdre} DJF — Transfer ID ${transferId}`);
       return;
     }
 
@@ -641,9 +605,7 @@ exports.autoConfirmation = onDocumentCreated(
         rejetBy:         FieldValue.delete(),
         rejetRaison:     FieldValue.delete(),
       }),
-      db.collection("waafi_notifications").doc(docId).update({
-        status: "traité", ordreRef, createdAt: FieldValue.serverTimestamp(),
-      }),
+      db.collection("waafi_notifications").doc(docId).update({ matchedOrderId: ordreRef }),
     ]);
 
     if (id1xbet) {
@@ -711,10 +673,6 @@ exports.smsWebhook = onRequest(
     // ── 2. Vérifier que c'est un SMS Waafi ────────────────────────
     const isWaafi = /Transfer-?Id|DJF|Waafi|WAAFI/i.test(notification);
     if (!isWaafi) {
-      await db.collection("waafi_notifications").add({
-        notification, source: "macrodroid_http",
-        status: "ignoré_non_waafi", createdAt: FieldValue.serverTimestamp(),
-      });
       res.json({ success: true, status: "ignoré_non_waafi" });
       return;
     }
@@ -734,24 +692,19 @@ exports.smsWebhook = onRequest(
 
     console.log(`[smsWebhook] SMS reçu | TransferID=${transferId} | Montant=${montantSMS} | N°=${numClient}`);
 
-    // ── 4. Sauvegarder dans waafi_notifications ───────────────────
+    // ── 4. Sauvegarder dans waafi_notifications (brut, sans status) ──
     const docRef = await db.collection("waafi_notifications").add({
       notification,
-      not_title:     body.not_title || "Waafi SMS",
       source:        "macrodroid_http",
       transferIdSMS: transferId || null,
       montantSMS:    montantSMS || null,
       numClient:     numClient  || null,
       createdAt:     FieldValue.serverTimestamp(),
-      status:        "en_cours",
     });
 
     // ── 5. Valider le parsing ─────────────────────────────────────
     if (!transferId || !montantSMS) {
-      await docRef.update({
-        status:    "erreur_parsing",
-        erreurMsg: `TransferID=${transferId} | Montant=${montantSMS} | SMS: "${notification.substring(0, 120)}"`,
-      });
+      console.warn(`[smsWebhook] Parsing échoué TransferID=${transferId} Montant=${montantSMS} | "${notification.substring(0,80)}"`);
       res.status(200).json({ success: false, status: "erreur_parsing", docId: docRef.id });
       return;
     }
@@ -780,7 +733,7 @@ exports.smsWebhook = onRequest(
     }
 
     if (ordreSnap.empty) {
-      await docRef.update({ status: "non_matché", erreurMsg: `Aucun ordre avec Transfer ID ${transferId}`, transferIdSMS: transferId });
+      console.log(`[smsWebhook] Aucun ordre pour Transfer ID ${transferId} — SMS stocké, attente ordre client`);
       res.json({ success: false, status: "non_matché", transferId, docId: docRef.id });
       return;
     }
@@ -793,22 +746,14 @@ exports.smsWebhook = onRequest(
 
     // ── 7. Vérifier numéro expéditeur ────────────────────────────
     if (numClient && numeroOrdre && numClient !== numeroOrdre) {
-      await docRef.update({
-        status:    "expediteur_mismatch",
-        ordreRef,
-        erreurMsg: `N° SMS (${numClient}) ≠ N° ordre (${numeroOrdre})`,
-      });
+      console.warn(`[smsWebhook] N° SMS (${numClient}) ≠ N° ordre (${numeroOrdre}) — Transfer ID ${transferId}`);
       res.json({ success: false, status: "expediteur_mismatch", docId: docRef.id });
       return;
     }
 
     // ── 8. Vérifier montant (±5 DJF) ─────────────────────────────
     if (Math.abs(montantOrdre - montantSMS) > 5) {
-      await docRef.update({
-        status:    "montant_incorrect",
-        ordreRef,
-        erreurMsg: `Montant SMS ${montantSMS} DJF ≠ Montant ordre ${montantOrdre} DJF`,
-      });
+      console.warn(`[smsWebhook] Montant SMS ${montantSMS} ≠ Ordre ${montantOrdre} DJF — Transfer ID ${transferId}`);
       res.json({ success: false, status: "montant_incorrect", docId: docRef.id });
       return;
     }
@@ -825,7 +770,7 @@ exports.smsWebhook = onRequest(
         rejetBy:         FieldValue.delete(),
         rejetRaison:     FieldValue.delete(),
       }),
-      docRef.update({ status: "traité", ordreRef }),
+      docRef.update({ matchedOrderId: ordreRef }),
     ]);
     console.log(`[smsWebhook] ✅ Ordre ${ordreRef} CONFIRMÉ — ${montantSMS} DJF`);
 
