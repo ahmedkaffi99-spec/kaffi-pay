@@ -287,7 +287,7 @@ exports.onNouvelOrdre = onDocumentCreated(
 // 2. ORDRE MODIFIÉ → Notification statut client
 // ══════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
-  { document: "transactions/{docId}", secrets: [] },
+  { document: "orders/{docId}", secrets: [] },
   async (event) => {
     const before = event.data.before.data();
     const after  = event.data.after.data();
@@ -699,6 +699,11 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
         ia_ecran_raison:    analyseIA.raison,
         ia_ecran_confiance: analyseIA.confiance,
       });
+      await db.collection("callbacks").add({
+        ref, id1xbet: id1xbet || ordre.userId1xBet || "", montant: montant || ordre.montant || "",
+        resultat: "succes", ia: analyseIA, recharge: "ok",
+        tentative: retries + 1, createdAt: FieldValue.serverTimestamp(),
+      });
       console.log(`[rechargeCallback] ✅ Ordre ${ref} → RECHARGÉ (tentative ${retries + 1})`);
       res.json({ success: true, ref, recharge: "ok", tentative: retries + 1, ia: analyseIA });
       return;
@@ -724,6 +729,11 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
       } catch (e) {
         console.error("[rechargeCallback] Retry webhook erreur:", e.message);
       }
+      await db.collection("callbacks").add({
+        ref, id1xbet: id1xbet || ordre.userId1xBet || "", montant: montant || ordre.montant || "",
+        resultat: "retry", ia: analyseIA, recharge: "retry",
+        tentative: nouvelleTentative, createdAt: FieldValue.serverTimestamp(),
+      });
       console.log(`[rechargeCallback] ⏳ Ordre ${ref} → RETRY ${nouvelleTentative}/3`);
       res.json({ success: true, ref, recharge: "retry", tentative: nouvelleTentative });
       return;
@@ -748,7 +758,41 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
       traité:    false,
     });
     console.error(`[rechargeCallback] 🚨 Ordre ${ref} → INTERVENTION MANUELLE`);
+    await db.collection("callbacks").add({
+      ref, id1xbet: id1xbet || ordre.userId1xBet || "", montant: montant || ordre.montant || "",
+      resultat: "echec", ia: analyseIA, recharge: "manuel_requis",
+      tentative: nouvelleTentative, createdAt: FieldValue.serverTimestamp(),
+    });
     res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
+  }
+);
+
+// ══════════════════════════════════════════════════════════════
+// AUTO-REJET SERVEUR — toutes les 5 min, rejette les ordres
+// "En attente" de plus de 20 minutes
+// ══════════════════════════════════════════════════════════════
+exports.autoRejetServeur = onSchedule(
+  { schedule: "every 5 minutes", region: "europe-west1", timeoutSeconds: 60 },
+  async () => {
+    const cutoff = new Date(Date.now() - 20 * 60 * 1000);
+    const snap = await db.collection("orders")
+      .where("status", "==", "En attente")
+      .where("createdAt", "<", cutoff)
+      .limit(20).get();
+
+    if (snap.empty) return;
+
+    const batch = db.batch();
+    snap.docs.forEach((doc) => {
+      batch.update(doc.ref, {
+        status:      "Rejeté",
+        rejetBy:     "auto_serveur",
+        rejetRaison: "Paiement Waafi non reçu dans les 20 minutes imparties.",
+        rejetedAt:   FieldValue.serverTimestamp(),
+      });
+    });
+    await batch.commit();
+    console.log(`[autoRejetServeur] ${snap.size} ordre(s) rejeté(s) automatiquement.`);
   }
 );
 

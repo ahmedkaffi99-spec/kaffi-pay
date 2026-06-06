@@ -2498,7 +2498,7 @@ async function traiterSmsWaafi(texte, smsId){
 }
 
 // ══════════════════════════════════════════════════════════════════
-// REJET AUTOMATIQUE — 60s SANS PAIEMENT
+// REJET AUTOMATIQUE — 20 min SANS PAIEMENT
 // ══════════════════════════════════════════════════════════════════
 var _rejetTimers = {};
 
@@ -2509,9 +2509,9 @@ function demarrerTimerRejet(ref){
     if(ordre){
       await updateTxFirebase(ref, {
         status:      'Rejeté',
-        rejetRaison: 'Paiement Waafi non reçu dans le délai imparti (20 minutes). Vérifiez votre Transfer ID et réessayez.',
-        rejetedAt:   new Date(),
         rejetBy:     'auto_serveur',
+        rejetRaison: 'Paiement Waafi non reçu dans les 20 minutes imparties. Vérifiez votre Transfer ID et réessayez.',
+        rejetedAt:   new Date()
       });
       pushNotif('ordre_rejete', 'Paiement non reçu en 20 minutes. Ordre rejeté automatiquement.', ref, ordre.montant);
       showToast('⏰ Ordre #'+ref+' rejeté — paiement non reçu', 'warning');
