@@ -355,12 +355,14 @@ exports.onNouvelOrdre = onDocumentCreated(
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const smsSnap = await db.collection("waafi_notifications")
         .where("transferIdSMS", "==", transferId)
-        .where("status", "==", "non_matché")
         .limit(5).get();
 
       for (const smsDoc of smsSnap.docs) {
         const smsData   = smsDoc.data();
-        const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date(); // sans createdAt → traiter comme récent
+        // Sauter les SMS déjà traités ; accepter "en_cours" (smsWebhook en train de tourner) et "non_matché"
+        const smsStatus = smsData.status || "";
+        if (smsStatus === "traité" || smsStatus === "traité_retroactif") continue;
+        const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date();
         if (createdAt < cutoff) continue; // SMS trop ancien (> 24h)
 
         const montantSMS   = Number(smsData.montantSMS || 0);
