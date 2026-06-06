@@ -39,16 +39,26 @@ function getGemini() {
 }
 
 async function sendTelegramToBot(token, chatId, text, opts = {}) {
-  if (!token || !chatId) return;
+  if (!token || !chatId) {
+    console.warn("sendTelegramToBot: token or chatId manquant", { hasToken: !!token, chatId });
+    return false;
+  }
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", ...opts }),
       signal:  AbortSignal.timeout(8000),
     });
+    if (!resp.ok) {
+      const body = await resp.text();
+      console.warn("sendTelegramToBot API error:", resp.status, body.substring(0, 300));
+      return false;
+    }
+    return true;
   } catch (e) {
     console.warn("sendTelegramToBot failed:", e.message);
+    return false;
   }
 }
 
@@ -823,72 +833,103 @@ exports.supportClient = onRequest(
     // Toujours répondre 200 immédiatement à Telegram
     res.status(200).send("OK");
 
-    const update = req.body || {};
-    const msg    = update.message || update.edited_message;
-    if (!msg) return;
-
-    const chatId    = msg.chat.id;
-    const text      = (msg.text || "").trim();
-    const fromUser  = msg.from || {};
-    const firstName = fromUser.first_name || "Client";
-
-    if (!text) return;
-
-    // ── Session client ──────────────────────────────────────────
-    const sessionRef = db.collection("support_sessions").doc(String(chatId));
-    const sessionSnap = await sessionRef.get();
-    const session    = sessionSnap.exists ? sessionSnap.data() : {};
-
-    // Si le client envoie son numéro Waafi pour s'identifier
-    const isPhone = /^(77|78|70)\d{6}$/.test(text.replace(/\s/g, ""));
-    if (isPhone && !session.phone) {
-      await sessionRef.set({
-        phone:     text.replace(/\s/g, ""),
-        firstName,
-        chatId,
-        startedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
-      session.phone = text.replace(/\s/g, "");
-    }
-
-    // Si pas encore identifié → demander numéro
-    if (!session.phone) {
-      await sendTelegramToBot(
-        SUPPORT_BOT_TOKEN.value(), chatId,
-        `👋 Bienvenue sur le support <b>Kaffi Pay</b>, ${firstName} !\n\n` +
-        `Pour consulter vos ordres, entrez votre <b>numéro Waafi</b> :\n` +
-        `<i>Exemple : 77123456</i>`
-      );
-      return;
-    }
-
-    // ── Historique ordres du client ─────────────────────────────
-    const ordersSnap = await db.collection("orders")
-      .where("numeroPayment", "==", session.phone)
-      .orderBy("ts", "desc")
-      .limit(10)
-      .get();
-
-    const orders = ordersSnap.docs.map((d) => {
-      const o = d.data();
-      return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`;
-    });
-
-    // ── Appel Gemini ────────────────────────────────────────────
-    let geminiDecision = {
-      reponse_client:   "Je n'ai pas pu traiter votre demande. Réessayez dans quelques instants.",
-      decision:         "escalade",
-      action_prise:     "Aucune action automatique",
-      niveau_urgence:   "faible",
-      resume_audit:     "Erreur Gemini",
-    };
-
     try {
-      const model  = getGemini();
-      const result = await model.generateContent({
-        contents: [{
-          role: "user",
-          parts: [{ text: `
+      const update = req.body || {};
+      console.log("supportClient reçu:", JSON.stringify(update).substring(0, 300));
+
+      const msg    = update.message || update.edited_message;
+      if (!msg) { console.log("Pas de message dans l'update"); return; }
+
+      const chatId    = msg.chat.id;
+      const text      = (msg.text || "").trim();
+      const fromUser  = msg.from || {};
+      const firstName = fromUser.first_name || "Client";
+
+      console.log(`Message de ${firstName} (${chatId}): "${text}"`);
+
+      if (!text) return;
+
+      const supportToken = SUPPORT_BOT_TOKEN.value();
+      if (!supportToken) {
+        console.error("SUPPORT_BOT_TOKEN vide — secret non configuré");
+        return;
+      }
+
+      // ── Session client ──────────────────────────────────────────
+      const sessionRef  = db.collection("support_sessions").doc(String(chatId));
+      const sessionSnap = await sessionRef.get();
+      const session     = sessionSnap.exists ? sessionSnap.data() : {};
+
+      // Si le client envoie son numéro Waafi pour s'identifier
+      const cleanText = text.replace(/\s/g, "");
+      const isPhone   = /^(77|78|70|71|21)\d{6}$/.test(cleanText);
+      if (isPhone && !session.phone) {
+        await sessionRef.set({
+          phone:     cleanText,
+          firstName,
+          chatId,
+          startedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        session.phone = cleanText;
+        console.log(`Session créée pour ${firstName}: ${cleanText}`);
+      }
+
+      // Si pas encore identifié → demander numéro
+      if (!session.phone) {
+        console.log(`Demande numéro Waafi à ${firstName} (${chatId})`);
+        await sendTelegramToBot(
+          supportToken, chatId,
+          `👋 Bienvenue sur le support <b>Kaffi Pay</b>, ${firstName} !\n\n` +
+          `Pour consulter vos ordres, entrez votre <b>numéro Waafi</b> :\n` +
+          `<i>Exemple : 77123456</i>`
+        );
+        return;
+      }
+
+      // ── Historique ordres du client ─────────────────────────────
+      let orders = [];
+      try {
+        const ordersSnap = await db.collection("orders")
+          .where("numeroPayment", "==", session.phone)
+          .orderBy("ts", "desc")
+          .limit(10)
+          .get();
+        orders = ordersSnap.docs.map((d) => {
+          const o = d.data();
+          return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`;
+        });
+      } catch (e) {
+        console.warn("Erreur récupération ordres (index manquant?):", e.message);
+        // Fallback sans orderBy
+        try {
+          const ordersSnap = await db.collection("orders")
+            .where("numeroPayment", "==", session.phone)
+            .limit(10)
+            .get();
+          orders = ordersSnap.docs.map((d) => {
+            const o = d.data();
+            return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`;
+          });
+        } catch (e2) {
+          console.warn("Fallback ordres aussi échoué:", e2.message);
+        }
+      }
+
+      // ── Appel Gemini ────────────────────────────────────────────
+      let geminiDecision = {
+        reponse_client:   "Je n'ai pas pu traiter votre demande. Réessayez dans quelques instants.",
+        decision:         "escalade",
+        action_prise:     "Aucune action automatique",
+        niveau_urgence:   "faible",
+        resume_audit:     "Erreur Gemini",
+      };
+
+      try {
+        const model  = getGemini();
+        const result = await model.generateContent({
+          contents: [{
+            role: "user",
+            parts: [{ text: `
 Tu es l'assistant support de Kaffi Pay (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
 Tu PRENDS DES DÉCISIONS et tu gères les demandes clients de A à Z.
 Réponds UNIQUEMENT en JSON valide.
@@ -914,54 +955,56 @@ Règles :
   "resume_audit": "résumé pour l'admin en 1-2 phrases"
 }
 ` }]
-        }]
-      });
-      geminiDecision = JSON.parse(aiText(result).replace(/```json|```/g, "").trim());
+          }]
+        });
+        geminiDecision = JSON.parse(aiText(result).replace(/```json|```/g, "").trim());
+        console.log("Gemini décision:", geminiDecision.decision);
+      } catch (e) {
+        console.error("Gemini support error:", e.message);
+      }
+
+      // ── Réponse au client ───────────────────────────────────────
+      await sendTelegramToBot(supportToken, chatId, geminiDecision.reponse_client);
+
+      // Sauvegarder l'interaction
+      await db.collection("support_sessions").doc(String(chatId))
+        .collection("messages").add({
+          text,
+          decision:      geminiDecision.decision,
+          action:        geminiDecision.action_prise,
+          urgence:       geminiDecision.niveau_urgence,
+          ts:            FieldValue.serverTimestamp(),
+        });
+
+      // ── Audit Telegram admin ────────────────────────────────────
+      const urgenceEmoji = {
+        "faible":  "🟢",
+        "moyen":   "🟡",
+        "élevé":   "🔴",
+      }[geminiDecision.niveau_urgence] || "⚪";
+
+      const decisionEmoji = {
+        "résolu":         "✅",
+        "escalade":       "🆘",
+        "info_manquante": "❓",
+        "fraude_signalée":"🚨",
+      }[geminiDecision.decision] || "ℹ️";
+
+      await sendTelegram(
+        TELEGRAM_TOKEN.value(),
+        TELEGRAM_ADMIN_ID.value(),
+        `${urgenceEmoji} <b>Support Client</b> ${decisionEmoji}\n\n` +
+        `👤 ${firstName} | <code>${session.phone}</code>\n` +
+        `💬 <i>"${text.substring(0, 100)}"</i>\n\n` +
+        `🤖 <b>Décision Gemini :</b> ${geminiDecision.decision.toUpperCase()}\n` +
+        `⚡ Action : ${geminiDecision.action_prise}\n\n` +
+        `📋 ${geminiDecision.resume_audit}\n\n` +
+        (geminiDecision.decision === "escalade"
+          ? `⚠️ <b>Intervention manuelle requise.</b>` : "")
+      );
+
     } catch (e) {
-      console.error("Gemini support error:", e.message);
+      console.error("supportClient crash:", e.message, e.stack);
     }
-
-    // ── Réponse au client ───────────────────────────────────────
-    await sendTelegramToBot(
-      SUPPORT_BOT_TOKEN.value(), chatId,
-      geminiDecision.reponse_client
-    );
-
-    // Sauvegarder l'interaction
-    await db.collection("support_sessions").doc(String(chatId))
-      .collection("messages").add({
-        text,
-        decision:      geminiDecision.decision,
-        action:        geminiDecision.action_prise,
-        urgence:       geminiDecision.niveau_urgence,
-        ts:            FieldValue.serverTimestamp(),
-      });
-
-    // ── Audit Telegram admin ────────────────────────────────────
-    const urgenceEmoji = {
-      "faible":  "🟢",
-      "moyen":   "🟡",
-      "élevé":   "🔴",
-    }[geminiDecision.niveau_urgence] || "⚪";
-
-    const decisionEmoji = {
-      "résolu":         "✅",
-      "escalade":       "🆘",
-      "info_manquante": "❓",
-      "fraude_signalée":"🚨",
-    }[geminiDecision.decision] || "ℹ️";
-
-    await sendTelegram(
-      TELEGRAM_TOKEN.value(),
-      TELEGRAM_ADMIN_ID.value(),
-      `${urgenceEmoji} <b>Support Client</b> ${decisionEmoji}\n\n` +
-      `👤 ${firstName} | <code>${session.phone}</code>\n` +
-      `💬 <i>"${text.substring(0, 100)}"</i>\n\n` +
-      `🤖 <b>Décision Gemini :</b> ${geminiDecision.decision.toUpperCase()}\n` +
-      `⚡ Action : ${geminiDecision.action_prise}\n\n` +
-      `📋 ${geminiDecision.resume_audit}\n\n` +
-      (geminiDecision.decision === "escalade"
-        ? `⚠️ <b>Intervention manuelle requise.</b>` : "")
-    );
   }
 );
