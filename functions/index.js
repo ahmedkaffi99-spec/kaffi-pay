@@ -178,16 +178,17 @@ function getFlows() {
     async (input) => {
       const { output } = await _ai.generate({
         model: gemini20Flash,
-        prompt: `Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
-
-Transaction à analyser :
+        system: `Tu es le système de sécurité de Kaffi Pay — expert en détection de fraude financière sur les plateformes de paris en ligne à Djibouti.
+Ton seul rôle est d'analyser les transactions Waafi↔1xBet et de protéger la plateforme contre les arnaques, les doublons et le blanchiment.
+Sois précis, concis et factuel. Ne valide jamais une transaction douteuse par politesse.`,
+        prompt: `Transaction à analyser :
 - Type: ${input.type}
 - Montant: ${input.montant} DJF
 - Transfer ID: ${input.transferId || "?"}
 - N° Expéditeur: ${input.numeroPayment || "?"}
 - Heure soumission: ${input.heure}h
 
-Règles strictes :
+Règles :
 1. Montant > 50 000 DJF → suspect
 2. Transfer ID < 6 chiffres → invalide
 3. Numéro ne commence pas par 77 → suspect
@@ -208,9 +209,10 @@ Règles strictes :
     async (input) => {
       const { output } = await _ai.generate({
         model: gemini20Flash,
-        prompt: `Tu es l'assistant IA de Kaffi Pay (Djibouti, plateforme 1xBet↔Waafi).
-
-Données des 100 dernières transactions :
+        system: `Tu es le conseiller IA de la direction de Kaffi Pay (Djibouti, plateforme d'échange 1xBet↔Waafi).
+Tu analyses les performances opérationnelles, identifies les anomalies et donnes des recommandations concrètes en DJF.
+Sois direct, professionnel et actionnable. Priorise la rentabilité et la sécurité de la plateforme.`,
+        prompt: `Données des 100 dernières transactions :
 - Confirmées: ${input.confirmes} — Volume: ${input.volume.toLocaleString()} DJF
 - En attente: ${input.attente}
 - Rejetées: ${input.rejetes}
@@ -220,7 +222,7 @@ Données des 100 dernières transactions :
 5 dernières transactions :
 ${input.derniersTx.map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} — ${t.date}`).join("\n")}
 
-Donne un résumé, une alerte si nécessaire, un conseil et des prédictions.`,
+Donne un résumé opérationnel, une alerte si nécessaire, un conseil stratégique et une prédiction pour demain.`,
         output: { schema: AnalyseAdminSchema },
       });
       return output;
@@ -237,14 +239,16 @@ Donne un résumé, une alerte si nécessaire, un conseil et des prédictions.`,
     async (input) => {
       const { output } = await _ai.generate({
         model: gemini20Flash,
+        system: `Tu es un expert en vérification de documents financiers et captures d'écran de paiement Waafi (Djibouti).
+Ton rôle est d'authentifier les preuves de paiement soumises par les clients de Kaffi Pay.
+Sois rigoureux : une erreur de 1 DJF ou un Transfer ID incorrect = preuve invalide. Ne valide jamais en cas de doute.`,
         prompt: [
           {
-            text: `Tu vérifies une capture d'écran de paiement Waafi pour Kaffi Pay (Djibouti).
+            text: `Vérifie cette capture d'écran de paiement Waafi.
+Montant attendu : ${input.montantAttendu} DJF
+Transfer ID attendu : ${input.transferIdAttendu}
 
-Montant attendu: ${input.montantAttendu} DJF
-Transfer ID attendu: ${input.transferIdAttendu}
-
-Analyse l'image et vérifie si le paiement correspond exactement.`,
+Extrais les données visibles et dis si le paiement correspond exactement.`,
           },
           {
             media: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
@@ -446,7 +450,7 @@ exports.geminiAnalyseAdmin = onCall(
           type:    t.type || "?",
           montant: Number(t.montant || 0),
           status:  t.status || "?",
-          date:    t.date || "?",
+          date:    t.createdAt ? t.createdAt.toDate().toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : "?",
         })),
       });
       return {
@@ -820,18 +824,20 @@ exports.rechargeCallback = onRequest(
     if (texteEcran) {
       // ── Gemini analyse le texte écran MobCash (méthode principale) ──
       try {
-        getFlows();
+        getFlows(); // initialise _ai
+        if (!_ai) throw new Error("IA non initialisée");
         const { output } = await _ai.generate({
           model: gemini20Flash,
-          prompt: `Tu analyses le résultat d'une recharge 1xBet via MobCash (Djibouti).
-
-Texte lu sur l'écran après la recharge :
+          system: `Tu es le système de vérification de recharge 1xBet pour Kaffi Pay (Djibouti).
+Tu analyses le texte affiché sur l'écran MobCash après une tentative de recharge.
+Réponds uniquement en fonction du texte fourni. En cas d'ambiguïté, réponds "inconnu".`,
+          prompt: `Texte lu sur l'écran MobCash après la recharge :
 """
 ${texteEcran}
 """
 
-Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépôt", success, credited, completed
-Échec : "Fonds insuffisants", "Rechargez votre compte", "actualisez la page", failed, error, insufficient`,
+Mots-clés succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépôt", success, credited, completed
+Mots-clés échec : "Fonds insuffisants", "Rechargez votre compte", "actualisez la page", failed, error, insufficient`,
           output: {
             schema: z.object({
               statut:    z.enum(["succes", "echec", "inconnu"]),
