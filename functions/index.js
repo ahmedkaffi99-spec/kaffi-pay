@@ -116,8 +116,7 @@ Règles strictes :
 1. Montant > 50 000 DJF → suspect
 2. Transfer ID < 6 chiffres → invalide
 3. Numéro ne commence pas par 77 → suspect
-4. Montant < 50 DJF → invalide
-5. Soumission entre 00h et 05h → risque élevé`,
+4. Montant < 50 DJF → invalide`,
         output: { schema: FraudeSchema },
       });
       return output || { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
@@ -292,24 +291,8 @@ exports.onOrdreUpdated = onDocumentUpdated(
     const before = event.data.before.data();
     const after  = event.data.after.data();
     if (before.status === after.status) return;
-
-    const ref     = after.orderId || after.ref || event.params.docId;
-    const montant = Number(after.montant || 0).toLocaleString();
-    const tel     = after.waafiNumber || after.tel || after.numeroPayment || "";
-
-    let msg = "";
-    if (after.status === "Confirmé") {
-      msg = `✅ *Kaffi-Pay* — Ordre Confirmé !\n\nRéf: ${ref}\nMontant: ${montant} DJF\n\nVotre compte 1xBet a été crédité. Merci 🙏`;
-    } else if (after.status === "Rejeté") {
-      msg = `❌ *Kaffi-Pay* — Ordre Rejeté\n\nRéf: ${ref}\n${after.flagRaison || ""}\n\nContactez le support pour aide.`;
-    } else if (after.status === "Correction") {
-      msg = `✏️ *Kaffi-Pay* — Correction Requise\n\nRéf: ${ref}\n${after.correctionMsg || "Veuillez corriger votre ordre."}`;
-    } else if (after.status === "Argent Reçu") {
-      msg = `💰 *Kaffi-Pay* — Paiement Reçu !\n\nRéf: ${ref}\nMontant: ${montant} DJF\nCrédit en cours...`;
-    }
-
-    if (!msg || !tel) return;
-    console.log(`[Notification] ${tel} → ${after.status}: ${msg.substring(0, 60)}`);
+    const ref = after.orderId || after.ref || event.params.docId;
+    console.log(`[onOrdreUpdated] Ordre ${ref} : ${before.status} → ${after.status}`);
   }
 );
 
@@ -320,7 +303,7 @@ exports.geminiAnalyseAdmin = onCall(
   { secrets: [GEMINI_KEY] },
   async () => {
     const snap = await db.collection("orders")
-      .orderBy("date", "desc").limit(100).get();
+      .orderBy("createdAt", "desc").limit(100).get();
 
     const txs       = snap.docs.map((d) => d.data());
     const confirmes = txs.filter((t) => t.status === "Confirmé");
