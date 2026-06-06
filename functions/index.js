@@ -135,7 +135,51 @@ exports.onNouvelOrdre = onDocumentCreated(
       }
     }
 
-    // ── 1b. Analyse fraude Gemini (Vertex AI) ─────────────────────
+    // ── 1b. Cherche waafi_notification déjà reçue (paiement avant ordre) ──
+    // Le client paie Waafi d'abord → MacroDroid → waafi_notifications
+    // Quand l'ordre arrive, on cherche la notification correspondante
+    if (isDepot && transferId) {
+      const waafiSnap = await db.collection("waafi_notifications")
+        .where("transferId", "==", transferId)
+        .where("status", "==", "nouveau")
+        .limit(1)
+        .get();
+
+      if (!waafiSnap.empty) {
+        const waafiDoc  = waafiSnap.docs[0];
+        const waafiData = waafiDoc.data();
+
+        // Confirmation atomique
+        const claimed = await claimOrder(
+          db.collection("orders").doc(docId),
+          "En attente", "Confirmé",
+          {
+            confirmedBy:     "auto_match_waafi",
+            montantRecu:     waafiData.montant || Number(tx.montant),
+            expediteurRecu:  waafiData.numClient || tx.numeroPayment || "",
+            confirmedAt:     FieldValue.serverTimestamp(),
+          }
+        );
+
+        if (claimed) {
+          await waafiDoc.ref.update({ status: "matché", ordreRef: ref });
+          await sendTelegram(
+            TELEGRAM_TOKEN.value(),
+            TELEGRAM_ADMIN_ID.value(),
+            `✅ <b>Dépôt confirmé instantanément</b>\n\n` +
+            `Réf: <b>#${ref}</b>\n` +
+            `Montant: <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
+            `ID 1xBet: <code>${tx.userId1xBet || "?"}</code>\n` +
+            `Transfer-ID: <code>${transferId}</code>\n` +
+            `Expéditeur: <code>${waafiData.numClient || tx.numeroPayment || "?"}</code>\n\n` +
+            `🤖 Paiement Waafi déjà reçu — confirmation automatique`
+          );
+          return;
+        }
+      }
+    }
+
+    // ── 1c. Analyse fraude Gemini (Vertex AI) ─────────────────────
     let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
     try {
       const model  = getGemini();
@@ -177,7 +221,7 @@ Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numér
       ia_analysedAt:   FieldValue.serverTimestamp(),
     });
 
-    // ── 1c. Rejet auto si fraude élevée ───────────────────────────
+    // ── 1d. Rejet auto si fraude élevée ───────────────────────────
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
       await db.collection("orders").doc(docId).update({
         status:     "Rejeté",
@@ -194,7 +238,7 @@ Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numér
       return;
     }
 
-    // ── 1d. Notification Telegram admin ───────────────────────────
+    // ── 1e. Notification Telegram admin (paiement pas encore reçu) ──
     const details = isDepot
       ? `ID 1xBet: <code>${tx.userId1xBet || tx.id1x || "?"}</code>\n` +
         `Transfer ID: <code>${transferId || "?"}</code>\n` +
@@ -606,18 +650,27 @@ exports.smsWebhook = onRequest(
       return;
     }
 
-    // Enregistre dans Firestore → déclenche autoConfirmation
+    // Parse le SMS immédiatement pour faciliter la recherche
+    const transferIdParsed = extractTransferId(notif);
+    const montantParsed    = extractMontant(notif);
+    const numClientParsed  = extractNumClient(notif);
+
+    // Enregistre dans Firestore → déclenche autoConfirmation si ordre déjà là
     const docRef = await db.collection("waafi_notifications").add({
       notification: notif,
+      transferId:   transferIdParsed,
+      montant:      montantParsed,
+      numClient:    numClientParsed,
       secret:       expectedSecret,
       source:       "macrodroid",
+      status:       "nouveau",
       createdAt:    FieldValue.serverTimestamp(),
     });
 
     // Notifie immédiatement l'admin Telegram
-    const transferId = extractTransferId(notif);
-    const montant    = extractMontant(notif);
-    const numClient  = extractNumClient(notif);
+    const transferId = transferIdParsed;
+    const montant    = montantParsed;
+    const numClient  = numClientParsed;
 
     await sendTelegram(
       TELEGRAM_TOKEN.value(),
