@@ -112,7 +112,7 @@ Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numér
 // 2. ORDRE CONFIRMÉ → Notification WhatsApp client
 // ══════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
-  { document: "transactions/{docId}", secrets: [] },
+  { document: "orders/{docId}", secrets: [] },
   async (event) => {
     const before = event.data.before.data();
     const after  = event.data.after.data();

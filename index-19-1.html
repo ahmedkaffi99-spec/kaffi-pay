@@ -717,6 +717,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
       <div id="suivi-ref" style="font-family:'Playfair Display',serif;font-size:1.6rem;font-weight:900;color:var(--gold);letter-spacing:4px;">—</div>
       <button id="suivi-copy-btn" onclick="copySuiviRef()" style="background:transparent;border:1px solid rgba(255,215,0,0.25);border-radius:999px;padding:5px 12px;font-size:0.65rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;">📋 Copier</button>
   </div>
+</div>
 
   <div style="border-radius:14px;padding:11px 14px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">
     <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;">Détails</div>
@@ -1256,7 +1257,8 @@ function updateStats(){
   document.getElementById('stat-retrait').textContent=ret.reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
   document.getElementById('stat-retrait-sub').textContent=ret.length+' confirmés';
   document.getElementById('stat-pending').textContent=pending.length;
-  const today=new Date().toLocaleDateString('fr-FR');
+  const _td=new Date();
+  const today=_td.getFullYear()+'-'+String(_td.getMonth()+1).padStart(2,'0')+'-'+String(_td.getDate()).padStart(2,'0');
   document.getElementById('stat-today').textContent=
     t.filter(x=>x.date&&x.date.startsWith(today)&&x.status==='Confirmé').reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
 }
@@ -1366,9 +1368,12 @@ function renderAllTx(f,s){
   else if(f!=='tous') t=t.filter(x=>x.type===f||x.status===f);
   if(s) t=t.filter(x=>
     (x.ref||'').toLowerCase().includes(s.toLowerCase())||
-    (x.id1x||'').toLowerCase().includes(s.toLowerCase())||
-    (x.tel||'').toLowerCase().includes(s.toLowerCase())||
-    (x.code||'').toLowerCase().includes(s.toLowerCase())
+    (x.orderId||'').toLowerCase().includes(s.toLowerCase())||
+    (x.userId1xBet||x.id1x||'').toLowerCase().includes(s.toLowerCase())||
+    (x.waafitranfertID||x.hash||'').toLowerCase().includes(s.toLowerCase())||
+    (x.waafiNumber||x.tel||'').toLowerCase().includes(s.toLowerCase())||
+    (x.withdrawalCode||x.code||'').toLowerCase().includes(s.toLowerCase())||
+    (x.numeroPayment||'').toLowerCase().includes(s.toLowerCase())
   );
   document.getElementById('all-tx-list').innerHTML=t.map(t=>txHTML(t,true)).join('')||emptyState();
 }
@@ -1811,13 +1816,16 @@ function goCorrection(){
   if(tx.type==='Dépôt'){
     showScreen('client');
     switchTab('depot');
-    if(tx.id1x) document.getElementById('depot-id').value = tx.id1x;
-    if(tx.hash) document.getElementById('depot-hash').value = tx.hash;
+    var _id1x = tx.userId1xBet||tx.id1x||'';
+    var _hash = tx.waafitranfertID||tx.hash||'';
+    if(_id1x) document.getElementById('depot-id').value = _id1x;
+    if(_hash) document.getElementById('depot-hash').value = _hash;
     showToast('✏️ Corrigez les informations et resoumettez','warning');
   } else {
     showScreen('client');
     switchTab('retrait');
-    if(tx.tel) document.getElementById('retrait-tel').value = tx.tel;
+    var _tel = tx.waafiNumber||tx.tel||'';
+    if(_tel) document.getElementById('retrait-tel').value = _tel;
     if(tx.montant) document.getElementById('retrait-montant').value = tx.montant;
     showToast('✏️ Corrigez les informations et resoumettez','warning');
   }
