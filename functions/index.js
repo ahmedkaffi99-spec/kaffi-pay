@@ -33,10 +33,18 @@ const GEMINI_API_KEY    = defineSecret("GEMINI_API_KEY");
 // ── Helpers ─────────────────────────────────────────────────────────
 
 async function geminiGenerate(prompt) {
-  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY.value());
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  const key = GEMINI_API_KEY.value();
+  if (!key) throw new Error("GEMINI_API_KEY secret vide ou non configuré");
+  console.log(`geminiGenerate: clé …${key.slice(-6)}, model gemini-1.5-flash`);
+  const genAI = new GoogleGenerativeAI(key);
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  try {
+    const result = await model.generateContent(prompt);
+    return result.response.text();
+  } catch (e) {
+    console.error("geminiGenerate API error:", e.status, e.statusText, e.message, JSON.stringify(e.errorDetails || {}));
+    throw e;
+  }
 }
 
 async function sendTelegramToBot(token, chatId, text, opts = {}) {
@@ -714,26 +722,38 @@ exports.smsWebhook = onRequest(
 // 7. HEALTH CHECK
 // ══════════════════════════════════════════════════════════════════
 exports.healthCheck = onRequest(
-  { region: REGION },
+  { region: REGION, secrets: [GEMINI_API_KEY] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
 
-    try {
-      const t0   = Date.now();
-      await db.collection("orders").limit(1).get();
-      const ms   = Date.now() - t0;
+    const t0 = Date.now();
+    let firestoreMs = "?", geminiStatus = "non testé", geminiError = null;
 
-      res.json({
-        status:    "ok",
-        timestamp: new Date().toISOString(),
-        region:    REGION,
-        firestore: `connected (${ms}ms)`,
-        version:   "3.2",
-      });
+    try {
+      await db.collection("orders").limit(1).get();
+      firestoreMs = `${Date.now() - t0}ms`;
     } catch (e) {
-      res.status(500).json({ status: "error", message: e.message });
+      firestoreMs = `erreur: ${e.message}`;
     }
+
+    try {
+      const reply = await geminiGenerate("Réponds uniquement: OK");
+      geminiStatus = `ok — réponse: "${reply.trim().substring(0, 50)}"`;
+    } catch (e) {
+      geminiStatus = "erreur";
+      geminiError  = e.message;
+    }
+
+    res.json({
+      status:    geminiError ? "degraded" : "ok",
+      timestamp: new Date().toISOString(),
+      region:    REGION,
+      firestore: firestoreMs,
+      gemini:    geminiStatus,
+      geminiErr: geminiError,
+      version:   "3.3",
+    });
   }
 );
 
