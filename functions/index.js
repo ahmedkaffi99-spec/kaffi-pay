@@ -247,9 +247,7 @@ exports.onNouvelOrdre = onDocumentCreated(
           flagRaison: "Gemini: " + raison, ia_decision: "rejeter",
         });
         await rtdbUpdateStatus(ordreRef, "Rejeté");
-      }
       } else if (decision === "attendre") {
-        // Gemini attend plus de données → marquer pour retry
         await db.collection("orders").doc(docId).update({
           ia_decision: "attendre", ia_raison: raison,
           geminiRetryAt: FieldValue.serverTimestamp(),
