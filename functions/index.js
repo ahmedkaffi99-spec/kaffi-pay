@@ -358,8 +358,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         .limit(5).get();
 
       for (const smsDoc of smsSnap.docs) {
-        const smsData = smsDoc.data();
-        if (smsData.matchedOrderId) continue; // SMS déjà utilisé
+        const smsData   = smsDoc.data();
         const createdAt = smsData.createdAt ? smsData.createdAt.toDate() : new Date();
         if (createdAt < cutoff) continue; // SMS trop ancien (> 24h)
 
@@ -383,7 +382,7 @@ exports.onNouvelOrdre = onDocumentCreated(
             confirmedBy:     "auto_waafi_retroactif",
             montantRecu:     montantSMS,
           }),
-          smsDoc.ref.update({ matchedOrderId: ordreRef }),
+          Promise.resolve(), // waafi_notifications immuable
         ]);
 
         console.log(`[RetroMatch] ✅ Ordre ${ordreRef} confirmé via SMS ${smsDoc.id}`);
@@ -510,8 +509,7 @@ exports.autoConfirmation = onDocumentCreated(
     const sms   = event.data.data();
     const docId = event.params.docId;
 
-    // Doc brut — pas de status. Seul matchedOrderId indique un SMS déjà traité.
-    if (sms.matchedOrderId) return;
+    // Doc brut — pas de status, pas de mise à jour. L'ordre "En attente" sert de verrou naturel.
 
     // ── Parser SMS Waafi ───────────────────────────────────────
     const notification = sms.notification || sms.notificationText || sms.not_body || sms.texte || sms.message || sms.sms_body || "";
@@ -605,7 +603,7 @@ exports.autoConfirmation = onDocumentCreated(
         rejetBy:         FieldValue.delete(),
         rejetRaison:     FieldValue.delete(),
       }),
-      db.collection("waafi_notifications").doc(docId).update({ matchedOrderId: ordreRef }),
+      Promise.resolve(), // waafi_notifications immuable
     ]);
 
     if (id1xbet) {
@@ -770,7 +768,7 @@ exports.smsWebhook = onRequest(
         rejetBy:         FieldValue.delete(),
         rejetRaison:     FieldValue.delete(),
       }),
-      docRef.update({ matchedOrderId: ordreRef }),
+      Promise.resolve(), // waafi_notifications immuable
     ]);
     console.log(`[smsWebhook] ✅ Ordre ${ordreRef} CONFIRMÉ — ${montantSMS} DJF`);
 
@@ -919,11 +917,6 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
         ia_ecran_raison:    analyseIA.raison,
         ia_ecran_confiance: analyseIA.confiance,
       });
-      await db.collection("callbacks").add({
-        ref, id1xbet: id1xbet || ordre.userId1xBet || "", montant: montant || ordre.montant || "",
-        resultat: "succes", ia: analyseIA, recharge: "ok",
-        tentative: retries + 1, createdAt: FieldValue.serverTimestamp(),
-      });
       console.log(`[rechargeCallback] ✅ Ordre ${ref} → RECHARGÉ (tentative ${retries + 1})`);
       res.json({ success: true, ref, recharge: "ok", tentative: retries + 1, ia: analyseIA });
       return;
@@ -949,11 +942,6 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
       } catch (e) {
         console.error("[rechargeCallback] Retry webhook erreur:", e.message);
       }
-      await db.collection("callbacks").add({
-        ref, id1xbet: id1xbet || ordre.userId1xBet || "", montant: montant || ordre.montant || "",
-        resultat: "retry", ia: analyseIA, recharge: "retry",
-        tentative: nouvelleTentative, createdAt: FieldValue.serverTimestamp(),
-      });
       console.log(`[rechargeCallback] ⏳ Ordre ${ref} → RETRY ${nouvelleTentative}/3`);
       res.json({ success: true, ref, recharge: "retry", tentative: nouvelleTentative });
       return;
@@ -978,11 +966,6 @@ Succès : "avec succès", "déposé avec succès", "Vous avez déposé", "Dépô
       traité:    false,
     });
     console.error(`[rechargeCallback] 🚨 Ordre ${ref} → INTERVENTION MANUELLE`);
-    await db.collection("callbacks").add({
-      ref, id1xbet: id1xbet || ordre.userId1xBet || "", montant: montant || ordre.montant || "",
-      resultat: "echec", ia: analyseIA, recharge: "manuel_requis",
-      tentative: nouvelleTentative, createdAt: FieldValue.serverTimestamp(),
-    });
     res.json({ success: true, ref, recharge: "manuel_requis", tentative: nouvelleTentative });
   }
 );
