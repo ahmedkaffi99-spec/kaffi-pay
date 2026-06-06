@@ -577,7 +577,64 @@ exports.autoConfirmation = onDocumentCreated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 6. HEALTH CHECK
+// 6. WEBHOOK MACRODROID — Reçoit la notif Waafi → Firestore + Telegram
+//
+//  MacroDroid configure :
+//    Trigger : Notification reçue (app Waafi)
+//    Action  : HTTP POST vers cette URL
+//    Body    : {"notification":"[not_body]","secret":"KaffiPay2026"}
+// ══════════════════════════════════════════════════════════════════
+exports.smsWebhook = onRequest(
+  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST")    { res.status(405).send("Method Not Allowed"); return; }
+
+    const body   = req.body || {};
+    const notif  = body.notification || body.not_body || body.message || body.text || "";
+    const secret = body.secret || "";
+
+    const expectedSecret = MACRO_SECRET.value() || "KaffiPay2026";
+    if (secret && secret !== expectedSecret) {
+      res.status(403).json({ error: "Secret invalide" });
+      return;
+    }
+
+    if (!notif) {
+      res.status(400).json({ error: "Champ 'notification' requis" });
+      return;
+    }
+
+    // Enregistre dans Firestore → déclenche autoConfirmation
+    const docRef = await db.collection("waafi_notifications").add({
+      notification: notif,
+      secret:       expectedSecret,
+      source:       "macrodroid",
+      createdAt:    FieldValue.serverTimestamp(),
+    });
+
+    // Notifie immédiatement l'admin Telegram
+    const transferId = extractTransferId(notif);
+    const montant    = extractMontant(notif);
+    const numClient  = extractNumClient(notif);
+
+    await sendTelegram(
+      TELEGRAM_TOKEN.value(),
+      TELEGRAM_ADMIN_ID.value(),
+      `📩 <b>SMS Waafi reçu</b>\n\n` +
+      `Transfer-ID: <code>${transferId || "?"}</code>\n` +
+      `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
+      `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
+      `<i>Traitement auto en cours…</i>`
+    );
+
+    res.json({ success: true, id: docRef.id });
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// 7. HEALTH CHECK
 // ══════════════════════════════════════════════════════════════════
 exports.healthCheck = onRequest(
   { region: REGION },
