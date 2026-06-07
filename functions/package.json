@@ -1,6 +1,6 @@
 {
   "name": "kaffi-pay-functions",
-  "description": "Kaffi Pay Cloud Functions v3.5 — Logique embarquée + Telegram + Auto-confirmation SMS",
+  "description": "Kaffi Pay Cloud Functions v4.0 — State Machine + Circuit Breaker + Rate Limiting + 5 Scheduled Jobs",
   "scripts": {
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
