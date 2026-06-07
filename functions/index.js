@@ -1155,17 +1155,7 @@ exports.ordresBloques = onSchedule(
 exports.nettoyageCompteurs = onSchedule(
   { schedule: "0 0 * * *", timeZone: TZ, region: REGION },
   async () => {
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 7);
-    const yy = String(cutoff.getFullYear()).slice(-2);
-    const mm = String(cutoff.getMonth() + 1).padStart(2, "0");
-    const dd = String(cutoff.getDate()).padStart(2, "0");
-
-    const snap = await db.collection("counters")
-      .where("__name__", "<=", `daily_${yy}${mm}${dd}`).get().catch(() => ({ docs: [] }));
-    if (snap.docs.length > 0) {
-      const b = db.batch(); snap.docs.forEach((d) => b.delete(d.ref)); await b.commit();
-    }
-
+    // Nettoie les rate_limits expirés
     const rlSnap = await db.collection("rate_limits")
       .where("expiresAt", "<", Date.now()).limit(100).get().catch(() => ({ docs: [] }));
     if (rlSnap.docs.length > 0) {
