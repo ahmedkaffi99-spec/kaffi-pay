@@ -1330,7 +1330,7 @@ exports.adminBot = onRequest(
       const t = text.toLowerCase().trim();
 
       // confirmer #ID
-      const confirmMatch = text.match(/^confirmer?\s+#?(\d{6,8})\b/i);
+      const confirmMatch = text.match(/^confirmer?\s+#?(\d{5,8})\b/i);
       if (confirmMatch) {
         const num  = confirmMatch[1];
         const snap = await db.collection("orders").where("orderId", "==", num).limit(1).get();
@@ -1340,16 +1340,48 @@ exports.adminBot = onRequest(
         if (!transitionValide(data.status, "Confirmé")) {
           await sendTelegram(token, adminId, `⛔ Impossible de confirmer un ordre en statut <b>${data.status}</b>.`); return;
         }
+
+        // 1. Confirmer l'ordre
         await doc.ref.update({ status: "Confirmé", confirmedBy: "admin_telegram", confirmedAt: FieldValue.serverTimestamp() });
         logAudit("confirme_admin_telegram", { num, adminId, ancienStatut: data.status });
+
+        // 2. Appeler MacroDroid
+        const id1xbet    = data.userId1xBet || data.id1x || data.idBet || "";
+        const montantVal = Number(data.montant || data.amount || 0);
+        const wbUrl      = MACRO_WEBHOOK_URL.value() || "";
+
+        if (!id1xbet) {
+          await sendTelegram(token, adminId,
+            `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n⚠️ ID 1xBet manquant — recharge manuelle requise.`);
+          return;
+        }
+        if (!wbUrl) {
+          await sendTelegram(token, adminId,
+            `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n⚠️ MACRODROID_WEBHOOK_URL non configuré.`);
+          return;
+        }
+
         await sendTelegram(token, adminId,
-          `✅ Ordre <b>#${num}</b> confirmé.\n${Number(data.montant || 0).toLocaleString()} DJF | N°<code>${data.numeroPayment || "?"}</code>`
-        );
+          `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 Déclenchement MacroDroid...`);
+
+        try {
+          await appelWebhook(wbUrl, num, montantVal, id1xbet);
+          await doc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
+          logAudit("webhook_admin_succes", { num, adminId, id1xbet });
+          await sendTelegram(token, adminId,
+            `🎉 <b>MacroDroid déclenché !</b>\nID 1xBet <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF crédité.`);
+        } catch (e) {
+          await doc.ref.update({ webhookStatus: "echec", webhookError: e.message });
+          await sauvegarderWebhookEchoue(num, id1xbet, montantVal);
+          logAudit("webhook_admin_echec", { num, adminId, erreur: e.message });
+          await sendTelegram(token, adminId,
+            `❌ MacroDroid échoué : <code>${e.message}</code>\nTapez <code>recharge ${num}</code> pour réessayer.`);
+        }
         return;
       }
 
       // rejeter #ID [raison]
-      const rejectMatch = text.match(/^rejeter?\s+#?(\d{6,8})(?:\s+(.+))?$/i);
+      const rejectMatch = text.match(/^rejeter?\s+#?(\d{5,8})(?:\s+(.+))?$/i);
       if (rejectMatch) {
         const num    = rejectMatch[1];
         const raison = (rejectMatch[2] || "Rejeté par admin").trim();
