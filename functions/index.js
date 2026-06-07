@@ -700,7 +700,7 @@ exports.onNouvelOrdre = onDocumentCreated(
       let waafiDoc = null;
       const byTID = await db.collection("waafi_notifications")
         .where("transferId", "==", transferId)
-        .where("status", "in", ["prêt", "nouveau"])
+        .where("status", "in", ["prêt", "nouveau", "non_matché"])
         .limit(1).get();
 
       if (!byTID.empty) {
@@ -713,7 +713,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         const tolerance    = Math.max(5, montantOrdre * 0.05);
         const byPhone = await db.collection("waafi_notifications")
           .where("numClient", "==", phone)
-          .where("status", "in", ["prêt", "nouveau"])
+          .where("status", "in", ["prêt", "nouveau", "non_matché"])
           .limit(10).get();
 
         for (const d of byPhone.docs) {
@@ -913,11 +913,11 @@ exports.autoConfirmation = onDocumentCreated(
     });
 
     await sendTelegram(token, adminId,
-      `💰 <b>Paiement Waafi reçu</b>\n` +
+      `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
       `Transfer-ID: <code>${transferId || "?"}</code>\n` +
       `Montant: <b>${montantSMS ? Number(montantSMS).toLocaleString() : "?"} DJF</b>\n` +
-      `Expéditeur: <code>${numClient || "?"}</code>\n` +
-      `<i>En attente de la soumission de l'ordre par le client.</i>`
+      `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
+      `<i>✅ En attente de l'ordre client — confirmation automatique dès soumission.</i>`
     );
 
     // ── CAS RARE : ordre déjà soumis avant que le SMS arrive ────
