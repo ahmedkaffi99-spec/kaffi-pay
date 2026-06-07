@@ -1152,11 +1152,15 @@ function logAction(action, data){
 
 function genererOrderId(){
   const now=new Date();
-  const yy=String(now.getFullYear()).slice(-2);
   const mm=String(now.getMonth()+1).padStart(2,'0');
   const dd=String(now.getDate()).padStart(2,'0');
-  const seq=Math.floor(Math.random()*900)+100;
-  return yy+mm+dd+seq;
+  const dayKey='kp_cnt_'+mm+dd;
+  let n=parseInt(localStorage.getItem(dayKey)||'0')+1;
+  localStorage.setItem(dayKey,n);
+  for(const k of Object.keys(localStorage)){
+    if(k.startsWith('kp_cnt_')&&k!==dayKey) localStorage.removeItem(k);
+  }
+  return mm+dd+n;
 }
 
 async function submitDepot(){
