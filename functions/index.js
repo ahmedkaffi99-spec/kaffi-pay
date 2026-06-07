@@ -945,11 +945,11 @@ exports.ordresBloques = onSchedule(
       }
     }
 
-    // ── PARTIE 2 : Retry webhook pour les jobs en file d'attente ──
-    // Toutes les 5 min → retente MacroDroid jusqu'à ce qu'il réponde
+    // ── PARTIE 2 : Retry webhook — 1 seul job par cycle (MacroDroid séquentiel) ──
+    // MacroDroid ne peut traiter qu'un ordre à la fois (UI automation)
     const pendingJobsSnap = await db.collection("macrodroid_jobs")
       .where("status", "==", "pending")
-      .limit(10).get().catch(() => ({ docs: [] }));
+      .limit(1).get().catch(() => ({ docs: [] }));
 
     for (const jobDoc of pendingJobsSnap.docs) {
       const job = jobDoc.data();
@@ -1209,13 +1209,24 @@ exports.supportClient = onRequest(
           await send(`❓ Ordre <b>#${ordreId}</b> introuvable.\n\nVérifiez votre numéro d'ordre sur <b>kaffi-pay.com</b>.`);
           return;
         }
-        const o   = snap.docs[0].data();
-        const msg = statutOrdreMsg(ordreId, o);
-        await send(msg);
+        const o      = snap.docs[0].data();
+        const wbOk   = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
+        const wbFail = o.webhookStatus === "echec" || o.webhookStatus === "queue";
+        await send(statutOrdreMsg(ordreId, o));
 
-        // Alerte admin si rejeté ou correction
-        if (o.status === "Rejeté" || o.status === "Correction") {
-          await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
+        const adminToken = TELEGRAM_TOKEN.value();
+        const adminId2   = TELEGRAM_ADMIN_ID.value();
+
+        // Confirmé mais pas encore crédité → alerte admin avec commande recharge prête
+        if (o.status === "Confirmé" && !wbOk) {
+          await sendTelegram(adminToken, adminId2,
+            `🆘 <b>Client attend son crédit</b> — 👤 ${firstName}\n` +
+            `Ordre <b>#${ordreId}</b> | ${Number(o.montant||0).toLocaleString()} DJF | ID 1xBet: <code>${o.userId1xBet||o.id1x||"?"}</code>\n` +
+            `Statut webhook: <b>${o.webhookStatus||"non déclenché"}</b>\n\n` +
+            `Relancer : <code>recharge ${ordreId}</code>`
+          );
+        } else if (o.status === "Rejeté" || o.status === "Correction") {
+          await sendTelegram(adminToken, adminId2,
             `🆘 <b>Support</b> | 👤 ${firstName} demande statut <b>#${ordreId}</b> (${o.status})`);
         }
         return;
