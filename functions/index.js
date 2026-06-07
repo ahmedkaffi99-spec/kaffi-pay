@@ -896,7 +896,7 @@ exports.macroJob = onRequest(
 //  3. Alerte si ordres > 60 min sans SMS trouvé
 // ══════════════════════════════════════════════════════════════════
 exports.ordresBloques = onSchedule(
-  { schedule: "every 5 minutes", region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL] },
+  { schedule: "every 5 minutes", region: REGION, timeoutSeconds: 540, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL] },
   async () => {
     const token       = TELEGRAM_TOKEN.value();
     const adminId     = TELEGRAM_ADMIN_ID.value();
@@ -945,15 +945,19 @@ exports.ordresBloques = onSchedule(
       }
     }
 
-    // ── PARTIE 2 : Retry webhook — 1 seul job par cycle (MacroDroid séquentiel) ──
-    // MacroDroid ne peut traiter qu'un ordre à la fois (UI automation)
+    // ── PARTIE 2 : Traiter TOUS les jobs en file, 1 appel à la fois — pause 20s ──
     const pendingJobsSnap = await db.collection("macrodroid_jobs")
       .where("status", "==", "pending")
-      .limit(1).get().catch(() => ({ docs: [] }));
+      .limit(20).get().catch(() => ({ docs: [] }));
 
-    for (const jobDoc of pendingJobsSnap.docs) {
-      const job = jobDoc.data();
+    for (let i = 0; i < pendingJobsSnap.docs.length; i++) {
+      const jobDoc = pendingJobsSnap.docs[i];
+      const job    = jobDoc.data();
       if (!job.id1xbet || !job.ordreId || !webhookBase) continue;
+
+      // Pause 20s entre chaque appel (sauf le premier)
+      if (i > 0) await new Promise(r => setTimeout(r, 20000));
+
       try {
         await triggerMacrodroid(webhookBase, job.ordreId, job.montant, job.id1xbet);
         await jobDoc.ref.update({ status: "done", doneAt: FieldValue.serverTimestamp(), doneBySchedule: true });
@@ -963,9 +967,9 @@ exports.ordresBloques = onSchedule(
         }
         logAudit("macrodroid_schedule_ok", { ordreId: job.ordreId, id1xbet: job.id1xbet });
         await sendTelegram(token, adminId,
-          `✅ <b>Recharge auto réussie</b> — #${job.ordreId}\nID 1xBet <code>${job.id1xbet}</code> | ${Number(job.montant||0).toLocaleString()} DJF`);
+          `✅ <b>Recharge</b> — #${job.ordreId} | <code>${job.id1xbet}</code> | ${Number(job.montant||0).toLocaleString()} DJF`);
       } catch (e) {
-        // MacroDroid encore hors-ligne — réessai dans 5 min
+        // MacroDroid hors-ligne — réessai au prochain cycle
       }
     }
 
