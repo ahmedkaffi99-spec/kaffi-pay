@@ -186,6 +186,58 @@ async function sauvegarderWebhookEchoue(ordreRef, id1xbet, montant) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// SECTION 5b — SCORING CORRESPONDANCE (3 critères)
+//
+//  Règles :
+//  3/3 → confirmer automatiquement
+//  2/3 → statut "Correction" — client doit resoumettre
+//  0-1 → rejeter
+//
+//  Un critère est "MISMATCH" seulement si la valeur existe dans
+//  la notification ET ne correspond pas à l'ordre.
+//  Valeur absente (non parsée du SMS) = neutre, ne réduit pas le score.
+// ══════════════════════════════════════════════════════════════════
+function scorerCorrespondance(ordreData, notifData) {
+  const montantOrdre = Number(ordreData.montant || 0);
+  const tolerance    = Math.max(5, montantOrdre * 0.05);
+  const transferId   = (ordreData.waafitranfertID || ordreData.hash || "").trim();
+  const phone        = (ordreData.numeroPayment || ordreData.waafiNumber || "").trim();
+
+  let score = 0;
+  const mismatches = [];
+
+  // Critère 1 : Transfer ID
+  if (!notifData.transferId || transferId === notifData.transferId) {
+    score++;
+  } else {
+    mismatches.push(
+      `Transfer-ID incorrect (ordre: <code>${transferId}</code> / Waafi: <code>${notifData.transferId}</code>)`
+    );
+  }
+
+  // Critère 2 : Montant ±5%
+  if (!notifData.montant || Math.abs(montantOrdre - notifData.montant) <= tolerance) {
+    score++;
+  } else {
+    mismatches.push(
+      `Montant incorrect (ordre: <b>${montantOrdre.toLocaleString()} DJF</b> / Waafi: <b>${Number(notifData.montant).toLocaleString()} DJF</b>)`
+    );
+  }
+
+  // Critère 3 : Numéro expéditeur
+  if (!notifData.numClient || phone === notifData.numClient) {
+    score++;
+  } else {
+    mismatches.push(
+      `N° expéditeur différent (ordre: <code>${phone}</code> / Waafi: <code>${notifData.numClient}</code>)`
+    );
+  }
+
+  const decision = score >= 3 ? "confirmer" : score === 2 ? "correction" : "rejeter";
+  return { score, mismatches, decision };
+}
+
+// ══════════════════════════════════════════════════════════════════
 // SECTION 6 — CONFIRMATION DÉPÔT + WEBHOOK MacroDroid
 // Appelé par onNouvelOrdre (flux principal) et autoConfirmation (cas rare)
 // waafiDoc = document waafi_notifications correspondant
@@ -652,11 +704,51 @@ exports.onNouvelOrdre = onDocumentCreated(
       }
 
       if (waafiDoc) {
-        // Notification trouvée → confirmation immédiate
-        const ordreDoc = db.collection("orders").doc(docId);
-        // Créer un objet proxy avec .data() pour confirmerDepot
-        const ordreSnap = await ordreDoc.get();
-        await confirmerDepot(ordreSnap, waafiDoc, webhookBase, token, adminId);
+        // Notation trouvée → vérifier les 3 critères
+        const ordreSnap  = await db.collection("orders").doc(docId).get();
+        const { score, mismatches, decision } = scorerCorrespondance(tx, waafiDoc.data());
+
+        if (decision === "confirmer") {
+          // 3/3 — confirmation automatique
+          await confirmerDepot(ordreSnap, waafiDoc, webhookBase, token, adminId);
+          return;
+        }
+
+        if (decision === "correction") {
+          // 2/3 — données partiellement incorrectes → correction + resoumettre
+          const msgDetails = mismatches.map((m) => `• ${m}`).join("\n");
+          await db.collection("orders").doc(docId).update({
+            status: "Correction",
+            correctionMsg: `Correspondance partielle (${score}/3) — corrigez les informations et resoumettez.\n${mismatches.join(" | ")}`,
+            correctionDetails: mismatches,
+            correctionScore: score,
+            correctionAt: FieldValue.serverTimestamp(),
+          });
+          await waafiDoc.ref.update({ status: "correction_requise", ordreRef: ref });
+          await sendTelegram(token, adminId,
+            `✏️ <b>Correspondance partielle (${score}/3) — Correction requise</b>\n\n` +
+            `Ordre <code>#${ref}</code> | ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
+            `${msgDetails}\n\n` +
+            `<i>Le client doit corriger et resoumettre l'ordre.</i>\n` +
+            `Forcer si OK : <code>confirmer ${ref}</code>`
+          );
+          logAudit("depot_correction_partielle", { ref, score, mismatches });
+          return;
+        }
+
+        // score ≤ 1 — données trop éloignées → rejet même si notif trouvée
+        const msgDetails = mismatches.map((m) => `• ${m}`).join("\n");
+        await db.collection("orders").doc(docId).update({
+          status: "Rejeté",
+          flagRaison: `Données incorrectes (${score}/3) — ${mismatches.join(", ")}`,
+          flaggedAt: FieldValue.serverTimestamp(),
+        });
+        await waafiDoc.ref.update({ status: "rejeté_mauvaise_correspondance", ordreRef: ref });
+        await sendTelegram(token, adminId,
+          `❌ <b>Dépôt rejeté — Correspondance insuffisante (${score}/3)</b>\n\n` +
+          `Ordre <code>#${ref}</code>\n${msgDetails}`
+        );
+        logAudit("depot_rejete_mauvaise_correspondance", { ref, score, mismatches });
         return;
       }
 
@@ -824,7 +916,37 @@ exports.autoConfirmation = onDocumentCreated(
     const webhookBase = MACRO_WEBHOOK_URL.value() ||
       "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
 
-    await confirmerDepot(ordreDoc, waafiSnap, webhookBase, token, adminId);
+    // Même règle de scoring pour le cas rare
+    const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), waafiSnap.data());
+    const ordreRef2 = ordreDoc.data().orderId || ordreDoc.id;
+
+    if (decision === "confirmer") {
+      await confirmerDepot(ordreDoc, waafiSnap, webhookBase, token, adminId);
+    } else if (decision === "correction") {
+      const msgDetails = mismatches.map((m) => `• ${m}`).join("\n");
+      await ordreDoc.ref.update({
+        status: "Correction",
+        correctionMsg: `Correspondance partielle (${score}/3) — corrigez et resoumettez.\n${mismatches.join(" | ")}`,
+        correctionDetails: mismatches, correctionScore: score,
+        correctionAt: FieldValue.serverTimestamp(),
+      });
+      await waafiDocRef.update({ status: "correction_requise", ordreRef: ordreRef2 });
+      await sendTelegram(token, adminId,
+        `✏️ <b>Correction requise (${score}/3)</b>\n\nOrdre <code>#${ordreRef2}</code>\n${msgDetails}\n\n` +
+        `<i>Le client doit corriger et resoumettre.</i>`
+      );
+    } else {
+      const msgDetails = mismatches.map((m) => `• ${m}`).join("\n");
+      await ordreDoc.ref.update({
+        status: "Rejeté",
+        flagRaison: `Données incorrectes (${score}/3) — ${mismatches.join(", ")}`,
+        flaggedAt: FieldValue.serverTimestamp(),
+      });
+      await waafiDocRef.update({ status: "rejeté_mauvaise_correspondance", ordreRef: ordreRef2 });
+      await sendTelegram(token, adminId,
+        `❌ <b>Correspondance insuffisante (${score}/3)</b>\nOrdre <code>#${ordreRef2}</code>\n${msgDetails}`
+      );
+    }
   }
 );
 
