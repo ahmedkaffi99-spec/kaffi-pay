@@ -340,7 +340,7 @@ function logAudit(action, data) {
 function repondreSupport(text, session, orders) {
   const t = text.toLowerCase().trim();
 
-  const ordreMatch    = text.match(/(?:#\s*|n[°o]\.?\s*)?(\d{6,8})\b/i);
+  const ordreMatch    = text.match(/(?:#\s*|n[°o]\.?\s*)?(\d{5,8})\b/i);
   const ordreNum      = ordreMatch ? ordreMatch[1] : null;
   const hasTransferId = /transfer[- ]?id|tid\b/i.test(t) || /\b\d{9,}\b/.test(text);
   const isGreeting    = /^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj)\b/.test(t);
@@ -1261,7 +1261,7 @@ exports.supportClient = onRequest(
         session.phone = cleanText;
       }
 
-      const ordreInMsg = (text.match(/(?:#\s*)?(\d{6,8})\b/i) || [])[1] || null;
+      const ordreInMsg = (text.match(/(?:#\s*)?(\d{5,8})\b/i) || [])[1] || null;
       if (ordreInMsg) await sessionRef.set({ lastOrder: ordreInMsg }, { merge: true });
 
       let orders = [];

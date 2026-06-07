@@ -1700,135 +1700,160 @@ function showSuivi(ref, txData){
 function renderSuivi(){
   var tx = currentSuiviTx;
   if(!tx) return;
-  const isDepot=tx.type==='Dépôt';
-  const status=tx.status||'En attente';
+  const isDepot = tx.type === 'Dépôt';
+  const status  = tx.status || 'En attente';
+  const wbFail  = tx.webhookStatus === 'echec';
 
-  document.getElementById('suivi-ref').textContent=tx.orderId||tx.ref||'—';
+  document.getElementById('suivi-ref').textContent = tx.orderId || tx.ref || '—';
 
-  const card=document.getElementById('suivi-status-card');
-  const icon=document.getElementById('suivi-icon');
-  const stxt=document.getElementById('suivi-status-text');
-  const sdesc=document.getElementById('suivi-status-desc');
-  const prog=document.getElementById('suivi-progress');
-  // Reset button visibility
-  var corrBtnEl=document.getElementById('suivi-corr-btn');
-  if(corrBtnEl) corrBtnEl.style.display='none';
-  var cancelBtnEl=document.getElementById('suivi-cancel-btn');
-  if(cancelBtnEl) cancelBtnEl.style.display='none';
+  const card = document.getElementById('suivi-status-card');
+  const icon = document.getElementById('suivi-icon');
+  const stxt = document.getElementById('suivi-status-text');
+  const sdesc= document.getElementById('suivi-status-desc');
+  const prog = document.getElementById('suivi-progress');
+  var corrBtnEl   = document.getElementById('suivi-corr-btn');
+  var cancelBtnEl = document.getElementById('suivi-cancel-btn');
+  if(corrBtnEl)   corrBtnEl.style.display   = 'none';
+  if(cancelBtnEl) cancelBtnEl.style.display = 'none';
 
-  if(status==='En attente'){
-    card.style.borderColor='rgba(255,170,0,0.2)';
-    card.style.background='linear-gradient(160deg,rgba(255,170,0,0.04),rgba(7,16,30,0.8))';
-    icon.textContent='⏳';
-    stxt.textContent='En attente de traitement';
-    stxt.style.color='var(--warning)';
-    sdesc.textContent='Votre ordre est en cours de traitement. Vous serez crédité très rapidement.';
-    prog.style.width='30%';
-    prog.style.background='linear-gradient(90deg,var(--warning),#ffcc00)';
-    if(cancelBtnEl) cancelBtnEl.style.display='block';
-  } else if(status==='Annulé'){
-    card.style.borderColor='rgba(150,150,150,0.15)';
-    card.style.background='linear-gradient(160deg,rgba(150,150,150,0.03),rgba(7,16,30,0.8))';
-    icon.textContent='🚫';
-    stxt.textContent='Ordre annulé';
-    stxt.style.color='var(--muted)';
-    sdesc.textContent='Votre ordre a été annulé. Vous pouvez soumettre un nouvel ordre à tout moment.';
-    prog.style.width='100%';
-    prog.style.background='linear-gradient(90deg,#555,#888)';
+  // ── CARTE STATUT ──
+  if(status === 'En attente'){
+    card.style.borderColor = 'rgba(255,170,0,0.2)';
+    card.style.background  = 'linear-gradient(160deg,rgba(255,170,0,0.04),rgba(7,16,30,0.8))';
+    icon.textContent = '⏳';
+    stxt.textContent = 'En attente';
+    stxt.style.color = 'var(--warning)';
+    sdesc.textContent= 'Votre ordre est en cours de traitement. Vous serez crédité très rapidement.';
+    prog.style.width = '20%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
+    if(cancelBtnEl) cancelBtnEl.style.display = 'block';
+  } else if(status === 'Correction'){
+    card.style.borderColor = 'rgba(255,170,0,0.2)';
+    card.style.background  = 'linear-gradient(160deg,rgba(255,170,0,0.04),rgba(7,16,30,0.8))';
+    icon.textContent = '⏳';
+    stxt.textContent = 'En attente';
+    stxt.style.color = 'var(--warning)';
+    sdesc.textContent= tx.correctionMsg || 'Veuillez vérifier les informations de votre ordre.';
+    prog.style.width = '20%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
+    if(corrBtnEl) corrBtnEl.style.display = 'flex';
+  } else if(status === 'Argent Reçu'){
+    card.style.borderColor = 'rgba(0,212,160,0.2)';
+    card.style.background  = 'linear-gradient(160deg,rgba(0,212,160,0.05),rgba(7,16,30,0.8))';
+    icon.textContent = '✅';
+    stxt.textContent = 'Validé — Paiement reçu';
+    stxt.style.color = 'var(--success)';
+    sdesc.textContent= 'Votre paiement Waafi a été reçu et validé. Crédit '+(isDepot?'1xBet':'Waafi')+' en cours...';
+    prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
+  } else if(status === 'Confirmé' && !wbFail){
+    card.style.borderColor = 'rgba(0,212,160,0.3)';
+    card.style.background  = 'linear-gradient(160deg,rgba(0,212,160,0.08),rgba(7,16,30,0.8))';
+    icon.textContent = '🎉';
+    stxt.textContent = isDepot ? 'Crédité avec succès !' : 'Retrait effectué !';
+    stxt.style.color = 'var(--success)';
+    sdesc.textContent= isDepot ? 'Votre ID 1xBet a été crédité. Vous pouvez maintenant jouer !' : 'Votre argent a été envoyé sur votre numéro Waafi.';
+    prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
-  } else if(status==='Confirmé'){
-    card.style.borderColor='rgba(0,212,160,0.25)';
-    card.style.background='linear-gradient(160deg,rgba(0,212,160,0.06),rgba(7,16,30,0.8))';
-    icon.textContent=isDepot?'✅':'💸';
-    stxt.textContent=isDepot?'Dépôt confirmé !':'Retrait effectué !';
-    stxt.style.color='var(--success)';
-    sdesc.textContent=isDepot?'Votre compte 1xBet a été crédité avec succès.':'Votre argent a été envoyé sur votre numéro Waafi.';
-    prog.style.width='100%';
-    prog.style.background='linear-gradient(90deg,var(--success),#00ffcc)';
+  } else if(status === 'Confirmé' && wbFail){
+    card.style.borderColor = 'rgba(255,64,96,0.2)';
+    card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
+    icon.textContent = '❌';
+    stxt.textContent = 'Échoué — Contactez le support';
+    stxt.style.color = 'var(--error)';
+    sdesc.textContent= 'Le crédit de votre compte a échoué. Contactez le support avec votre numéro d\'ordre.';
+    prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
-  } else if(status==='Correction'){
-    card.style.borderColor='rgba(255,170,0,0.25)';
-    card.style.background='linear-gradient(160deg,rgba(255,170,0,0.06),rgba(7,16,30,0.8))';
-    icon.textContent='✏️';
-    stxt.textContent='Correction requise';
-    stxt.style.color='var(--warning)';
-    var corrMsg = tx.correctionMsg || 'Veuillez corriger les informations de votre ordre.';
-    sdesc.textContent=corrMsg;
-    prog.style.width='60%';
-    prog.style.background='linear-gradient(90deg,var(--warning),#ffcc00)';
-    // Afficher bouton corriger
-    var corrBtn = document.getElementById('suivi-corr-btn');
-    if(corrBtn) corrBtn.style.display='flex';
-  } else if(status==='Argent Reçu'){
-    card.style.borderColor='rgba(91,156,255,0.25)';
-    card.style.background='linear-gradient(160deg,rgba(91,156,255,0.06),rgba(7,16,30,0.8))';
-    icon.textContent='💳';
-    stxt.textContent='Paiement reçu — Crédit en cours';
-    stxt.style.color='#5b9cff';
-    sdesc.textContent='Votre paiement a été reçu et validé. Votre compte va être crédité dans quelques instants.';
-    prog.style.width='75%';
-    prog.style.background='linear-gradient(90deg,#5b9cff,#00d4a0)';
-  } else if(status==='Rejeté'){
-    card.style.borderColor='rgba(255,64,96,0.2)';
-    card.style.background='linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
-    icon.textContent='❌';
-    stxt.textContent='Ordre rejeté';
-    stxt.style.color='var(--error)';
-    sdesc.textContent='Votre ordre a été rejeté. Contactez le support pour assistance.';
-    prog.style.width='100%';
-    prog.style.background='linear-gradient(90deg,var(--error),#ff8a9a)';
+  } else if(status === 'Rejeté'){
+    card.style.borderColor = 'rgba(255,64,96,0.2)';
+    card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
+    icon.textContent = '❌';
+    stxt.textContent = 'Rejeté — Paiement non reçu';
+    stxt.style.color = 'var(--error)';
+    sdesc.textContent= 'Votre paiement Waafi n\'a pas été reçu. Vérifiez votre Transfer ID et contactez le support.';
+    prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
+    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+  } else if(status === 'Annulé'){
+    card.style.borderColor = 'rgba(150,150,150,0.15)';
+    card.style.background  = 'linear-gradient(160deg,rgba(150,150,150,0.03),rgba(7,16,30,0.8))';
+    icon.textContent = '🚫';
+    stxt.textContent = 'Ordre annulé';
+    stxt.style.color = 'var(--muted)';
+    sdesc.textContent= 'Votre ordre a été annulé. Vous pouvez soumettre un nouvel ordre à tout moment.';
+    prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,#555,#888)';
     if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   }
 
-  const rows=isDepot?[
+  // ── DÉTAILS ──
+  const rows = isDepot ? [
     ['Type','📥 Dépôt 1xBet'],
     ['N° Commande', tx.orderId||tx.ref||'—'],
     ['Montant', tx.amount||Number(tx.montant).toLocaleString()+' DJF'],
     ['ID 1xBet', tx.userId1xBet||tx.id1x||'—'],
     ['Waafi Transfer ID', tx.waafitranfertID||tx.hash||'—'],
-    ['Méthode', tx.methodePayment||'Waafi'],
     ['N° Expéditeur', tx.numeroPayment||'—'],
     ['Date', tx.date||'—']
-  ]:[
+  ] : [
     ['Type','📤 Retrait 1xBet'],
     ['N° Commande', tx.orderId||tx.ref||'—'],
     ['Montant', tx.amount||Number(tx.montant).toLocaleString()+' DJF'],
     ['Code retrait', tx.withdrawalCode||tx.code||'—'],
     ['Numéro Waafi', tx.waafiNumber||tx.tel||'—'],
-    ['Méthode réception', tx.methodeRecepteur||'Waafi'],
     ['Date', tx.date||'—']
   ];
 
-  document.getElementById('suivi-details').innerHTML=rows.map(function(r,i){
-    var k=r[0], v=r[1];
-    var border=i<rows.length-1?'border-bottom:1px solid rgba(255,255,255,0.06);':'';
+  document.getElementById('suivi-details').innerHTML = rows.map(function(r,i){
+    var border = i < rows.length-1 ? 'border-bottom:1px solid rgba(255,255,255,0.06);' : '';
     return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;'+border+'">'
-      +'<span style="color:var(--muted);font-size:0.82rem;">'+k+'</span>'
-      +'<span style="color:var(--text);font-size:0.85rem;font-weight:600;text-align:right;max-width:60%;word-break:break-all;">'+v+'</span>'
+      +'<span style="color:var(--muted);font-size:0.82rem;">'+r[0]+'</span>'
+      +'<span style="color:var(--text);font-size:0.85rem;font-weight:600;text-align:right;max-width:60%;word-break:break-all;">'+r[1]+'</span>'
       +'</div>';
   }).join('');
 
-  var argentRecu = (status==='Argent Reçu'||status==='Confirmé');
-  const steps=isDepot?[
-    {icon:'📝',title:'Ordre soumis',desc:'Demande enregistrée dans le système',done:true,active:false},
-    {icon:'👁',title:'En cours de traitement',desc:'Traitement en cours',done:argentRecu||status==='Confirmé',active:status==='En attente'},
-    {icon:'💳',title:'Paiement reçu',desc:'Votre virement Waafi a été validé',done:status==='Confirmé',active:status==='Argent Reçu'},
-    {icon:'💰',title:'Compte 1xBet crédité',desc:'Votre solde a été mis à jour',done:status==='Confirmé',active:false}
-  ]:[
-    {icon:'📝',title:'Ordre soumis',desc:'Demande enregistrée dans le système',done:true,active:false},
-    {icon:'👁',title:'En cours de traitement',desc:'Traitement en cours',done:argentRecu||status==='Confirmé',active:status==='En attente'},
-    {icon:'📱',title:'Envoi Waafi',desc:'Argent envoyé sur votre numéro',done:status==='Confirmé',active:status==='Argent Reçu'}
-  ];
+  // ── TIMELINE 3 ÉTAPES ──
+  var isConfirmed  = status === 'Confirmé';
+  var isRejete     = status === 'Rejeté';
+  var isArgentRecu = status === 'Argent Reçu';
+  var isPending    = status === 'En attente' || status === 'Correction';
+  var isAnnule     = status === 'Annulé';
 
-  document.getElementById('suivi-timeline').innerHTML=steps.map(function(s){
-    var dc=s.done?'done':s.active?'active':'wait';
-    var em=s.done?'✅':s.active?'⏳':'○';
-    var col=s.done?'var(--success)':s.active?'var(--warning)':'var(--muted)';
-    return '<div class="tl-step"><div class="tl-dot '+dc+'">'+em+'</div><div style="flex:1"><div class="tl-title" style="color:'+col+'">'+s.title+'</div><div class="tl-desc">'+s.desc+'</div></div></div>';
-  }).join('');
+  var s1done = !isPending && !isAnnule;
+  var s1act  = isPending;
 
-  document.getElementById('suivi-wa-btn').href=
-    'https://wa.me/25377275572?text='+encodeURIComponent('Bonjour, mon ordre #'+(tx.ref||tx.orderId)+' - '+tx.type+' '+Number(tx.montant).toLocaleString()+' DJF');
+  var s2done = isConfirmed;
+  var s2act  = isArgentRecu;
+  var s2fail = isRejete;
+  var s2title= isRejete ? 'Rejeté' : 'Validé';
+  var s2desc = isRejete ? 'Paiement non reçu' : 'Paiement reçu';
+
+  var s3done  = isConfirmed && !wbFail;
+  var s3fail  = isConfirmed && wbFail;
+  var s3title = s3fail ? 'Échoué' : (isDepot ? 'Crédité avec succès' : 'Retrait effectué');
+  var s3desc  = s3fail ? 'Contactez le support' : (isDepot ? 'Votre ID 1xBet a été crédité' : 'Argent envoyé sur votre Waafi');
+
+  function tlStep(done, active, fail, title, desc){
+    var em  = fail ? '❌' : done ? '✅' : active ? '⏳' : '○';
+    var col = fail ? 'var(--error)' : done ? 'var(--success)' : active ? 'var(--warning)' : 'var(--muted)';
+    var bg  = fail ? 'rgba(255,64,96,0.12)' : done ? 'rgba(0,212,160,0.10)' : active ? 'rgba(255,170,0,0.10)' : 'rgba(255,255,255,0.04)';
+    var bc  = fail ? 'rgba(255,64,96,0.25)' : done ? 'rgba(0,212,160,0.25)' : active ? 'rgba(255,170,0,0.25)' : 'rgba(255,255,255,0.06)';
+    return '<div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.04);">'
+      +'<div style="width:36px;height:36px;border-radius:50%;background:'+bg+';border:1px solid '+bc+';display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;">'+em+'</div>'
+      +'<div style="flex:1;">'
+      +'<div style="font-size:0.85rem;font-weight:700;color:'+col+';">'+title+'</div>'
+      +'<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">'+desc+'</div>'
+      +'</div></div>';
+  }
+
+  var tlHtml = '';
+  if(isAnnule){
+    tlHtml = tlStep(true,false,false,'Ordre soumis','Ordre enregistré')
+           + tlStep(false,false,true,'Annulé','Ordre annulé par le client');
+  } else {
+    tlHtml = tlStep(s1done, s1act,  false,  'En attente',  'Ordre enregistré, traitement en cours')
+           + tlStep(s2done, s2act,  s2fail, s2title, s2desc)
+           + tlStep(s3done, false,  s3fail, s3title, s3desc);
+  }
+  document.getElementById('suivi-timeline').innerHTML = tlHtml;
+
+  document.getElementById('suivi-wa-btn').href =
+    'https://t.me/kaffipay_support_bot?start=ordre_'+ encodeURIComponent(tx.orderId||tx.ref||'');
 }
 
 function pasteField(id){
