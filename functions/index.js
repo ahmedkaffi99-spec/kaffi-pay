@@ -35,12 +35,9 @@ const GEMINI_API_KEY    = defineSecret("GEMINI_API_KEY");
 async function geminiGenerate(prompt) {
   const key = GEMINI_API_KEY.value().replace(/[^\x20-\x7E]/g, "").trim();
   if (!key) throw new Error("GEMINI_API_KEY secret vide ou non configuré");
-  console.log(`geminiGenerate: clé …${key.slice(-6)}, model gemini-1.5-flash v1`);
+  console.log(`geminiGenerate: clé …${key.slice(-6)}, model gemini-1.5-flash-001`);
   const genAI = new GoogleGenerativeAI(key);
-  const model = genAI.getGenerativeModel(
-    { model: "gemini-1.5-flash" },
-    { apiVersion: "v1" }
-  );
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
   try {
     const result = await model.generateContent(prompt);
     return result.response.text();
