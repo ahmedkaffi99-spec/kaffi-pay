@@ -120,6 +120,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   color:var(--text);font-family:'DM Sans',sans-serif;font-size:.92rem;padding:11px 14px;outline:none;transition:all .2s;}
 .login-field input:focus{background:rgba(255,215,0,.04);border-color:rgba(255,215,0,.22);box-shadow:0 0 0 3px rgba(255,215,0,.06);}
 .login-field input::placeholder{color:rgba(92,122,158,.5);}
+.login-field input:-webkit-autofill,.login-field input:-webkit-autofill:hover,.login-field input:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px #0d1b2e inset!important;-webkit-text-fill-color:#eef2ff!important;caret-color:#eef2ff;}
 .login-btn{width:100%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#07101e;border:none;border-radius:999px;
   padding:13px;font-family:'DM Sans',sans-serif;font-size:.92rem;font-weight:700;cursor:pointer;transition:all .25s;
   margin-top:4px;box-shadow:0 4px 18px rgba(255,215,0,.2);}
@@ -158,6 +159,8 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .field input{width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:13px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:.92rem;padding:11px 14px;outline:none;transition:all .2s;}
 .field input:focus{background:rgba(255,215,0,.04);border-color:rgba(255,215,0,.22);box-shadow:0 0 0 3px rgba(255,215,0,.06);}
 .field input::placeholder{color:rgba(92,122,158,.5);}
+.field input:-webkit-autofill,.field input:-webkit-autofill:hover,.field input:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px #0d1b2e inset!important;-webkit-text-fill-color:#eef2ff!important;caret-color:#eef2ff;border-color:rgba(255,255,255,.07)!important;}
+input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px #0d1b2e inset!important;-webkit-text-fill-color:#eef2ff!important;caret-color:#eef2ff;}
 .amount-wrap{position:relative;}
 .amount-wrap input{padding-left:56px;font-size:1.05rem;font-weight:600;}
 .currency-sym{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--gold);font-weight:700;font-size:.78rem;pointer-events:none;}
