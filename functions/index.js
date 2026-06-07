@@ -760,7 +760,6 @@ exports.onNouvelOrdre = onDocumentCreated(
             correctionScore: score,
             correctionAt: FieldValue.serverTimestamp(),
           });
-          await waafiDoc.ref.update({ status: "correction_requise", ordreRef: ref });
           await sendTelegram(token, adminId,
             `✏️ <b>Correspondance partielle (${score}/3) — Correction requise</b>\n\n` +
             `Ordre <code>#${ref}</code> | ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
@@ -779,7 +778,6 @@ exports.onNouvelOrdre = onDocumentCreated(
           flagRaison: `Données incorrectes (${score}/3) — ${mismatches.join(", ")}`,
           flaggedAt: FieldValue.serverTimestamp(),
         });
-        await waafiDoc.ref.update({ status: "rejeté_mauvaise_correspondance", ordreRef: ref });
         await sendTelegram(token, adminId,
           `❌ <b>Dépôt rejeté — Correspondance insuffisante (${score}/3)</b>\n\n` +
           `Ordre <code>#${ref}</code>\n${msgDetails}`
@@ -897,16 +895,14 @@ exports.autoConfirmation = onDocumentCreated(
   async (event) => {
     const sms   = event.data.data();
     const docId = event.params.docId;
-    const token  = TELEGRAM_TOKEN.value();
+    const token   = TELEGRAM_TOKEN.value();
     const adminId = TELEGRAM_ADMIN_ID.value();
 
-    if (sms.status === "traité" || sms.status === "en_cours" || sms.status === "prêt") return;
+    // Éviter double-exécution : si déjà parsé (processedAt existe), ignorer
+    if (sms.processedAt) return;
 
     const expectedSecret = MACRO_SECRET.value() || "KaffiPay2026";
-    if (sms.secret && sms.secret !== expectedSecret) {
-      await db.collection("waafi_notifications").doc(docId).update({ status: "rejeté_secret_invalide" });
-      return;
-    }
+    if (sms.secret && sms.secret !== expectedSecret) return;
 
     // Extraire les données du SMS
     const notification = sms.notification || sms.not_body || sms.message || sms.texte || sms.body || "";
@@ -914,16 +910,11 @@ exports.autoConfirmation = onDocumentCreated(
     const montantSMS   = sms.montant      || extractMontant(notification);
     const numClient    = sms.numClient    || extractNumClient(notification);
 
-    if (!transferId && !montantSMS) {
-      await db.collection("waafi_notifications").doc(docId).update({
-        status: "erreur_parsing", erreurMsg: "Impossible d'extraire Transfer ID ou Montant",
-      });
-      return;
-    }
+    if (!transferId && !montantSMS) return; // SMS non parsable — on ne touche pas au doc
 
-    // Stocker les champs parsés, status = "prêt" → onNouvelOrdre viendra matcher
+    // Stocker uniquement les champs parsés — PAS de status
     await db.collection("waafi_notifications").doc(docId).update({
-      status: "prêt", transferId, montant: montantSMS, numClient,
+      transferId, montant: montantSMS, numClient,
       processedAt: FieldValue.serverTimestamp(),
     });
 
@@ -936,26 +927,25 @@ exports.autoConfirmation = onDocumentCreated(
     );
 
     // ── CAS RARE : ordre déjà soumis avant que le SMS arrive ────
-    // (ex: délai SMS, ou client soumet très vite après paiement)
-    // onNouvelOrdre n'a pas trouvé la notif → ordre toujours En attente
-    if (!transferId) return; // pas de TID, impossible de matcher avec certitude
+    if (!transferId) return;
 
     const ordreSnap = await db.collection("orders")
       .where("waafitranfertID", "==", transferId)
       .where("status", "==", "En attente")
       .limit(1).get();
 
-    if (ordreSnap.empty) return; // cas normal — ordre pas encore soumis
+    if (ordreSnap.empty) return;
 
-    // Ordre trouvé → confirmer maintenant (cas rare mais géré)
-    const ordreDoc    = ordreSnap.docs[0];
-    const waafiDocRef = db.collection("waafi_notifications").doc(docId);
-    const waafiSnap   = await waafiDocRef.get();
+    // Vérifier que ce TID n'est pas déjà dans ordre_traite
+    const dejaTraite = await db.collection("ordre_traite")
+      .where("transferId", "==", transferId).limit(1).get();
+    if (!dejaTraite.empty) return;
 
+    const ordreDoc  = ordreSnap.docs[0];
+    const waafiSnap = await db.collection("waafi_notifications").doc(docId).get();
     const webhookBase = MACRO_WEBHOOK_URL.value() ||
       "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
 
-    // Même règle de scoring pour le cas rare
     const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), waafiSnap.data());
     const ordreRef2 = ordreDoc.data().orderId || ordreDoc.id;
 
@@ -969,7 +959,6 @@ exports.autoConfirmation = onDocumentCreated(
         correctionDetails: mismatches, correctionScore: score,
         correctionAt: FieldValue.serverTimestamp(),
       });
-      await waafiDocRef.update({ status: "correction_requise", ordreRef: ordreRef2 });
       await sendTelegram(token, adminId,
         `✏️ <b>Correction requise (${score}/3)</b>\n\nOrdre <code>#${ordreRef2}</code>\n${msgDetails}\n\n` +
         `<i>Le client doit corriger et resoumettre.</i>`
@@ -981,7 +970,6 @@ exports.autoConfirmation = onDocumentCreated(
         flagRaison: `Données incorrectes (${score}/3) — ${mismatches.join(", ")}`,
         flaggedAt: FieldValue.serverTimestamp(),
       });
-      await waafiDocRef.update({ status: "rejeté_mauvaise_correspondance", ordreRef: ordreRef2 });
       await sendTelegram(token, adminId,
         `❌ <b>Correspondance insuffisante (${score}/3)</b>\nOrdre <code>#${ordreRef2}</code>\n${msgDetails}`
       );
@@ -1404,12 +1392,19 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // nonmatche
+      // nonmatche — notifs reçues mais pas encore dans ordre_traite
       if (t === "nonmatche" || t === "/nonmatche") {
-        const snap = await db.collection("waafi_notifications")
-          .where("status", "in", ["non_matché", "montant_incorrect", "prêt"])
-          .orderBy("createdAt", "desc").limit(10).get()
-          .catch(() => db.collection("waafi_notifications").where("status", "==", "non_matché").limit(10).get());
+        const [notifSnap2, traitSnap2] = await Promise.all([
+          db.collection("waafi_notifications").orderBy("processedAt", "desc").limit(20).get()
+            .catch(() => db.collection("waafi_notifications").limit(20).get()),
+          db.collection("ordre_traite").limit(100).get(),
+        ]);
+        const tidTraites = new Set(traitSnap2.docs.map((d) => d.data().transferId));
+        const snap = { docs: notifSnap2.docs.filter((d) => {
+          const n = d.data();
+          return n.processedAt && n.transferId && !tidTraites.has(n.transferId);
+        }), empty: false };
+        snap.empty = snap.docs.length === 0;
         if (snap.empty) { await sendTelegram(token, adminId, "✅ Aucun SMS en attente."); return; }
         const lignes = snap.docs.map((d) => {
           const n = d.data();
