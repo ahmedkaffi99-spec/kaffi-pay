@@ -721,8 +721,8 @@ exports.onOrdreUpdated = onDocumentUpdated(
   {
     document: "orders/{docId}",
     region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL],
-    timeoutSeconds: 60,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    timeoutSeconds: 30,
   },
   async (event) => {
     const before = event.data.before.data();
@@ -756,52 +756,35 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     if (msg) await sendTelegram(token, adminId, msg);
 
-    // ── Déclenchement MacroDroid — uniquement quand ordre → "Confirmé" ──
-    // Point d'entrée unique : fonctionne quelle que soit la source de confirmation
-    // (auto match SMS, admin bot, console Firebase, ordresBloques)
+    // ── Mise en file MacroDroid — uniquement quand ordre → "Confirmé" ──
+    // Pas d'appel direct : ordresBloques traite la file avec pause 20s entre chaque appel
     if (after.status !== "Confirmé") return;
 
-    const id1xbet     = after.userId1xBet || after.id1x || "";
-    const webhookBase = MACRO_WEBHOOK_URL.value() || "";
-    const montantVal  = Number(after.montant || 0);
+    const id1xbet  = after.userId1xBet || after.id1x || "";
+    const montantVal = Number(after.montant || 0);
 
     if (!id1xbet) return;
 
-    let webhookOk = false;
-    if (webhookBase) {
-      const delais = [0, 5000, 10000];
-      for (let i = 0; i < delais.length; i++) {
-        if (delais[i] > 0) await new Promise((r) => setTimeout(r, delais[i]));
-        try {
-          await triggerMacrodroid(webhookBase, ordreId, montantVal, id1xbet);
-          await event.data.after.ref.update({
-            webhookStatus: "ok",
-            webhookAt: FieldValue.serverTimestamp(),
-            webhookTentative: i + 1,
-          });
-          logAudit("macrodroid_ok", { ordreId, id1xbet, tentative: i + 1 });
-          webhookOk = true;
-          break;
-        } catch (e) { /* next retry */ }
-      }
-    }
+    // Éviter les doublons si déjà en file
+    const existSnap = await db.collection("macrodroid_jobs")
+      .where("ordreId", "==", ordreId).limit(5).get();
+    const hasActive = existSnap.docs.some(d => ["pending", "processing"].includes(d.data().status));
+    if (hasActive) return;
 
-    if (!webhookOk) {
-      // MacroDroid hors-ligne → file d'attente, ordresBloques retry toutes les 5 min
-      const jobRef = db.collection("macrodroid_jobs").doc();
-      await jobRef.set({
-        ordreId, id1xbet, montant: montantVal,
-        status: "pending",
-        createdAt: FieldValue.serverTimestamp(),
-      });
-      await event.data.after.ref.update({ webhookStatus: "queue", macroJobId: jobRef.id });
-      logAudit("macrodroid_queued", { ordreId, jobId: jobRef.id });
-      await sendTelegram(token, adminId,
-        `📋 <b>Recharge en file</b> — #${ordreId}\n` +
-        `ID 1xBet: <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF\n` +
-        `Retry automatique toutes les 5 min.`
-      );
-    }
+    const jobRef = db.collection("macrodroid_jobs").doc();
+    await jobRef.set({
+      ordreId, id1xbet, montant: montantVal,
+      status: "pending",
+      createdAt: FieldValue.serverTimestamp(),
+      source: "onOrdreUpdated",
+    });
+    await event.data.after.ref.update({ webhookStatus: "queue", macroJobId: jobRef.id });
+    logAudit("macrodroid_queued", { ordreId, jobId: jobRef.id });
+    await sendTelegram(token, adminId,
+      `📋 <b>Recharge en file</b> — #${ordreId}\n` +
+      `ID 1xBet: <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF\n` +
+      `Traitement dans le prochain cycle ordresBloques.`
+    );
   }
 );
 
@@ -1494,29 +1477,20 @@ exports.adminBot = onRequest(
         const id1xbet    = oData.userId1xBet || oData.id1x || oData.idBet || "";
         const montantVal = oData.montant || oData.amount || 0;
         if (!id1xbet) { await sendTelegram(token, adminId, `⚠️ ID 1xBet manquant pour <b>#${num}</b>.`); return; }
-        const wbUrl = MACRO_WEBHOOK_URL.value() || "";
-        if (!wbUrl) { await sendTelegram(token, adminId, `❌ Secret MACRODROID_WEBHOOK_URL non configuré.`); return; }
-        await sendTelegram(token, adminId, `🔄 Relance MacroDroid pour <b>#${num}</b> — ID: <code>${id1xbet}</code>...`);
-        try {
-          await triggerMacrodroid(wbUrl, num, montantVal, id1xbet);
-          await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAdmin: true });
-          logAudit("recharge_manuelle_ok", { num, adminId, id1xbet });
-          await sendTelegram(token, adminId,
-            `✅ <b>Recharge réussie !</b>\nOrdre <b>#${num}</b> | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
-        } catch (e) {
-          // Webhook échoué → file d'attente pour MacroDroid polling
-          const existSnap = await db.collection("macrodroid_jobs").where("ordreId", "==", num).limit(5).get();
-          const hasActive = existSnap.docs.some(d => ["pending", "processing"].includes(d.data().status));
-          if (!hasActive) {
-            const jRef = db.collection("macrodroid_jobs").doc();
-            await jRef.set({ ordreId: num, id1xbet, montant: montantVal, status: "pending", createdAt: FieldValue.serverTimestamp() });
-            await oDoc.ref.update({ webhookStatus: "queue", macroJobId: jRef.id });
-          } else {
-            await oDoc.ref.update({ webhookStatus: "queue" });
-          }
-          await sendTelegram(token, adminId,
-            `⚠️ Webhook échoué : <code>${e.message}</code>\n📋 <b>Mis en file d'attente</b> — MacroDroid récupèrera sous peu.`);
+
+        // Mise en file — ordresBloques traite avec pause 20s entre chaque appel
+        const existSnap = await db.collection("macrodroid_jobs").where("ordreId", "==", num).limit(5).get();
+        const hasActive = existSnap.docs.some(d => ["pending", "processing"].includes(d.data().status));
+        if (!hasActive) {
+          const jRef = db.collection("macrodroid_jobs").doc();
+          await jRef.set({ ordreId: num, id1xbet, montant: montantVal, status: "pending", createdAt: FieldValue.serverTimestamp(), source: "admin_recharge" });
+          await oDoc.ref.update({ webhookStatus: "queue", macroJobId: jRef.id });
+          logAudit("recharge_manuelle_en_file", { num, adminId, id1xbet });
+        } else {
+          await oDoc.ref.update({ webhookStatus: "queue" });
         }
+        await sendTelegram(token, adminId,
+          `📋 <b>Recharge mise en file</b> — #${num}\nID 1xBet <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF\nTraitement dans le prochain cycle ordresBloques (max 5 min).`);
         return;
       }
 
