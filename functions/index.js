@@ -1210,24 +1210,69 @@ exports.supportClient = onRequest(
           return;
         }
         const o      = snap.docs[0].data();
+        const oRef   = snap.docs[0].ref;
         const wbOk   = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
-        const wbFail = o.webhookStatus === "echec" || o.webhookStatus === "queue";
-        await send(statutOrdreMsg(ordreId, o));
-
         const adminToken = TELEGRAM_TOKEN.value();
         const adminId2   = TELEGRAM_ADMIN_ID.value();
 
-        // Confirmé mais pas encore crédité → alerte admin avec commande recharge prête
+        // ── Ordre confirmé mais non crédité → support bot règle directement ──
         if (o.status === "Confirmé" && !wbOk) {
-          await sendTelegram(adminToken, adminId2,
-            `🆘 <b>Client attend son crédit</b> — 👤 ${firstName}\n` +
-            `Ordre <b>#${ordreId}</b> | ${Number(o.montant||0).toLocaleString()} DJF | ID 1xBet: <code>${o.userId1xBet||o.id1x||"?"}</code>\n` +
-            `Statut webhook: <b>${o.webhookStatus||"non déclenché"}</b>\n\n` +
-            `Relancer : <code>recharge ${ordreId}</code>`
+          const id1xbet = o.userId1xBet || o.id1x || "";
+
+          if (!id1xbet) {
+            await send("⚠️ Votre dépôt est confirmé mais votre ID 1xBet est manquant.\nNotre équipe va vous contacter sous peu.");
+            await sendTelegram(adminToken, adminId2,
+              `🆘 <b>ID 1xBet manquant</b> — 👤 ${firstName}\nOrdre <b>#${ordreId}</b> | ${Number(o.montant||0).toLocaleString()} DJF`);
+            return;
+          }
+
+          // Vérifier si déjà en file
+          const existSnap = await db.collection("macrodroid_jobs")
+            .where("ordreId", "==", ordreId).limit(5).get();
+          const hasActive = existSnap.docs.some(d => ["pending", "processing"].includes(d.data().status));
+
+          if (!hasActive) {
+            const jobRef = db.collection("macrodroid_jobs").doc();
+            await jobRef.set({
+              ordreId, id1xbet, montant: o.montant || 0,
+              status: "pending",
+              createdAt: FieldValue.serverTimestamp(),
+              source: "support_bot",
+              clientName: firstName,
+            });
+            await oRef.update({ webhookStatus: "queue", macroJobId: jobRef.id });
+            logAudit("macrodroid_queued_support", { ordreId, clientName: firstName });
+          }
+
+          // Position dans la file → ETA
+          const qSnap    = await db.collection("macrodroid_jobs").where("status", "==", "pending").limit(20).get();
+          const position = Math.max(1, qSnap.docs.findIndex(d => d.data().ordreId === ordreId) + 1);
+          const etaMin   = position * 5;
+
+          await send(
+            `✅ <b>Dépôt confirmé — Crédit en cours de traitement</b>\n\n` +
+            `Ordre : <b>#${ordreId}</b> | ${Number(o.montant||0).toLocaleString()} DJF\n` +
+            `ID 1xBet : <code>${id1xbet}</code>\n\n` +
+            `⏱️ Votre compte sera crédité dans <b>${etaMin} minute${etaMin>1?"s":""}</b> maximum.`
           );
-        } else if (o.status === "Rejeté" || o.status === "Correction") {
           await sendTelegram(adminToken, adminId2,
-            `🆘 <b>Support</b> | 👤 ${firstName} demande statut <b>#${ordreId}</b> (${o.status})`);
+            `📋 <b>Support → file recharge</b> — 👤 ${firstName}\nOrdre <b>#${ordreId}</b> | <code>${id1xbet}</code> | position #${position}`);
+          return;
+        }
+
+        // Confirmé + crédité mais client réclame → alerte admin
+        if (o.status === "Confirmé" && wbOk) {
+          await send(statutOrdreMsg(ordreId, o));
+          await sendTelegram(adminToken, adminId2,
+            `🆘 <b>Crédit envoyé mais client réclame</b> — 👤 ${firstName}\nOrdre <b>#${ordreId}</b>\nForcer : <code>recharge ${ordreId}</code>`);
+          return;
+        }
+
+        // Autres statuts (Rejeté, Correction, En attente…)
+        await send(statutOrdreMsg(ordreId, o));
+        if (o.status === "Rejeté" || o.status === "Correction") {
+          await sendTelegram(adminToken, adminId2,
+            `🆘 <b>Support</b> | 👤 ${firstName} | <b>#${ordreId}</b> (${o.status})`);
         }
         return;
       }
