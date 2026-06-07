@@ -53,8 +53,9 @@ window.fsWhere = where;
 window.fsLimit = limit;
 window.fsSetDoc = setDoc;
 window.fsEnableNetwork = enableNetwork;
-  window.fsDeleteDoc = deleteDoc;
+window.fsDeleteDoc = deleteDoc;
 window.fsDisableNetwork = disableNetwork;
+window.fsRunTransaction = runTransaction;
 // Appeler updateUSSD et charger données après que le DOM soit prêt
 window.addEventListener('DOMContentLoaded', function(){
   if(typeof updateUSSD === 'function') updateUSSD();
@@ -1152,10 +1153,10 @@ async function genererOrderId(){
   const mm=String(now.getMonth()+1).padStart(2,'0');
   const dd=String(now.getDate()).padStart(2,'0');
   const dateKey=yy+mm+dd;
-  const counterRef=doc(db,'counters','daily_'+dateKey);
+  const counterRef=window.fsDoc(window.db,'counters','daily_'+dateKey);
   let seq=1;
   try{
-    await runTransaction(db,async(txn)=>{
+    await window.fsRunTransaction(window.db,async(txn)=>{
       const snap=await txn.get(counterRef);
       seq=snap.exists()?(snap.data().seq||0)+1:1;
       txn.set(counterRef,{seq,date:dateKey,updatedAt:new Date()});
