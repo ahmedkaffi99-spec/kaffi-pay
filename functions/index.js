@@ -527,6 +527,7 @@ function traiterAdminBot(text, orders, notifs) {
     "📭 <code>nonmatche</code>  🔄 <code>circuit</code>\n" +
     "✅ <code>confirmer 2606061</code>\n" +
     "❌ <code>rejeter 2606061 raison</code>\n" +
+    "🔁 <code>recharge 2606061</code>\n" +
     "🔗 <code>webhook support</code>"
   );
 }
@@ -1311,7 +1312,7 @@ exports.supportClient = onRequest(
 // HTTP — ADMIN BOT
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
-  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN], timeoutSeconds: 60 },
+  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_WEBHOOK_URL, MACRO_SECRET], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
     try {
@@ -1456,6 +1457,38 @@ exports.adminBot = onRequest(
           await sendTelegram(token, adminId, `✅ Webhook support bot configuré :\n<code>${funcUrl}</code>`);
         } else {
           await sendTelegram(token, adminId, `❌ Erreur webhook : ${rj.description || r.status}`);
+        }
+        return;
+      }
+
+      // recharge #ID — relance MacroDroid manuellement pour un ordre confirmé
+      const rechargeMatch = text.match(/^recharge\s+#?(\d{5,8})\b/i);
+      if (rechargeMatch) {
+        const num  = rechargeMatch[1];
+        const snap = await db.collection("orders").where("orderId", "==", num).limit(1).get();
+        if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        const oDoc  = snap.docs[0];
+        const oData = oDoc.data();
+        if (oData.status !== "Confirmé") {
+          await sendTelegram(token, adminId, `⛔ Ordre <b>#${num}</b> n'est pas Confirmé (statut: <b>${oData.status}</b>).`); return;
+        }
+        const id1xbet    = oData.userId1xBet || oData.id1x || oData.idBet || "";
+        const montantVal = oData.montant || oData.amount || 0;
+        if (!id1xbet) { await sendTelegram(token, adminId, `⚠️ ID 1xBet manquant pour <b>#${num}</b>.`); return; }
+        const wbUrl = MACRO_WEBHOOK_URL.value() || "";
+        if (!wbUrl) { await sendTelegram(token, adminId, `❌ Secret MACRODROID_WEBHOOK_URL non configuré.`); return; }
+        await sendTelegram(token, adminId, `🔄 Relance MacroDroid pour <b>#${num}</b> — ID: <code>${id1xbet}</code>...`);
+        try {
+          await appelWebhook(wbUrl, num, montantVal, id1xbet);
+          await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAdmin: true });
+          await db.collection("failed_webhooks").doc(num).update({ statut: "résolu_admin" }).catch(() => {});
+          logAudit("recharge_manuelle", { num, adminId, id1xbet });
+          await sendTelegram(token, adminId,
+            `✅ <b>Recharge réussie !</b>\nOrdre <b>#${num}</b> | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
+        } catch (e) {
+          await oDoc.ref.update({ webhookStatus: "echec", webhookError: e.message }).catch(() => {});
+          await sendTelegram(token, adminId,
+            `❌ Recharge échouée : <code>${e.message}</code>\n\nVérifiez que <b>MacroDroid</b> est actif sur le téléphone.`);
         }
         return;
       }

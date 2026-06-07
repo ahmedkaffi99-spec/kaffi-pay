@@ -1682,18 +1682,23 @@ function showSuivi(ref, txData){
   suiviInterval = setInterval(function(){
     if(!suiviRef || !currentSuiviTx) return;
     var fresh = _txsCache.find(function(t){ return t.ref===suiviRef||t.orderId===suiviRef; });
-    if(fresh && fresh.status !== currentSuiviTx.status){
+    if(!fresh) return;
+    var statusChanged  = fresh.status !== currentSuiviTx.status;
+    var webhookChanged = (fresh.webhookStatus||'') !== (currentSuiviTx.webhookStatus||'');
+    if(statusChanged || webhookChanged){
       currentSuiviTx = Object.assign({}, currentSuiviTx, {
-        status: fresh.status,
-        correctionMsg: fresh.correctionMsg||''
+        status:        fresh.status,
+        correctionMsg: fresh.correctionMsg || '',
+        webhookStatus: fresh.webhookStatus || currentSuiviTx.webhookStatus || ''
       });
-      // Status updated via Firestore realtime
       renderSuivi();
-      // Stop polling if final status
-      if(fresh.status==='Confirmé'||fresh.status==='Rejeté'){
-        clearInterval(suiviInterval); suiviInterval=null;
-      }
     }
+    // Stop only when final state is fully known
+    var wbS = currentSuiviTx.webhookStatus || '';
+    var wbDone = (wbS === 'ok' || wbS === 'ok_retry_rt' || wbS === 'echec');
+    var isFinal = (currentSuiviTx.status === 'Rejeté' || currentSuiviTx.status === 'Annulé')
+               || (currentSuiviTx.status === 'Confirmé' && wbDone);
+    if(isFinal){ clearInterval(suiviInterval); suiviInterval=null; }
   }, 3000);
 }
 
@@ -1702,7 +1707,9 @@ function renderSuivi(){
   if(!tx) return;
   const isDepot = tx.type === 'Dépôt';
   const status  = tx.status || 'En attente';
+  const wbOk    = tx.webhookStatus === 'ok' || tx.webhookStatus === 'ok_retry_rt';
   const wbFail  = tx.webhookStatus === 'echec';
+  const wbPend  = !wbOk && !wbFail;
 
   document.getElementById('suivi-ref').textContent = tx.orderId || tx.ref || '—';
 
@@ -1743,7 +1750,16 @@ function renderSuivi(){
     stxt.style.color = 'var(--success)';
     sdesc.textContent= 'Votre paiement Waafi a été reçu et validé. Crédit '+(isDepot?'1xBet':'Waafi')+' en cours...';
     prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
-  } else if(status === 'Confirmé' && !wbFail){
+  } else if(status === 'Confirmé' && wbPend){
+    // Webhook pas encore terminé — on attend le résultat
+    card.style.borderColor = 'rgba(91,156,255,0.2)';
+    card.style.background  = 'linear-gradient(160deg,rgba(91,156,255,0.05),rgba(7,16,30,0.8))';
+    icon.textContent = '⏳';
+    stxt.textContent = 'Validé — Crédit en cours...';
+    stxt.style.color = '#5b9cff';
+    sdesc.textContent= 'Paiement reçu. Votre compte '+(isDepot?'1xBet':'Waafi')+' est en cours de crédit.';
+    prog.style.width = '75%'; prog.style.background = 'linear-gradient(90deg,#5b9cff,#00d4a0)';
+  } else if(status === 'Confirmé' && wbOk){
     card.style.borderColor = 'rgba(0,212,160,0.3)';
     card.style.background  = 'linear-gradient(160deg,rgba(0,212,160,0.08),rgba(7,16,30,0.8))';
     icon.textContent = '🎉';
@@ -1751,7 +1767,6 @@ function renderSuivi(){
     stxt.style.color = 'var(--success)';
     sdesc.textContent= isDepot ? 'Votre ID 1xBet a été crédité. Vous pouvez maintenant jouer !' : 'Votre argent a été envoyé sur votre numéro Waafi.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
-    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   } else if(status === 'Confirmé' && wbFail){
     card.style.borderColor = 'rgba(255,64,96,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
@@ -1760,7 +1775,6 @@ function renderSuivi(){
     stxt.style.color = 'var(--error)';
     sdesc.textContent= 'Le crédit de votre compte a échoué. Contactez le support avec votre numéro d\'ordre.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
-    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   } else if(status === 'Rejeté'){
     card.style.borderColor = 'rgba(255,64,96,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
@@ -1823,10 +1837,11 @@ function renderSuivi(){
   var s2title= isRejete ? 'Rejeté' : 'Validé';
   var s2desc = isRejete ? 'Paiement non reçu' : 'Paiement reçu';
 
-  var s3done  = isConfirmed && !wbFail;
+  var s3done  = isConfirmed && wbOk;
+  var s3act   = isConfirmed && wbPend;
   var s3fail  = isConfirmed && wbFail;
   var s3title = s3fail ? 'Échoué' : (isDepot ? 'Crédité avec succès' : 'Retrait effectué');
-  var s3desc  = s3fail ? 'Contactez le support' : (isDepot ? 'Votre ID 1xBet a été crédité' : 'Argent envoyé sur votre Waafi');
+  var s3desc  = s3fail ? 'Contactez le support' : s3act ? 'Crédit en cours...' : (isDepot ? 'Votre ID 1xBet a été crédité' : 'Argent envoyé sur votre Waafi');
 
   function tlStep(done, active, fail, title, desc){
     var em  = fail ? '❌' : done ? '✅' : active ? '⏳' : '○';
@@ -1848,7 +1863,7 @@ function renderSuivi(){
   } else {
     tlHtml = tlStep(s1done, s1act,  false,  'En attente',  'Ordre enregistré, traitement en cours')
            + tlStep(s2done, s2act,  s2fail, s2title, s2desc)
-           + tlStep(s3done, false,  s3fail, s3title, s3desc);
+           + tlStep(s3done, s3act,  s3fail, s3title, s3desc);
   }
   document.getElementById('suivi-timeline').innerHTML = tlHtml;
 
