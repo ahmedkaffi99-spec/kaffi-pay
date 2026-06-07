@@ -721,8 +721,8 @@ exports.onOrdreUpdated = onDocumentUpdated(
   {
     document: "orders/{docId}",
     region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
-    timeoutSeconds: 30,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL],
+    timeoutSeconds: 60,
   },
   async (event) => {
     const before = event.data.before.data();
@@ -756,21 +756,56 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     if (msg) await sendTelegram(token, adminId, msg);
 
-    // ── Mise en file MacroDroid — uniquement quand ordre → "Confirmé" ──
-    // Pas d'appel direct : ordresBloques traite la file avec pause 20s entre chaque appel
+    // ── Appel direct MacroDroid pour les ordres normaux (frontend → auto-match Waafi) ──
+    // Verrou Firestore 20s : une seule instance appelle MacroDroid à la fois.
+    // Si le verrou est pris (appel < 20s) → file d'attente → ordresBloques reprend.
+    // Les ordres bloqués (admin recharge / support bot) passent toujours par la file.
     if (after.status !== "Confirmé") return;
 
-    const id1xbet  = after.userId1xBet || after.id1x || "";
+    const id1xbet    = after.userId1xBet || after.id1x || "";
     const montantVal = Number(after.montant || 0);
+    const webhookBase = MACRO_WEBHOOK_URL.value() || "";
 
     if (!id1xbet) return;
 
-    // Éviter les doublons si déjà en file
+    // Éviter doublon si déjà en file (recharge admin/support déjà ajouté)
     const existSnap = await db.collection("macrodroid_jobs")
       .where("ordreId", "==", ordreId).limit(5).get();
     const hasActive = existSnap.docs.some(d => ["pending", "processing"].includes(d.data().status));
     if (hasActive) return;
 
+    if (!webhookBase) {
+      // Secret non configuré → file directement
+      const jobRef = db.collection("macrodroid_jobs").doc();
+      await jobRef.set({ ordreId, id1xbet, montant: montantVal, status: "pending", createdAt: FieldValue.serverTimestamp(), source: "onOrdreUpdated" });
+      await event.data.after.ref.update({ webhookStatus: "queue", macroJobId: jobRef.id });
+      return;
+    }
+
+    // Verrou 20s — transaction atomique pour éviter les appels simultanés
+    const lockRef = db.collection("system_locks").doc("macrodroid");
+    const canCall = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(lockRef);
+      const last = snap.exists ? (snap.data().at?.toMillis?.() || 0) : 0;
+      if (Date.now() - last >= 20000) {
+        tx.set(lockRef, { at: FieldValue.serverTimestamp() });
+        return true;
+      }
+      return false;
+    }).catch(() => false);
+
+    if (canCall) {
+      try {
+        await triggerMacrodroid(webhookBase, ordreId, montantVal, id1xbet);
+        await event.data.after.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
+        logAudit("macrodroid_ok", { ordreId, id1xbet });
+        return;
+      } catch (e) {
+        // Appel échoué → file d'attente ci-dessous
+      }
+    }
+
+    // Verrou pris ou appel échoué → file d'attente, ordresBloques traite dans max 5 min
     const jobRef = db.collection("macrodroid_jobs").doc();
     await jobRef.set({
       ordreId, id1xbet, montant: montantVal,
@@ -783,7 +818,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
     await sendTelegram(token, adminId,
       `📋 <b>Recharge en file</b> — #${ordreId}\n` +
       `ID 1xBet: <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF\n` +
-      `Traitement dans le prochain cycle ordresBloques.`
+      `MacroDroid occupé — traitement sous 5 min.`
     );
   }
 );
@@ -943,6 +978,8 @@ exports.ordresBloques = onSchedule(
 
       try {
         await triggerMacrodroid(webhookBase, job.ordreId, job.montant, job.id1xbet);
+        // Mettre à jour le verrou global pour que onOrdreUpdated respecte la pause 20s
+        await db.collection("system_locks").doc("macrodroid").set({ at: FieldValue.serverTimestamp() });
         await jobDoc.ref.update({ status: "done", doneAt: FieldValue.serverTimestamp(), doneBySchedule: true });
         const ordSnap = await db.collection("orders").where("orderId", "==", job.ordreId).limit(1).get();
         if (!ordSnap.empty) {
