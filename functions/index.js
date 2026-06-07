@@ -144,8 +144,20 @@ async function detecterDoublon(phone, montant, type, excluId) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SECTION 5 — CIRCUIT BREAKER MacroDroid
+// SECTION 5 — APPEL MACRODROID (direct, temps réel, sans circuit breaker)
 // ══════════════════════════════════════════════════════════════════
+
+// Appel direct MacroDroid — utilisé pour confirmations (auto + admin).
+// Pas de circuit breaker ici : on déclenche immédiatement à chaque confirmation.
+async function triggerMacrodroid(url, ordreRef, montant, id1xbet) {
+  if (!url) throw new Error("MACRODROID_WEBHOOK_URL non configuré dans Firebase Secrets");
+  const webhookUrl = `${url}?id1xbet=${encodeURIComponent(id1xbet)}&montant=${encodeURIComponent(montant)}&ref=${encodeURIComponent(ordreRef)}`;
+  const resp = await fetch(webhookUrl, { signal: AbortSignal.timeout(15000) });
+  if (!resp.ok) throw new Error(`MacroDroid HTTP ${resp.status}`);
+  return resp;
+}
+
+// appelWebhook conservé pour onWebhookEchoue (retries) avec circuit breaker
 const CB_SEUIL   = 3;
 const CB_TIMEOUT = 5 * 60 * 1000;
 
@@ -305,20 +317,27 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
     (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "")
   );
 
-  // Appel webhook MacroDroid (crédit 1xBet)
+  // Déclenchement MacroDroid — immédiat, temps réel
   const id1xbet = ordre.userId1xBet || ordre.id1x || "";
-  if (id1xbet) {
+  if (id1xbet && webhookBase) {
     try {
-      await appelWebhook(webhookBase, ordreRef, montantNotif, id1xbet);
+      await triggerMacrodroid(webhookBase, ordreRef, montantNotif, id1xbet);
       await ordreDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
+      logAudit("macrodroid_ok", { ordreRef, id1xbet });
     } catch (e) {
       await ordreDoc.ref.update({ webhookStatus: "echec", webhookError: e.message });
       await sauvegarderWebhookEchoue(ordreRef, id1xbet, montantNotif);
-      // onWebhookEchoue va retenter immédiatement (0s / 30s / 90s)
+      await sendTelegram(token, adminId,
+        `🔴 <b>MacroDroid échoué</b> — #${ordreRef}\n<code>${e.message}</code>\n\nTapez <code>recharge ${ordreRef}</code> pour réessayer.`
+      );
     }
-  } else {
+  } else if (!id1xbet) {
     await sendTelegram(token, adminId,
       `⚠️ <b>ID 1xBet manquant</b> — #${ordreRef}\n${Number(montantNotif).toLocaleString()} DJF confirmé. Recharge manuelle.`
+    );
+  } else {
+    await sendTelegram(token, adminId,
+      `⚠️ <b>MACRODROID_WEBHOOK_URL manquant</b> — configurez le secret Firebase.\nTapez <code>recharge ${ordreRef}</code> après configuration.`
     );
   }
 
@@ -528,7 +547,7 @@ function traiterAdminBot(text, orders, notifs) {
     "✅ <code>confirmer 2606061</code>\n" +
     "❌ <code>rejeter 2606061 raison</code>\n" +
     "🔁 <code>recharge 2606061</code>\n" +
-    "🔗 <code>webhook support</code>"
+    "🧪 <code>test macro</code>  🔗 <code>webhook support</code>"
   );
 }
 
@@ -1365,15 +1384,15 @@ exports.adminBot = onRequest(
           `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 Déclenchement MacroDroid...`);
 
         try {
-          await appelWebhook(wbUrl, num, montantVal, id1xbet);
+          await triggerMacrodroid(wbUrl, num, montantVal, id1xbet);
           await doc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
-          logAudit("webhook_admin_succes", { num, adminId, id1xbet });
+          logAudit("macrodroid_admin_ok", { num, adminId, id1xbet });
           await sendTelegram(token, adminId,
             `🎉 <b>MacroDroid déclenché !</b>\nID 1xBet <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF crédité.`);
         } catch (e) {
           await doc.ref.update({ webhookStatus: "echec", webhookError: e.message });
           await sauvegarderWebhookEchoue(num, id1xbet, montantVal);
-          logAudit("webhook_admin_echec", { num, adminId, erreur: e.message });
+          logAudit("macrodroid_admin_echec", { num, adminId, erreur: e.message });
           await sendTelegram(token, adminId,
             `❌ MacroDroid échoué : <code>${e.message}</code>\nTapez <code>recharge ${num}</code> pour réessayer.`);
         }
@@ -1449,6 +1468,22 @@ exports.adminBot = onRequest(
         return;
       }
 
+      // test macro — vérifie que MacroDroid répond
+      if (t === "test macro" || t === "/test_macro") {
+        const wbUrl = MACRO_WEBHOOK_URL.value() || "";
+        if (!wbUrl) { await sendTelegram(token, adminId, "❌ MACRODROID_WEBHOOK_URL non configuré dans Firebase Secrets."); return; }
+        await sendTelegram(token, adminId, `🔄 Test MacroDroid...\n<code>${wbUrl.substring(0, 60)}...</code>`);
+        try {
+          await triggerMacrodroid(wbUrl, "TEST", 0, "TEST");
+          await sendTelegram(token, adminId, "✅ MacroDroid répond correctement !");
+        } catch (e) {
+          await sendTelegram(token, adminId,
+            `❌ MacroDroid ne répond pas :\n<code>${e.message}</code>\n\n` +
+            "Vérifiez que :\n• MacroDroid est ouvert sur le téléphone\n• Le webhook est bien configuré dans MacroDroid\n• L'URL dans Firebase Secrets est correcte");
+        }
+        return;
+      }
+
       // circuit
       if (t === "circuit" || t === "/circuit") {
         const snap = await db.collection("circuit_breakers").doc("macrodroid").get();
@@ -1511,10 +1546,10 @@ exports.adminBot = onRequest(
         if (!wbUrl) { await sendTelegram(token, adminId, `❌ Secret MACRODROID_WEBHOOK_URL non configuré.`); return; }
         await sendTelegram(token, adminId, `🔄 Relance MacroDroid pour <b>#${num}</b> — ID: <code>${id1xbet}</code>...`);
         try {
-          await appelWebhook(wbUrl, num, montantVal, id1xbet);
+          await triggerMacrodroid(wbUrl, num, montantVal, id1xbet);
           await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAdmin: true });
           await db.collection("failed_webhooks").doc(num).update({ statut: "résolu_admin" }).catch(() => {});
-          logAudit("recharge_manuelle", { num, adminId, id1xbet });
+          logAudit("recharge_manuelle_ok", { num, adminId, id1xbet });
           await sendTelegram(token, adminId,
             `✅ <b>Recharge réussie !</b>\nOrdre <b>#${num}</b> | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
         } catch (e) {
