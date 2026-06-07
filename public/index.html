@@ -1663,26 +1663,30 @@ function exportPDF(){
   showToast('📋 PDF ouvert','success');
 }
 
-let suiviRef=null, suiviInterval=null;
+let suiviRef=null, suiviInterval=null, suiviUnsubscribe=null;
 
 var currentSuiviTx = null;
 
 function showSuivi(ref, txData){
   suiviRef = ref;
   if(txData) currentSuiviTx = txData;
-  // Persister via Firestore uniquement
   try{
-    
-    // pushState crée une entrée dans l'historique → bouton Retour Android fonctionne
     window.history.pushState({page:'suivi', ref:ref}, '', '#suivi-'+encodeURIComponent(ref));
   }catch(e){}
   if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+  if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   showScreen('suivi');
   renderSuivi();
-  suiviInterval = setInterval(function(){
-    if(!suiviRef || !currentSuiviTx) return;
-    var fresh = _txsCache.find(function(t){ return t.ref===suiviRef||t.orderId===suiviRef; });
-    if(!fresh) return;
+  // Direct Firestore listener on this specific order — bypasses _txsCache
+  var q = window.fsQuery(
+    window.fsCollection(window.db, 'orders'),
+    window.fsWhere('orderId', '==', ref),
+    window.fsLimit(1)
+  );
+  suiviUnsubscribe = window.fsOnSnapshot(q, function(snap){
+    if(snap.empty) return;
+    var fresh = snap.docs[0].data();
+    if(!currentSuiviTx) return;
     var statusChanged  = fresh.status !== currentSuiviTx.status;
     var webhookChanged = (fresh.webhookStatus||'') !== (currentSuiviTx.webhookStatus||'');
     if(statusChanged || webhookChanged){
@@ -1693,13 +1697,12 @@ function showSuivi(ref, txData){
       });
       renderSuivi();
     }
-    // Stop only when final state is fully known
-    var wbS = currentSuiviTx.webhookStatus || '';
+    var wbS    = currentSuiviTx.webhookStatus || '';
     var wbDone = (wbS === 'ok' || wbS === 'ok_retry_rt' || wbS === 'echec');
     var isFinal = (currentSuiviTx.status === 'Rejeté' || currentSuiviTx.status === 'Annulé')
                || (currentSuiviTx.status === 'Confirmé' && wbDone);
-    if(isFinal){ clearInterval(suiviInterval); suiviInterval=null; }
-  }, 3000);
+    if(isFinal && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+  });
 }
 
 function renderSuivi(){
@@ -1783,7 +1786,7 @@ function renderSuivi(){
     stxt.style.color = 'var(--error)';
     sdesc.textContent= 'Votre paiement Waafi n\'a pas été reçu. Vérifiez votre Transfer ID et contactez le support.';
     prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
-    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   } else if(status === 'Annulé'){
     card.style.borderColor = 'rgba(150,150,150,0.15)';
     card.style.background  = 'linear-gradient(160deg,rgba(150,150,150,0.03),rgba(7,16,30,0.8))';
@@ -1792,7 +1795,7 @@ function renderSuivi(){
     stxt.style.color = 'var(--muted)';
     sdesc.textContent= 'Votre ordre a été annulé. Vous pouvez soumettre un nouvel ordre à tout moment.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,#555,#888)';
-    if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   }
 
   // ── DÉTAILS ──
@@ -1898,6 +1901,7 @@ function retourClient(){
   currentSuiviTx = null;
   suiviRef = null;
   if(suiviInterval){ clearInterval(suiviInterval); suiviInterval = null; }
+  if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe = null; }
   try{ window.history.pushState(null, '', '/'); } catch(e){}
   showScreen('client');
 }
