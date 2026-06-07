@@ -1150,27 +1150,13 @@ function logAction(action, data){
   }).catch(function(){});
 }
 
-async function genererOrderId(){
+function genererOrderId(){
   const now=new Date();
   const yy=String(now.getFullYear()).slice(-2);
   const mm=String(now.getMonth()+1).padStart(2,'0');
   const dd=String(now.getDate()).padStart(2,'0');
-  const dateKey=yy+mm+dd;
-  const seqFallback=Math.floor(Math.random()*900)+100;
-  if(!window.db||!window.fsDoc||!window.fsRunTransaction) return dateKey+seqFallback;
-  let seq=seqFallback;
-  try{
-    const counterRef=window.fsDoc(window.db,'counters','daily_'+dateKey);
-    await Promise.race([
-      window.fsRunTransaction(window.db,async(txn)=>{
-        const snap=await txn.get(counterRef);
-        seq=snap.exists()?(snap.data().seq||0)+1:1;
-        txn.set(counterRef,{seq,date:dateKey,updatedAt:new Date()});
-      }),
-      new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout')),5000))
-    ]);
-  }catch(e){ seq=seqFallback; }
-  return dateKey+seq;
+  const seq=Math.floor(Math.random()*900)+100;
+  return yy+mm+dd+seq;
 }
 
 async function submitDepot(){
