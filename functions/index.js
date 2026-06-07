@@ -1,11 +1,11 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════╗
- * ║           KAFFI PAY — CLOUD FUNCTIONS v3.4                      ║
+ * ║           KAFFI PAY — CLOUD FUNCTIONS v3.5                      ║
  * ║  • Confirmation automatique dépôts (Transfer ID)                ║
  * ║  • Fraude permanente (Transfer ID réutilisé)                    ║
  * ║  • Notifications Telegram admin                                 ║
- * ║  • Support client Telegram (Claude AI)                          ║
- * ║  • Audit Claude → admin après chaque interaction client         ║
+ * ║  • Support client Telegram (logique embarquée)                  ║
+ * ║  • Analyse admin (stats Firestore temps réel)                   ║
  * ║  • Webhook MacroDroid SMS Waafi                                 ║
  * ╚══════════════════════════════════════════════════════════════════╝
  */
@@ -15,7 +15,6 @@ const { onCall, onRequest }                    = require("firebase-functions/v2/
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
-const Anthropic                                = require("@anthropic-ai/sdk");
 
 initializeApp();
 const db = getFirestore();
@@ -27,28 +26,264 @@ const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
-const SUPPORT_BOT_TOKEN  = defineSecret("SUPPORT_BOT_TOKEN");
-const ANTHROPIC_API_KEY  = defineSecret("ANTHROPIC_API_KEY");
+const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
 
-// ── Helpers ─────────────────────────────────────────────────────────
+// ── Détection fraude — règles pures, pas d'IA ─────────────────────
+function analyserFraude(tx, transferId) {
+  const raisons = [];
+  let score     = 0;
 
-async function claudeGenerate(prompt) {
-  const key = ANTHROPIC_API_KEY.value().trim();
-  if (!key) throw new Error("ANTHROPIC_API_KEY secret vide ou non configuré");
-  console.log(`claudeGenerate: clé …${key.slice(-6)}, model claude-haiku-4-5`);
-  const client = new Anthropic({ apiKey: key });
-  try {
-    const message = await client.messages.create({
-      model:    "claude-haiku-4-5",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
-    return message.content[0].text;
-  } catch (e) {
-    console.error("claudeGenerate API error:", e.status, e.message);
-    throw e;
+  const montant = Number(tx.montant || 0);
+  const num     = (tx.numeroPayment || "").replace(/\s/g, "");
+
+  if (montant > 100000)      { score += 40; raisons.push("Montant très élevé (> 100 000 DJF)"); }
+  else if (montant > 50000)  { score += 20; raisons.push("Montant élevé (> 50 000 DJF)"); }
+
+  if (!transferId) {
+    score += 40; raisons.push("Transfer ID manquant");
+  } else if (!/^\d{6,}$/.test(String(transferId))) {
+    score += 40; raisons.push("Transfer ID invalide (< 6 chiffres ou format incorrect)");
   }
+
+  if (num && !/^77/.test(num)) { score += 20; raisons.push("Numéro expéditeur suspect (ne commence pas par 77)"); }
+  if (!num)                    { score += 10; raisons.push("Numéro expéditeur manquant"); }
+
+  score = Math.min(score, 100);
+  const risque = score >= 70 ? "élevé" : score >= 40 ? "moyen" : "faible";
+  const action = score >= 70 ? "rejeter" : score >= 40 ? "vérifier" : "valider";
+
+  return {
+    score_fraude: score,
+    risque,
+    raisons: raisons.length ? raisons : ["Aucune anomalie détectée"],
+    action,
+  };
 }
+
+// ── Support client — arbre de décision embarqué ───────────────────
+function repondreSupport(text, session, orders) {
+  const t = text.toLowerCase().trim();
+
+  const ordreMatch    = text.match(/\b(\d{6,8})\b/);
+  const ordreNum      = ordreMatch ? ordreMatch[1] : null;
+  const hasTransferId = /transfer[- ]?id|tid\b/i.test(t) || /\b\d{8,}\b/.test(text);
+  const isGreeting    = /^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr)\b/.test(t);
+
+  // Client fournit un Transfer ID → escalade admin
+  if (hasTransferId && (orders.length > 0 || session.phone)) {
+    return {
+      reponse_client:
+        "Merci pour ces informations. Votre demande a été transmise à notre équipe pour vérification manuelle.\n\n" +
+        "Nous reviendrons vers vous dans les plus brefs délais.\n\n— <i>Support Kaffi-Pay</i>",
+      decision:       "escalade",
+      action_prise:   "Transfer ID fourni — escalade vers admin",
+      niveau_urgence: "moyen",
+      resume_audit:   "Client a fourni des informations de paiement — vérification manuelle requise",
+    };
+  }
+
+  // Client donne un numéro d'ordre
+  if (ordreNum) {
+    if (!session.phone) {
+      return {
+        reponse_client:
+          `Pour vérifier l'ordre <b>#${ordreNum}</b>, merci d'indiquer votre <b>numéro Waafi</b> ` +
+          "(8 chiffres, ex: <code>77123456</code>).\n\n— <i>Support Kaffi-Pay</i>",
+        decision:       "info_manquante",
+        action_prise:   "Numéro Waafi requis pour recherche",
+        niveau_urgence: "faible",
+        resume_audit:   `Ordre #${ordreNum} donné sans numéro Waafi`,
+      };
+    }
+
+    const ligne = orders.find((o) => o.includes(`#${ordreNum}`));
+
+    if (ligne) {
+      if (ligne.includes("| Confirmé")) {
+        return {
+          reponse_client:
+            `✅ Votre ordre <b>#${ordreNum}</b> est <b>confirmé</b>. ` +
+            "Votre compte 1xBet a bien été crédité.\n\n— <i>Support Kaffi-Pay</i>",
+          decision:       "résolu",
+          action_prise:   "Statut confirmé communiqué au client",
+          niveau_urgence: "faible",
+          resume_audit:   `Ordre #${ordreNum} confirmé — client informé`,
+        };
+      }
+
+      if (ligne.includes("| En attente")) {
+        return {
+          reponse_client:
+            `⏳ Votre ordre <b>#${ordreNum}</b> est <b>en cours de traitement</b>. ` +
+            "Vous serez notifié automatiquement dès confirmation.\n\n— <i>Support Kaffi-Pay</i>",
+          decision:       "résolu",
+          action_prise:   "Statut en attente communiqué",
+          niveau_urgence: "faible",
+          resume_audit:   `Ordre #${ordreNum} en attente — client informé`,
+        };
+      }
+
+      if (ligne.includes("| Rejeté")) {
+        const nonRecu = ligne.toLowerCase().includes("paiement non re") ||
+                        ligne.toLowerCase().includes("introuvable");
+        const fraude  = ligne.toLowerCase().includes("fraude");
+
+        if (fraude) {
+          return {
+            reponse_client:
+              "❌ Votre ordre a été rejeté pour raison de sécurité.\n\n" +
+              "Si vous pensez qu'il s'agit d'une erreur, envoyez votre Transfer ID Waafi pour vérification.\n\n" +
+              "— <i>Support Kaffi-Pay</i>",
+            decision:       "fraude_signalée",
+            action_prise:   "Ordre fraude — réponse prudente",
+            niveau_urgence: "élevé",
+            resume_audit:   `Ordre #${ordreNum} rejeté fraude — client a contacté support`,
+          };
+        }
+
+        if (nonRecu) {
+          return {
+            reponse_client:
+              `❌ Votre ordre <b>#${ordreNum}</b> a été rejeté : <b>Paiement non reçu</b>.\n\n` +
+              "Raisons possibles :\n" +
+              "1. Le Transfer ID saisi ne correspond à aucun paiement reçu\n" +
+              "2. Le montant ou numéro expéditeur ne correspond pas\n" +
+              "3. Le paiement a été effectué après soumission de l'ordre\n\n" +
+              "Pour vérification merci d'envoyer :\n" +
+              "• <b>Transfer ID Waafi</b>\n" +
+              "• <b>Montant payé (DJF)</b>\n" +
+              "• <b>Numéro Waafi expéditeur</b>\n\n" +
+              "— <i>Support Kaffi-Pay</i>",
+            decision:       "info_manquante",
+            action_prise:   "Rejeté paiement non reçu — demande infos complémentaires",
+            niveau_urgence: "moyen",
+            resume_audit:   `Ordre #${ordreNum} rejeté paiement non reçu — Transfer ID demandé`,
+          };
+        }
+
+        return {
+          reponse_client:
+            `❌ Votre ordre <b>#${ordreNum}</b> a été <b>rejeté</b>.\n\n` +
+            "Pour plus d'informations, envoyez votre Transfer ID Waafi.\n\n— <i>Support Kaffi-Pay</i>",
+          decision:       "info_manquante",
+          action_prise:   "Ordre rejeté — demande Transfer ID",
+          niveau_urgence: "moyen",
+          resume_audit:   `Ordre #${ordreNum} rejeté — client informé`,
+        };
+      }
+    } else {
+      return {
+        reponse_client:
+          `L'ordre <b>#${ordreNum}</b> n'a pas été trouvé pour votre numéro.\n\n` +
+          "Vérifiez le numéro d'ordre (6 à 8 chiffres, visible sur kaffi-pay.com).\n\n" +
+          "— <i>Support Kaffi-Pay</i>",
+        decision:       "info_manquante",
+        action_prise:   "Ordre introuvable pour ce numéro",
+        niveau_urgence: "faible",
+        resume_audit:   `Ordre #${ordreNum} introuvable pour ${session.phone}`,
+      };
+    }
+  }
+
+  // Salutation
+  if (isGreeting) {
+    return {
+      reponse_client:
+        "Bonjour ! Je suis le support Kaffi-Pay.\n\n" +
+        "Pour vous aider, merci d'indiquer votre <b>numéro d'ordre</b> (ex : <code>2606061</code>).\n\n" +
+        "— <i>Support Kaffi-Pay</i>",
+      decision:       "info_manquante",
+      action_prise:   "Salutation — demande numéro d'ordre",
+      niveau_urgence: "faible",
+      resume_audit:   "Client a salué — demande numéro d'ordre",
+    };
+  }
+
+  // Fallback universel
+  return {
+    reponse_client:
+      "Bonjour ! Pour vous aider, merci d'indiquer votre <b>numéro d'ordre</b> (ex : <code>2606061</code>).\n\n" +
+      "— <i>Support Kaffi-Pay</i>",
+    decision:       "info_manquante",
+    action_prise:   "Message non reconnu — demande numéro d'ordre",
+    niveau_urgence: "faible",
+    resume_audit:   "Message non reconnu — fallback numéro d'ordre",
+  };
+}
+
+// ── Bot admin — commandes embarquées ──────────────────────────────
+function traiterAdminBot(text, orders, notifs) {
+  const t = text.toLowerCase().trim();
+
+  // Format ligne ordre: • #ID | Type | MONTANT DJF | Status | N°... | Raison
+  function parseMontant(ligne) {
+    const m = ligne.match(/\|\s*([\d\s]+)\s*DJF/);
+    return m ? parseFloat(m[1].replace(/\s/g, "")) || 0 : 0;
+  }
+
+  const ordreNum = (text.match(/\b(\d{6,8})\b/) || [])[1] || null;
+
+  // stats
+  if (/^\/stats$/.test(t) || /\b(stats|statistiques|bilan|résumé)\b/.test(t)) {
+    const confirmes = orders.filter((o) => o.includes("| Confirmé"));
+    const attente   = orders.filter((o) => o.includes("| En attente"));
+    const rejetes   = orders.filter((o) => o.includes("| Rejeté"));
+    const fraudes   = orders.filter((o) => o.toLowerCase().includes("fraude"));
+    const volume    = confirmes.reduce((s, o) => s + parseMontant(o), 0);
+    const taux      = orders.length ? Math.round(confirmes.length / orders.length * 100) : 0;
+    return (
+      "📊 <b>Statistiques (20 derniers ordres)</b>\n\n" +
+      `✅ Confirmés : <b>${confirmes.length}</b>\n` +
+      `⏳ En attente : <b>${attente.length}</b>\n` +
+      `❌ Rejetés : <b>${rejetes.length}</b>\n` +
+      `🚨 Fraudes : <b>${fraudes.length}</b>\n` +
+      `💰 Volume confirmé : <b>${volume.toLocaleString()} DJF</b>\n` +
+      `📈 Taux confirmation : <b>${taux}%</b>`
+    );
+  }
+
+  // ordres en attente
+  if (/^\/ordres$/.test(t) || /\b(attente|ordres)\b/.test(t)) {
+    const attente = orders.filter((o) => o.includes("| En attente"));
+    if (!attente.length) return "✅ Aucun ordre en attente.";
+    return `⏳ <b>Ordres en attente (${attente.length})</b>\n\n${attente.join("\n")}`;
+  }
+
+  // fraudes / rejetés
+  if (/^\/fraudes$/.test(t) || /\b(fraudes?|rejet)\b/.test(t)) {
+    const fraudes = orders.filter((o) => o.toLowerCase().includes("fraude"));
+    const rejetes = orders.filter((o) => o.includes("| Rejeté"));
+    if (fraudes.length) return `🚨 <b>Fraudes détectées (${fraudes.length})</b>\n\n${fraudes.join("\n")}`;
+    if (rejetes.length) return `❌ <b>Ordres rejetés (${rejetes.length})</b>\n\n${rejetes.join("\n")}`;
+    return "✅ Aucune fraude ni rejet récent.";
+  }
+
+  // sms / waafi
+  if (/^\/sms$/.test(t) || /\b(sms|waafi|notif)\b/.test(t)) {
+    if (!notifs.length) return "📭 Aucun SMS Waafi reçu récemment.";
+    return `📩 <b>Derniers SMS Waafi (${notifs.length})</b>\n\n${notifs.join("\n")}`;
+  }
+
+  // recherche par numéro d'ordre
+  if (ordreNum) {
+    const ligne = orders.find((o) => o.includes(`#${ordreNum}`));
+    if (ligne) return `🔍 <b>Ordre #${ordreNum}</b>\n\n${ligne}`;
+    return `❓ Ordre <b>#${ordreNum}</b> introuvable dans les 20 derniers.`;
+  }
+
+  // aide
+  return (
+    "🤖 <b>Commandes disponibles</b>\n\n" +
+    "📊 <code>stats</code> — Statistiques\n" +
+    "⏳ <code>ordres</code> — Ordres en attente\n" +
+    "🚨 <code>fraudes</code> — Fraudes / rejetés\n" +
+    "📩 <code>sms</code> — Derniers SMS Waafi\n" +
+    "🔍 <code>#2606061</code> — Détails d'un ordre\n\n" +
+    "<i>Tapez une commande ou un numéro d'ordre.</i>"
+  );
+}
+
+// ── Helpers Telegram ─────────────────────────────────────────────
 
 async function sendTelegramToBot(token, chatId, text, opts = {}) {
   if (!token || !chatId) {
@@ -74,8 +309,6 @@ async function sendTelegramToBot(token, chatId, text, opts = {}) {
   }
 }
 
-// Extrait le texte de la réponse Vertex AI
-
 async function sendTelegram(token, chatId, text) {
   if (!token || !chatId) return;
   try {
@@ -94,7 +327,7 @@ async function sendTelegram(token, chatId, text) {
   }
 }
 
-// Evite double-traitement via transaction Firestore
+// Évite double-traitement via transaction Firestore
 async function claimOrder(docRef, expectedStatus, newStatus, extraFields = {}) {
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(docRef);
@@ -134,7 +367,7 @@ exports.onNouvelOrdre = onDocumentCreated(
   {
     document:  "orders/{docId}",
     region:    REGION,
-    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ANTHROPIC_API_KEY],
+    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -145,8 +378,6 @@ exports.onNouvelOrdre = onDocumentCreated(
     const isDepot    = tx.type === "Dépôt";
 
     // ── 1a. Transfer ID déjà confirmé = fraude permanente ────────────
-    // Peu importe la date — Transfer ID d'un ordre confirmé ne peut jamais
-    // être réutilisé. Même un paiement confirmé il y a 1 an → fraude.
     if (transferId) {
       const confirmeSnap = await db.collection("orders")
         .where("waafitranfertID", "==", transferId)
@@ -201,8 +432,6 @@ exports.onNouvelOrdre = onDocumentCreated(
     }
 
     // ── 1b. Transfer ID = seule vérité du paiement ───────────────────
-    // Transfer ID trouvé → paiement réel → correction ordre + confirmation
-    // Transfer ID introuvable → rejet immédiat
     if (isDepot) {
       const montantOrdre = Number(tx.montant || 0);
 
@@ -226,7 +455,6 @@ exports.onNouvelOrdre = onDocumentCreated(
         const montantReel = waafiData.montant  || montantOrdre;
         const numReel     = waafiData.numClient || tx.numeroPayment || "";
 
-        // Signale les corrections si montant ou numéro différents
         const corrections = [];
         if (waafiData.montant && Math.abs(montantOrdre - waafiData.montant) > 1) {
           corrections.push(`Montant corrigé: ${montantOrdre} → ${waafiData.montant} DJF`);
@@ -287,32 +515,8 @@ exports.onNouvelOrdre = onDocumentCreated(
       return;
     }
 
-    // ── 1c. Analyse fraude Claude (Anthropic) ─────────────────────
-    let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
-    try {
-      const txt = await claudeGenerate(`
-Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
-Réponds UNIQUEMENT en JSON valide, sans texte autour.
-
-{
-  "score_fraude": 0-100,
-  "risque": "faible"|"moyen"|"élevé",
-  "raisons": ["raison1"],
-  "action": "valider"|"vérifier"|"rejeter"
-}
-
-Transaction :
-- Type: ${tx.type}
-- Montant: ${tx.montant} DJF
-- Transfer ID: ${transferId}
-- N° Expéditeur: ${tx.numeroPayment || "?"}
-Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numéro ne commence pas par 77 = suspect.
-Note : Kaffi Pay fonctionne 24h/24 7j/7 — l'heure de la transaction n'est jamais un facteur suspect.
-`);
-      fraud = JSON.parse(txt.replace(/```json|```/g, "").trim());
-    } catch (e) {
-      console.error("Claude fraud error:", e.message);
-    }
+    // ── 1c. Analyse fraude — règles embarquées ────────────────────
+    const fraud = analyserFraude(tx, transferId);
 
     await db.collection("orders").doc(docId).update({
       ia_score_fraude: fraud.score_fraude,
@@ -326,12 +530,12 @@ Note : Kaffi Pay fonctionne 24h/24 7j/7 — l'heure de la transaction n'est jama
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
       await db.collection("orders").doc(docId).update({
         status:     "Rejeté",
-        flagRaison: "IA Fraude: " + fraud.raisons.join(", "),
+        flagRaison: "Fraude détectée: " + fraud.raisons.join(", "),
       });
       await sendTelegram(
         TELEGRAM_TOKEN.value(),
         TELEGRAM_ADMIN_ID.value(),
-        `🚨 <b>Ordre rejeté par IA</b>\n` +
+        `🚨 <b>Ordre rejeté — Fraude détectée</b>\n` +
         `Réf: <code>#${ref}</code>\n` +
         `Score: ${fraud.score_fraude}/100 — ${fraud.risque.toUpperCase()}\n` +
         `Raisons: ${fraud.raisons.join(", ")}`
@@ -339,7 +543,7 @@ Note : Kaffi Pay fonctionne 24h/24 7j/7 — l'heure de la transaction n'est jama
       return;
     }
 
-    // ── 1e. Notification Telegram admin (paiement pas encore reçu) ──
+    // ── 1e. Notification Telegram admin ──────────────────────────
     const details = isDepot
       ? `ID 1xBet: <code>${tx.userId1xBet || tx.id1x || "?"}</code>\n` +
         `Transfer ID: <code>${transferId || "?"}</code>\n` +
@@ -354,7 +558,7 @@ Note : Kaffi Pay fonctionne 24h/24 7j/7 — l'heure de la transaction n'est jama
       `Réf: <b>#${ref}</b>\n` +
       `Montant: <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
       `${details}\n\n` +
-      `Risque IA: <i>${fraud.risque} (${fraud.score_fraude}/100)</i>`
+      `Risque: <i>${fraud.risque} (${fraud.score_fraude}/100)</i>`
     );
   }
 );
@@ -366,7 +570,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
   {
     document: "orders/{docId}",
     region:   REGION,
-    secrets:  [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ANTHROPIC_API_KEY],
+    secrets:  [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
   },
   async (event) => {
     const before = event.data.before.data();
@@ -407,10 +611,10 @@ exports.onOrdreUpdated = onDocumentUpdated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 3. ANALYSE IA ADMIN — Claude (résumé + prédictions)
+// 3. ANALYSE ADMIN — stats Firestore temps réel (sans IA)
 // ══════════════════════════════════════════════════════════════════
 exports.geminiAnalyseAdmin = onCall(
-  { region: REGION, secrets: [ANTHROPIC_API_KEY] },
+  { region: REGION, secrets: [] },
   async () => {
     const snap = await db.collection("orders")
       .orderBy("ts", "desc")
@@ -421,43 +625,29 @@ exports.geminiAnalyseAdmin = onCall(
     const confirmes = txs.filter((t) => t.status === "Confirmé");
     const attente   = txs.filter((t) => t.status === "En attente");
     const rejetes   = txs.filter((t) => t.status === "Rejeté");
+    const fraudes   = txs.filter((t) => t.flagRaison && t.flagRaison.toUpperCase().includes("FRAUDE"));
     const volume    = confirmes.reduce((s, t) => s + Number(t.montant || 0), 0);
+    const taux      = txs.length ? Math.round(confirmes.length / txs.length * 100) : 0;
+    const moy       = confirmes.length ? Math.round(volume / confirmes.length) : 0;
 
-    const txt = await claudeGenerate(`
-Tu es l'assistant IA de Kaffi Pay (Djibouti).
-Réponds UNIQUEMENT en JSON valide.
+    let alerte = null;
+    if (attente.length > 10)              alerte = `${attente.length} ordres en attente — vérification requise`;
+    else if (fraudes.length > 3)          alerte = `${fraudes.length} fraudes détectées parmi les 100 dernières transactions`;
+    else if (taux < 50 && txs.length > 10) alerte = `Taux de confirmation faible : ${taux}% — anomalie possible`;
 
-Données (100 dernières transactions) :
-- Confirmées: ${confirmes.length} — Volume: ${volume.toLocaleString()} DJF
-- En attente: ${attente.length}
-- Rejetées: ${rejetes.length}
-- Taux confirmation: ${txs.length ? Math.round((confirmes.length / txs.length) * 100) : 0}%
-- Montant moyen: ${confirmes.length ? Math.round(volume / confirmes.length) : 0} DJF
-
-5 dernières:
-${txs.slice(0, 5).map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} — ${t.date}`).join("\n")}
-
-{
-  "resume": "résumé 2 phrases",
-  "alerte": "problème urgent ou null",
-  "conseil": "1 conseil",
-  "prediction_demain": nombre_djf,
-  "score_sante": 0-100
-}
-Note : Kaffi Pay est 24h/24 7j/7 — ne jamais mentionner les heures comme facteur d'analyse.
-`);
-    try {
-      return {
-        success: true,
-        data:    JSON.parse(txt.replace(/```json|```/g, "").trim()),
-        stats:   { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume },
-      };
-    } catch {
-      return { success: false, error: "Erreur parsing IA" };
-    }
+    return {
+      success: true,
+      data: {
+        resume:            `${confirmes.length} confirmés sur ${txs.length} — volume ${volume.toLocaleString()} DJF. Taux: ${taux}%.`,
+        alerte,
+        conseil:           attente.length > 5 ? "Vérifier les ordres en attente" : "Opérations normales",
+        prediction_demain: moy * Math.max(confirmes.length, 1),
+        score_sante:       Math.max(0, Math.min(100, taux - fraudes.length * 10)),
+      },
+      stats: { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume },
+    };
   }
 );
-
 
 // ══════════════════════════════════════════════════════════════════
 // 5. AUTO-CONFIRMATION — SMS Waafi → Confirme l'ordre + Webhook
@@ -657,11 +847,6 @@ exports.autoConfirmation = onDocumentCreated(
 
 // ══════════════════════════════════════════════════════════════════
 // 6. WEBHOOK MACRODROID — Reçoit la notif Waafi → Firestore + Telegram
-//
-//  MacroDroid configure :
-//    Trigger : Notification reçue (app Waafi)
-//    Action  : HTTP POST vers cette URL
-//    Body    : {"notification":"[not_body]","secret":"KaffiPay2026"}
 // ══════════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
   { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
@@ -685,12 +870,10 @@ exports.smsWebhook = onRequest(
       return;
     }
 
-    // Parse le SMS immédiatement pour faciliter la recherche
     const transferIdParsed = extractTransferId(notif);
     const montantParsed    = extractMontant(notif);
     const numClientParsed  = extractNumClient(notif);
 
-    // Enregistre dans Firestore → déclenche autoConfirmation si ordre déjà là
     const docRef = await db.collection("waafi_notifications").add({
       notification: notif,
       transferId:   transferIdParsed,
@@ -702,18 +885,13 @@ exports.smsWebhook = onRequest(
       createdAt:    FieldValue.serverTimestamp(),
     });
 
-    // Notifie immédiatement l'admin Telegram
-    const transferId = transferIdParsed;
-    const montant    = montantParsed;
-    const numClient  = numClientParsed;
-
     await sendTelegram(
       TELEGRAM_TOKEN.value(),
       TELEGRAM_ADMIN_ID.value(),
       `📩 <b>SMS Waafi reçu</b>\n\n` +
-      `Transfer-ID: <code>${transferId || "?"}</code>\n` +
-      `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
-      `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
+      `Transfer-ID: <code>${transferIdParsed || "?"}</code>\n` +
+      `Montant: <b>${montantParsed ? Number(montantParsed).toLocaleString() : "?"} DJF</b>\n` +
+      `Expéditeur: <code>${numClientParsed || "?"}</code>\n\n` +
       `<i>Traitement auto en cours…</i>`
     );
 
@@ -725,61 +903,43 @@ exports.smsWebhook = onRequest(
 // 7. HEALTH CHECK
 // ══════════════════════════════════════════════════════════════════
 exports.healthCheck = onRequest(
-  { region: REGION, secrets: [ANTHROPIC_API_KEY] },
+  { region: REGION, secrets: [] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
 
     const t0 = Date.now();
-    let firestoreMs = "?", claudeStatus = "non testé", claudeError = null;
+    let firestoreMs = "?", firestoreStatus = "ok";
 
     try {
       await db.collection("orders").limit(1).get();
       firestoreMs = `${Date.now() - t0}ms`;
     } catch (e) {
-      firestoreMs = `erreur: ${e.message}`;
-    }
-
-    try {
-      const reply = await claudeGenerate("Réponds uniquement: OK");
-      claudeStatus = `ok — réponse: "${reply.trim().substring(0, 50)}"`;
-    } catch (e) {
-      claudeStatus = "erreur";
-      claudeError  = e.message;
+      firestoreMs    = `erreur: ${e.message}`;
+      firestoreStatus = "erreur";
     }
 
     res.json({
-      status:    claudeError ? "degraded" : "ok",
+      status:    firestoreStatus,
       timestamp: new Date().toISOString(),
       region:    REGION,
       firestore: firestoreMs,
-      claude:    claudeStatus,
-      claudeErr: claudeError,
-      version:   "3.4",
+      ai:        "logique embarquée — aucune API externe",
+      version:   "3.5",
     });
   }
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 8. SUPPORT CLIENT TELEGRAM — Claude répond + audit admin
-//
-//  Flux :
-//    Client envoie message au bot @kaffipay_support_bot
-//    → Claude analyse message + historique ordres client
-//    → Claude décide et répond au client
-//    → Audit complet envoyé au bot admin
-//
-//  Setup webhook (une seule fois après déploiement) :
-//    curl "https://api.telegram.org/botSUPPORT_TOKEN/setWebhook?url=URL_FONCTION"
+// 8. SUPPORT CLIENT TELEGRAM — logique embarquée + audit admin
 // ══════════════════════════════════════════════════════════════════
 exports.supportClient = onRequest(
   {
     region:         REGION,
-    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ANTHROPIC_API_KEY],
+    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
     timeoutSeconds: 60,
   },
   async (req, res) => {
-    // Toujours répondre 200 immédiatement à Telegram
     res.status(200).send("OK");
 
     try {
@@ -804,7 +964,7 @@ exports.supportClient = onRequest(
         return;
       }
 
-      // ── Session client (sauvegarde numéro Waafi si fourni) ─────
+      // ── Session client ─────────────────────────────────────────
       const sessionRef  = db.collection("support_sessions").doc(String(chatId));
       const sessionSnap = await sessionRef.get();
       const session     = sessionSnap.exists ? sessionSnap.data() : {};
@@ -817,7 +977,7 @@ exports.supportClient = onRequest(
         console.log(`Numéro sauvegardé pour ${chatId}: ${cleanText}`);
       }
 
-      // ── Historique ordres (si numéro connu) ─────────────────────
+      // ── Historique ordres ───────────────────────────────────────
       let orders = [];
       if (session.phone) {
         try {
@@ -847,77 +1007,20 @@ exports.supportClient = onRequest(
         }
       }
 
-      // ── Appel Gemini ────────────────────────────────────────────
-      const FALLBACK_MSG =
-        "Bonjour ! Pour vous aider, merci d'indiquer votre <b>numéro d'ordre</b> " +
-        "(ex : <code>2606061</code>).\n\n— <i>Support Kaffi-Pay</i>";
-
-      let aiDecision = {
-        reponse_client: FALLBACK_MSG,
-        decision:       "info_manquante",
-        action_prise:   "Fallback — Claude indisponible",
-        niveau_urgence: "faible",
-        resume_audit:   "Claude n'a pas répondu, message de fallback envoyé",
-      };
-
-      try {
-        const txt = await claudeGenerate(`
-Tu es l'assistant support de Kaffi-Pay (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
-Tu réponds directement à ce que le client demande. Réponds UNIQUEMENT en JSON valide.
-
-Message client : "${text}"
-${session.phone ? `N° Waafi client : ${session.phone}` : "N° Waafi : non renseigné"}
-
-Historique ordres :
-${orders.length ? orders.join("\n") : "Aucun ordre trouvé"}
-
-Règles :
-- Réponds directement à la question, pas de blabla inutile
-- Si le client n'a pas fourni son numéro d'ordre → demande uniquement le numéro d'ordre (ex: 2606061)
-- Si ordre rejeté raison "Paiement non reçu" → explique les raisons possibles :
-    1. Le Transfer ID saisi ne correspond à aucun paiement reçu
-    2. Le montant ou le numéro expéditeur ne correspond pas
-    3. Le paiement Waafi n'a pas encore été effectué avant la soumission de l'ordre
-  Puis demande en complément : Transfer ID Waafi, montant payé, numéro expéditeur
-- Si Transfer ID fourni est correct → décision "escalade", l'admin corrigera l'ordre
-- Si Transfer ID ET les autres infos sont faux → décision "fraude_signalée", refuser poliment
-- Ne jamais demander le numéro Waafi du client
-- Répondre en français, ton professionnel et concis
-- Signer chaque réponse : "\n\n— <i>Support Kaffi-Pay</i>"
-
-{
-  "reponse_client": "message à envoyer au client (HTML Telegram ok)",
-  "decision": "résolu" | "escalade" | "info_manquante" | "fraude_signalée",
-  "action_prise": "description courte",
-  "niveau_urgence": "faible" | "moyen" | "élevé",
-  "resume_audit": "résumé pour l'admin en 1-2 phrases"
-}
-`);
-        const cleaned = txt.replace(/```json|```/g, "").trim();
-        try {
-          aiDecision = JSON.parse(cleaned);
-          console.log("Claude décision:", aiDecision.decision);
-        } catch {
-          // Claude a répondu mais pas en JSON valide — on envoie le texte brut
-          console.warn("Claude JSON parse failed, using raw text");
-          aiDecision.reponse_client = cleaned || FALLBACK_MSG;
-          aiDecision.resume_audit   = "Claude a répondu hors-JSON";
-        }
-      } catch (e) {
-        console.error("Claude support error:", e.message);
-      }
+      // ── Décision logique embarquée ──────────────────────────────
+      const aiDecision = repondreSupport(text, session, orders);
+      console.log("Décision support:", aiDecision.decision);
 
       // ── Réponse au client ───────────────────────────────────────
       await sendTelegramToBot(supportToken, chatId, aiDecision.reponse_client);
 
-      // Sauvegarder l'interaction
       await db.collection("support_sessions").doc(String(chatId))
         .collection("messages").add({
           text,
-          decision:      aiDecision.decision,
-          action:        aiDecision.action_prise,
-          urgence:       aiDecision.niveau_urgence,
-          ts:            FieldValue.serverTimestamp(),
+          decision: aiDecision.decision,
+          action:   aiDecision.action_prise,
+          urgence:  aiDecision.niveau_urgence,
+          ts:       FieldValue.serverTimestamp(),
         });
 
       // ── Audit Telegram admin ────────────────────────────────────
@@ -928,10 +1031,10 @@ Règles :
       }[aiDecision.niveau_urgence] || "⚪";
 
       const decisionEmoji = {
-        "résolu":         "✅",
-        "escalade":       "🆘",
-        "info_manquante": "❓",
-        "fraude_signalée":"🚨",
+        "résolu":          "✅",
+        "escalade":        "🆘",
+        "info_manquante":  "❓",
+        "fraude_signalée": "🚨",
       }[aiDecision.decision] || "ℹ️";
 
       await sendTelegram(
@@ -940,7 +1043,7 @@ Règles :
         `${urgenceEmoji} <b>Support Client</b> ${decisionEmoji}\n\n` +
         `👤 ${firstName} | <code>${session.phone || "Non renseigné"}</code>\n` +
         `💬 <i>"${text.substring(0, 100)}"</i>\n\n` +
-        `🤖 <b>Décision Claude :</b> ${aiDecision.decision.toUpperCase()}\n` +
+        `🤖 <b>Décision :</b> ${aiDecision.decision.toUpperCase()}\n` +
         `⚡ Action : ${aiDecision.action_prise}\n\n` +
         `📋 ${aiDecision.resume_audit}\n\n` +
         (aiDecision.decision === "escalade"
@@ -954,12 +1057,12 @@ Règles :
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 8. BOT ADMIN — Questions & commandes (admin seulement)
+// 9. BOT ADMIN — Commandes embarquées (admin seulement)
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
   {
     region:         REGION,
-    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ANTHROPIC_API_KEY],
+    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
     timeoutSeconds: 60,
   },
   async (req, res) => {
@@ -975,7 +1078,6 @@ exports.adminBot = onRequest(
       const adminId = String(TELEGRAM_ADMIN_ID.value());
       const token   = TELEGRAM_TOKEN.value();
 
-      // Sécurité : seul l'admin peut interagir
       if (chatId !== adminId) {
         console.warn(`adminBot: accès refusé pour chatId ${chatId}`);
         return;
@@ -984,7 +1086,7 @@ exports.adminBot = onRequest(
       if (!text) return;
       console.log(`adminBot commande: "${text}"`);
 
-      // Charger les données Firestore pour le contexte Gemini
+      // Charger les données Firestore
       const [ordersSnap, notifSnap] = await Promise.all([
         db.collection("orders").orderBy("ts", "desc").limit(20).get().catch(() =>
           db.collection("orders").limit(20).get()
@@ -1004,35 +1106,7 @@ exports.adminBot = onRequest(
         return `• TransferID:${n.transferId || "?"} | ${n.montant || "?"}DJF | N°${n.numClient || "?"} | ${n.status || "?"}`;
       });
 
-      // Appel Gemini
-      let reponse = "Je n'ai pas pu traiter votre demande.";
-      try {
-        reponse = await claudeGenerate(`
-Tu es l'assistant IA de l'admin Kaffi-Pay (Djibouti) — plateforme 1xBet ↔ Waafi.
-Tu réponds aux questions et commandes de l'admin. Réponds en français, concis et précis.
-N'utilise pas de JSON — réponds en texte simple formaté pour Telegram (HTML ok).
-
-Question/commande admin : "${text}"
-
-20 derniers ordres :
-${orders.length ? orders.join("\n") : "Aucun ordre"}
-
-10 derniers SMS Waafi reçus :
-${notifs.length ? notifs.join("\n") : "Aucun SMS"}
-
-Règles :
-- Si l'admin demande un ordre spécifique → cherche dans la liste et donne tous les détails
-- Si l'admin demande les stats → calcule confirmés/rejetés/en attente/volume
-- Si l'admin demande les ordres en attente → liste-les avec Transfer ID et montant
-- Si l'admin demande les fraudes → liste les ordres rejetés raison fraude
-- Si l'admin demande de confirmer/rejeter un ordre → explique que l'action se fait dans Firestore directement
-- Kaffi-Pay est 24/7 — jamais mentionner les heures comme facteur suspect
-`);
-      } catch (e) {
-        console.error("adminBot Claude error:", e.message);
-        reponse = `⚠️ Erreur Claude : ${e.message}`;
-      }
-
+      const reponse = traiterAdminBot(text, orders, notifs);
       await sendTelegram(token, adminId, reponse);
 
     } catch (e) {
