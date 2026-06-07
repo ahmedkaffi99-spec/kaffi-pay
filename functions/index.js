@@ -1,11 +1,11 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════╗
- * ║           KAFFI PAY — CLOUD FUNCTIONS v3.2                      ║
+ * ║           KAFFI PAY — CLOUD FUNCTIONS v3.4                      ║
  * ║  • Confirmation automatique dépôts (Transfer ID)                ║
  * ║  • Fraude permanente (Transfer ID réutilisé)                    ║
  * ║  • Notifications Telegram admin                                 ║
- * ║  • Support client Telegram (Gemini AI)                         ║
- * ║  • Audit Gemini → admin après chaque interaction client         ║
+ * ║  • Support client Telegram (Claude AI)                          ║
+ * ║  • Audit Claude → admin après chaque interaction client         ║
  * ║  • Webhook MacroDroid SMS Waafi                                 ║
  * ╚══════════════════════════════════════════════════════════════════╝
  */
@@ -15,7 +15,7 @@ const { onCall, onRequest }                    = require("firebase-functions/v2/
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
-const { GoogleGenerativeAI }                   = require("@google/generative-ai");
+const Anthropic                                = require("@anthropic-ai/sdk");
 
 initializeApp();
 const db = getFirestore();
@@ -27,22 +27,25 @@ const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
-const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
-const GEMINI_API_KEY    = defineSecret("GEMINI_API_KEY");
+const SUPPORT_BOT_TOKEN  = defineSecret("SUPPORT_BOT_TOKEN");
+const ANTHROPIC_API_KEY  = defineSecret("ANTHROPIC_API_KEY");
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-async function geminiGenerate(prompt) {
-  const key = GEMINI_API_KEY.value().replace(/[^\x20-\x7E]/g, "").trim();
-  if (!key) throw new Error("GEMINI_API_KEY secret vide ou non configuré");
-  console.log(`geminiGenerate: clé …${key.slice(-6)}, model gemini-2.0-flash`);
-  const genAI = new GoogleGenerativeAI(key);
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+async function claudeGenerate(prompt) {
+  const key = ANTHROPIC_API_KEY.value().trim();
+  if (!key) throw new Error("ANTHROPIC_API_KEY secret vide ou non configuré");
+  console.log(`claudeGenerate: clé …${key.slice(-6)}, model claude-haiku-4-5`);
+  const client = new Anthropic({ apiKey: key });
   try {
-    const result = await model.generateContent(prompt);
-    return result.response.text();
+    const message = await client.messages.create({
+      model:    "claude-haiku-4-5",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: prompt }],
+    });
+    return message.content[0].text;
   } catch (e) {
-    console.error("geminiGenerate API error:", e.status, e.statusText, e.message, JSON.stringify(e.errorDetails || {}));
+    console.error("claudeGenerate API error:", e.status, e.message);
     throw e;
   }
 }
@@ -131,7 +134,7 @@ exports.onNouvelOrdre = onDocumentCreated(
   {
     document:  "orders/{docId}",
     region:    REGION,
-    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
+    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ANTHROPIC_API_KEY],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -284,10 +287,10 @@ exports.onNouvelOrdre = onDocumentCreated(
       return;
     }
 
-    // ── 1c. Analyse fraude Gemini (Vertex AI) ─────────────────────
+    // ── 1c. Analyse fraude Claude (Anthropic) ─────────────────────
     let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
     try {
-      const txt = await geminiGenerate(`
+      const txt = await claudeGenerate(`
 Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
 Réponds UNIQUEMENT en JSON valide, sans texte autour.
 
@@ -308,7 +311,7 @@ Note : Kaffi Pay fonctionne 24h/24 7j/7 — l'heure de la transaction n'est jama
 `);
       fraud = JSON.parse(txt.replace(/```json|```/g, "").trim());
     } catch (e) {
-      console.error("Gemini fraud error:", e.message);
+      console.error("Claude fraud error:", e.message);
     }
 
     await db.collection("orders").doc(docId).update({
@@ -363,7 +366,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
   {
     document: "orders/{docId}",
     region:   REGION,
-    secrets:  [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
+    secrets:  [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ANTHROPIC_API_KEY],
   },
   async (event) => {
     const before = event.data.before.data();
@@ -404,10 +407,10 @@ exports.onOrdreUpdated = onDocumentUpdated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 3. ANALYSE IA ADMIN (résumé + prédictions)
+// 3. ANALYSE IA ADMIN — Claude (résumé + prédictions)
 // ══════════════════════════════════════════════════════════════════
 exports.geminiAnalyseAdmin = onCall(
-  { region: REGION, secrets: [GEMINI_API_KEY] },
+  { region: REGION, secrets: [ANTHROPIC_API_KEY] },
   async () => {
     const snap = await db.collection("orders")
       .orderBy("ts", "desc")
@@ -420,7 +423,7 @@ exports.geminiAnalyseAdmin = onCall(
     const rejetes   = txs.filter((t) => t.status === "Rejeté");
     const volume    = confirmes.reduce((s, t) => s + Number(t.montant || 0), 0);
 
-    const txt = await geminiGenerate(`
+    const txt = await claudeGenerate(`
 Tu es l'assistant IA de Kaffi Pay (Djibouti).
 Réponds UNIQUEMENT en JSON valide.
 
@@ -722,13 +725,13 @@ exports.smsWebhook = onRequest(
 // 7. HEALTH CHECK
 // ══════════════════════════════════════════════════════════════════
 exports.healthCheck = onRequest(
-  { region: REGION, secrets: [GEMINI_API_KEY] },
+  { region: REGION, secrets: [ANTHROPIC_API_KEY] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
 
     const t0 = Date.now();
-    let firestoreMs = "?", geminiStatus = "non testé", geminiError = null;
+    let firestoreMs = "?", claudeStatus = "non testé", claudeError = null;
 
     try {
       await db.collection("orders").limit(1).get();
@@ -738,32 +741,32 @@ exports.healthCheck = onRequest(
     }
 
     try {
-      const reply = await geminiGenerate("Réponds uniquement: OK");
-      geminiStatus = `ok — réponse: "${reply.trim().substring(0, 50)}"`;
+      const reply = await claudeGenerate("Réponds uniquement: OK");
+      claudeStatus = `ok — réponse: "${reply.trim().substring(0, 50)}"`;
     } catch (e) {
-      geminiStatus = "erreur";
-      geminiError  = e.message;
+      claudeStatus = "erreur";
+      claudeError  = e.message;
     }
 
     res.json({
-      status:    geminiError ? "degraded" : "ok",
+      status:    claudeError ? "degraded" : "ok",
       timestamp: new Date().toISOString(),
       region:    REGION,
       firestore: firestoreMs,
-      gemini:    geminiStatus,
-      geminiErr: geminiError,
-      version:   "3.3",
+      claude:    claudeStatus,
+      claudeErr: claudeError,
+      version:   "3.4",
     });
   }
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 8. SUPPORT CLIENT TELEGRAM — Gemini répond + audit admin
+// 8. SUPPORT CLIENT TELEGRAM — Claude répond + audit admin
 //
 //  Flux :
 //    Client envoie message au bot @kaffipay_support_bot
-//    → Gemini analyse message + historique ordres client
-//    → Gemini décide et répond au client
+//    → Claude analyse message + historique ordres client
+//    → Claude décide et répond au client
 //    → Audit complet envoyé au bot admin
 //
 //  Setup webhook (une seule fois après déploiement) :
@@ -772,7 +775,7 @@ exports.healthCheck = onRequest(
 exports.supportClient = onRequest(
   {
     region:         REGION,
-    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
+    secrets:        [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ANTHROPIC_API_KEY],
     timeoutSeconds: 60,
   },
   async (req, res) => {
@@ -849,16 +852,16 @@ exports.supportClient = onRequest(
         "Bonjour ! Pour vous aider, merci d'indiquer votre <b>numéro d'ordre</b> " +
         "(ex : <code>2606061</code>).\n\n— <i>Support Kaffi-Pay</i>";
 
-      let geminiDecision = {
+      let aiDecision = {
         reponse_client: FALLBACK_MSG,
         decision:       "info_manquante",
-        action_prise:   "Fallback — Gemini indisponible",
+        action_prise:   "Fallback — Claude indisponible",
         niveau_urgence: "faible",
-        resume_audit:   "Gemini n'a pas répondu, message de fallback envoyé",
+        resume_audit:   "Claude n'a pas répondu, message de fallback envoyé",
       };
 
       try {
-        const txt = await geminiGenerate(`
+        const txt = await claudeGenerate(`
 Tu es l'assistant support de Kaffi-Pay (Djibouti) — plateforme d'échange 1xBet ↔ Waafi.
 Tu réponds directement à ce que le client demande. Réponds UNIQUEMENT en JSON valide.
 
@@ -892,28 +895,28 @@ Règles :
 `);
         const cleaned = txt.replace(/```json|```/g, "").trim();
         try {
-          geminiDecision = JSON.parse(cleaned);
-          console.log("Gemini décision:", geminiDecision.decision);
+          aiDecision = JSON.parse(cleaned);
+          console.log("Claude décision:", aiDecision.decision);
         } catch {
-          // Gemini a répondu mais pas en JSON valide — on envoie le texte brut
-          console.warn("Gemini JSON parse failed, using raw text");
-          geminiDecision.reponse_client = cleaned || FALLBACK_MSG;
-          geminiDecision.resume_audit   = "Gemini a répondu hors-JSON";
+          // Claude a répondu mais pas en JSON valide — on envoie le texte brut
+          console.warn("Claude JSON parse failed, using raw text");
+          aiDecision.reponse_client = cleaned || FALLBACK_MSG;
+          aiDecision.resume_audit   = "Claude a répondu hors-JSON";
         }
       } catch (e) {
-        console.error("Gemini support error:", e.message);
+        console.error("Claude support error:", e.message);
       }
 
       // ── Réponse au client ───────────────────────────────────────
-      await sendTelegramToBot(supportToken, chatId, geminiDecision.reponse_client);
+      await sendTelegramToBot(supportToken, chatId, aiDecision.reponse_client);
 
       // Sauvegarder l'interaction
       await db.collection("support_sessions").doc(String(chatId))
         .collection("messages").add({
           text,
-          decision:      geminiDecision.decision,
-          action:        geminiDecision.action_prise,
-          urgence:       geminiDecision.niveau_urgence,
+          decision:      aiDecision.decision,
+          action:        aiDecision.action_prise,
+          urgence:       aiDecision.niveau_urgence,
           ts:            FieldValue.serverTimestamp(),
         });
 
@@ -922,14 +925,14 @@ Règles :
         "faible":  "🟢",
         "moyen":   "🟡",
         "élevé":   "🔴",
-      }[geminiDecision.niveau_urgence] || "⚪";
+      }[aiDecision.niveau_urgence] || "⚪";
 
       const decisionEmoji = {
         "résolu":         "✅",
         "escalade":       "🆘",
         "info_manquante": "❓",
         "fraude_signalée":"🚨",
-      }[geminiDecision.decision] || "ℹ️";
+      }[aiDecision.decision] || "ℹ️";
 
       await sendTelegram(
         TELEGRAM_TOKEN.value(),
@@ -937,10 +940,10 @@ Règles :
         `${urgenceEmoji} <b>Support Client</b> ${decisionEmoji}\n\n` +
         `👤 ${firstName} | <code>${session.phone || "Non renseigné"}</code>\n` +
         `💬 <i>"${text.substring(0, 100)}"</i>\n\n` +
-        `🤖 <b>Décision Gemini :</b> ${geminiDecision.decision.toUpperCase()}\n` +
-        `⚡ Action : ${geminiDecision.action_prise}\n\n` +
-        `📋 ${geminiDecision.resume_audit}\n\n` +
-        (geminiDecision.decision === "escalade"
+        `🤖 <b>Décision Claude :</b> ${aiDecision.decision.toUpperCase()}\n` +
+        `⚡ Action : ${aiDecision.action_prise}\n\n` +
+        `📋 ${aiDecision.resume_audit}\n\n` +
+        (aiDecision.decision === "escalade"
           ? `⚠️ <b>Intervention manuelle requise.</b>` : "")
       );
 
@@ -956,7 +959,7 @@ Règles :
 exports.adminBot = onRequest(
   {
     region:         REGION,
-    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GEMINI_API_KEY],
+    secrets:        [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ANTHROPIC_API_KEY],
     timeoutSeconds: 60,
   },
   async (req, res) => {
@@ -1004,7 +1007,7 @@ exports.adminBot = onRequest(
       // Appel Gemini
       let reponse = "Je n'ai pas pu traiter votre demande.";
       try {
-        reponse = await geminiGenerate(`
+        reponse = await claudeGenerate(`
 Tu es l'assistant IA de l'admin Kaffi-Pay (Djibouti) — plateforme 1xBet ↔ Waafi.
 Tu réponds aux questions et commandes de l'admin. Réponds en français, concis et précis.
 N'utilise pas de JSON — réponds en texte simple formaté pour Telegram (HTML ok).
@@ -1026,8 +1029,8 @@ Règles :
 - Kaffi-Pay est 24/7 — jamais mentionner les heures comme facteur suspect
 `);
       } catch (e) {
-        console.error("adminBot Gemini error:", e.message);
-        reponse = `⚠️ Erreur Gemini : ${e.message}`;
+        console.error("adminBot Claude error:", e.message);
+        reponse = `⚠️ Erreur Claude : ${e.message}`;
       }
 
       await sendTelegram(token, adminId, reponse);
