@@ -1,17 +1,22 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════════╗
- * ║  KAFFI PAY — CLOUD FUNCTIONS v4.0                                    ║
+ * ║  KAFFI PAY — CLOUD FUNCTIONS v5.0                                    ║
  * ║                                                                      ║
- * ║  Architecture : Event-Driven + Scheduled + HTTP + Callable           ║
+ * ║  Architecture : Event-Driven (100% temps réel) + Scheduled           ║
  * ║  Patterns     : State Machine · Circuit Breaker · Rate Limiting      ║
- * ║                 Duplicate Detection · Webhook Retry · Reconciliation ║
+ * ║                 Duplicate Detection · Webhook Retry RT · Recon RT    ║
  * ║                                                                      ║
- * ║  Fonctions (12) :                                                    ║
+ * ║  Fonctions (13) :                                                    ║
  * ║  [Triggers]  onNouvelOrdre · onOrdreUpdated · autoConfirmation       ║
- * ║  [Scheduled] rapportJournalier · ordresBloqués · retryWebhooks       ║
- * ║              reconciliationSMS · nettoyageCompteurs                  ║
+ * ║              onWebhookEchoue  ← NOUVEAU (remplace cron horaire)      ║
+ * ║  [Scheduled] rapportJournalier · ordresBloqués · nettoyageCompteurs  ║
  * ║  [HTTP]      smsWebhook · healthCheck · supportClient · adminBot     ║
  * ║  [Callable]  analyseAdmin                                            ║
+ * ║                                                                      ║
+ * ║  Temps réel 24/7 :                                                   ║
+ * ║  • SMS reçu → réconciliation IMMÉDIATE (≤ 2 s)                       ║
+ * ║  • Nouvel ordre → vérif SMS en attente IMMÉDIATE                     ║
+ * ║  • Webhook échoué → 3 retries automatiques (0 s / 30 s / 90 s)      ║
  * ╚══════════════════════════════════════════════════════════════════════╝
  */
 
@@ -38,15 +43,13 @@ const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 1 — STATE MACHINE DES ORDRES
-// Seules ces transitions sont autorisées. Toute autre tentative
-// de mise à jour est ignorée par onOrdreUpdated.
 // ══════════════════════════════════════════════════════════════════
 const TRANSITIONS_VALIDES = {
   "En attente":  ["Confirmé", "Rejeté", "Argent Reçu", "Correction"],
   "Argent Reçu": ["Confirmé", "Rejeté"],
   "Correction":  ["Confirmé", "Rejeté", "En attente"],
-  "Confirmé":    [],   // état terminal — immuable
-  "Rejeté":      [],   // état terminal — immuable
+  "Confirmé":    [],
+  "Rejeté":      [],
 };
 
 function transitionValide(de, vers) {
@@ -54,22 +57,19 @@ function transitionValide(de, vers) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SECTION 2 — MOTEUR DE DÉTECTION FRAUDE (multi-couches)
+// SECTION 2 — MOTEUR FRAUDE (multi-couches)
 // ══════════════════════════════════════════════════════════════════
 function analyserFraude(tx, transferId) {
   const raisons = [];
   let score     = 0;
-
   const montant = Number(tx.montant || 0);
   const num     = (tx.numeroPayment || "").replace(/\s/g, "");
 
-  // Couche 1 : montant
   if (montant > 200000)     { score += 50; raisons.push("Montant extrême (> 200 000 DJF)"); }
   else if (montant > 100000){ score += 35; raisons.push("Montant très élevé (> 100 000 DJF)"); }
   else if (montant > 50000) { score += 15; raisons.push("Montant élevé (> 50 000 DJF)"); }
   else if (montant < 50)    { score += 30; raisons.push("Montant suspect (< 50 DJF)"); }
 
-  // Couche 2 : Transfer ID
   if (!transferId) {
     score += 40; raisons.push("Transfer ID manquant");
   } else if (!/^\d{6,}$/.test(String(transferId))) {
@@ -78,51 +78,42 @@ function analyserFraude(tx, transferId) {
     score += 20; raisons.push("Transfer ID anormalement long");
   }
 
-  // Couche 3 : numéro expéditeur
   if (!num)              { score += 10; raisons.push("Numéro expéditeur manquant"); }
   else if (!/^77/.test(num)) { score += 20; raisons.push("Numéro suspect (ne commence pas par 77)"); }
 
   score = Math.min(score, 100);
   const risque = score >= 70 ? "élevé" : score >= 40 ? "moyen" : "faible";
   const action = score >= 70 ? "rejeter" : score >= 40 ? "vérifier" : "valider";
-
   return { score_fraude: score, risque, raisons: raisons.length ? raisons : ["Aucune anomalie"], action };
 }
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 3 — RATE LIMITING (Firestore transactionnel)
-// Max MAX_PAR_HEURE ordres du même type par numéro de téléphone
-// sur une fenêtre glissante de 60 minutes.
 // ══════════════════════════════════════════════════════════════════
 const MAX_PAR_HEURE = 3;
 
 async function verifierRateLimit(phone, type) {
   if (!phone || phone === "—") return { autorise: true };
-
-  const cle    = `${phone}_${type}`;
-  const ref    = db.collection("rate_limits").doc(cle);
-  const fenetre = 60 * 60 * 1000; // 1 heure
+  const cle     = `${phone}_${type}`;
+  const ref     = db.collection("rate_limits").doc(cle);
+  const fenetre = 60 * 60 * 1000;
   const maintenant = Date.now();
 
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-
     if (!snap.exists) {
       tx.set(ref, { compte: 1, debut: maintenant, phone, type, expiresAt: maintenant + fenetre });
       return { autorise: true, restant: MAX_PAR_HEURE - 1 };
     }
-
     const d = snap.data();
     if (maintenant - d.debut > fenetre) {
       tx.set(ref, { compte: 1, debut: maintenant, phone, type, expiresAt: maintenant + fenetre });
       return { autorise: true, restant: MAX_PAR_HEURE - 1 };
     }
-
     if (d.compte >= MAX_PAR_HEURE) {
       const resetDans = Math.ceil((d.debut + fenetre - maintenant) / 60000);
       return { autorise: false, restant: 0, resetDans };
     }
-
     tx.update(ref, { compte: FieldValue.increment(1) });
     return { autorise: true, restant: MAX_PAR_HEURE - d.compte - 1 };
   });
@@ -130,59 +121,46 @@ async function verifierRateLimit(phone, type) {
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 4 — DÉTECTION DOUBLONS
-// Même téléphone + même montant (±5%) + même type dans les 30 min
 // ══════════════════════════════════════════════════════════════════
 async function detecterDoublon(phone, montant, type, excluId) {
   if (!phone || phone === "—") return null;
-
-  const fenetre  = 30 * 60 * 1000;
-  const cutoff   = new Date(Date.now() - fenetre);
+  const fenetre    = 30 * 60 * 1000;
+  const cutoff     = new Date(Date.now() - fenetre);
   const montantMin = montant * 0.95;
   const montantMax = montant * 1.05;
 
   try {
     const snap = await db.collection("orders")
-      .where("numeroPayment", "==", phone)
-      .where("type", "==", type)
-      .where("status", "in", ["En attente", "Confirmé"])
-      .get();
+      .where("numeroPayment", "==", phone).where("type", "==", type)
+      .where("status", "in", ["En attente", "Confirmé"]).get();
 
     for (const doc of snap.docs) {
       if (doc.id === excluId) continue;
       const o  = doc.data();
       const ts = o.createdAt?.toDate ? o.createdAt.toDate() : new Date(o.ts || 0);
       const m  = Number(o.montant || 0);
-      if (ts > cutoff && m >= montantMin && m <= montantMax) {
+      if (ts > cutoff && m >= montantMin && m <= montantMax)
         return { ordreId: o.orderId || doc.id, montant: o.montant, status: o.status };
-      }
     }
-  } catch { /* ignore — best-effort */ }
-
+  } catch { /* best-effort */ }
   return null;
 }
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 5 — CIRCUIT BREAKER MacroDroid
-//
-//  closed   : fonctionnement normal
-//  open     : 3 échecs consécutifs → bloqué 5 min
-//  half-open: test d'une requête après timeout
 // ══════════════════════════════════════════════════════════════════
 const CB_SEUIL   = 3;
-const CB_TIMEOUT = 5 * 60 * 1000; // 5 min
+const CB_TIMEOUT = 5 * 60 * 1000;
 
 async function appelWebhook(url, ordreRef, montant, id1xbet) {
   const cbRef  = db.collection("circuit_breakers").doc("macrodroid");
   const cbSnap = await cbRef.get();
   const cb     = cbSnap.exists ? cbSnap.data() : { etat: "closed", echecs: 0 };
 
-  // Circuit ouvert ?
   if (cb.etat === "open") {
     const tempsRestant = (cb.ouvertA || 0) + CB_TIMEOUT - Date.now();
-    if (tempsRestant > 0) {
+    if (tempsRestant > 0)
       throw new Error(`Circuit breaker OPEN — réessai dans ${Math.ceil(tempsRestant / 60000)} min`);
-    }
-    // Transition vers half-open
     await cbRef.update({ etat: "half-open" });
   }
 
@@ -190,26 +168,21 @@ async function appelWebhook(url, ordreRef, montant, id1xbet) {
     const webhookUrl = `${url}?id1xbet=${encodeURIComponent(id1xbet)}&montant=${encodeURIComponent(montant)}&ref=${encodeURIComponent(ordreRef)}`;
     const resp       = await fetch(webhookUrl, { signal: AbortSignal.timeout(10000) });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-    // Succès → réinitialisation circuit
     await cbRef.set({ etat: "closed", echecs: 0, dernierSucces: Date.now() });
     return resp;
   } catch (e) {
     const echecs = (cb.echecs || 0) + 1;
-    if (echecs >= CB_SEUIL) {
+    if (echecs >= CB_SEUIL)
       await cbRef.set({ etat: "open", echecs, ouvertA: Date.now(), dernierEchec: e.message });
-      console.error(`Circuit breaker OUVERT après ${echecs} échecs: ${e.message}`);
-    } else {
+    else
       await cbRef.set({ etat: "closed", echecs, dernierEchec: e.message }, { merge: true });
-    }
     throw e;
   }
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SECTION 6 — FILE DE RETRY WEBHOOKS
-// Sur échec webhook: enregistrer dans failed_webhooks
-// Retry horaire avec backoff exponentiel (max 3 tentatives)
+// SECTION 6 — QUEUE WEBHOOK ÉCHOUÉ (temps réel via trigger)
+// Sauvegarde → onWebhookEchoue se déclenche immédiatement
 // ══════════════════════════════════════════════════════════════════
 async function sauvegarderWebhookEchoue(ordreRef, id1xbet, montant) {
   await db.collection("failed_webhooks").doc(ordreRef).set({
@@ -217,21 +190,100 @@ async function sauvegarderWebhookEchoue(ordreRef, id1xbet, montant) {
     tentatives: 0, maxTentatives: 3,
     statut: "en_attente",
     createdAt: FieldValue.serverTimestamp(),
-    prochainEssai: new Date(Date.now() + 60 * 60 * 1000), // dans 1h
   }, { merge: true });
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SECTION 7 — AUDIT LOG
+// SECTION 7 — RÉCONCILIATION SMS IMMÉDIATE
+// Cherche un ordre En attente correspondant à un SMS non_matché
+// Score ≥ 40 → suggestion admin ; Score ≥ 80 → auto-confirmation
+// ══════════════════════════════════════════════════════════════════
+async function reconcilierSMS(smsDoc, token, adminId) {
+  const sms = smsDoc.data();
+  if (!sms.montant && !sms.numClient) return false;
+
+  const candidats = [];
+
+  if (sms.numClient) {
+    const byPhone = await db.collection("orders")
+      .where("numeroPayment", "==", sms.numClient)
+      .where("status", "==", "En attente").limit(5).get();
+    candidats.push(...byPhone.docs);
+  }
+
+  if (sms.montant) {
+    const byMontant = await db.collection("orders")
+      .where("montant", "==", sms.montant)
+      .where("status", "==", "En attente").limit(5).get();
+    for (const d of byMontant.docs) {
+      if (!candidats.find((c) => c.id === d.id)) candidats.push(d);
+    }
+  }
+
+  if (!candidats.length) return false;
+
+  let meilleur = null, meilleurScore = 0;
+  for (const c of candidats) {
+    const o = c.data();
+    let score = 0;
+    if (sms.numClient && o.numeroPayment === sms.numClient) score += 50;
+    if (sms.montant && Math.abs(Number(o.montant) - sms.montant) <= Math.max(5, sms.montant * 0.05)) score += 40;
+    if (score > meilleurScore) { meilleur = c; meilleurScore = score; }
+  }
+
+  if (!meilleur || meilleurScore < 40) return false;
+
+  const o   = meilleur.data();
+  const ref = o.orderId || meilleur.id;
+
+  // Score ≥ 80 = correspondance forte → auto-confirmation directe
+  if (meilleurScore >= 80) {
+    const claimed = await claimOrder(meilleur.ref, "En attente", "Argent Reçu", {
+      confirmedBy: "auto_reconciliation_rt",
+      waafitranfertID: sms.transferId || o.waafitranfertID,
+      montantRecu: sms.montant || Number(o.montant),
+      expediteurRecu: sms.numClient || "",
+      argentRecuAt: FieldValue.serverTimestamp(),
+    });
+
+    if (claimed) {
+      await smsDoc.ref.update({ status: "matché", ordreRef: ref, reconciledAt: FieldValue.serverTimestamp() });
+      await new Promise((r) => setTimeout(r, 8000));
+      await meilleur.ref.update({ status: "Confirmé", confirmedAt: FieldValue.serverTimestamp() });
+      await smsDoc.ref.update({ status: "traité" });
+      logAudit("reconciliation_auto_rt", { ref, smsId: smsDoc.id, score: meilleurScore });
+      await sendTelegram(token, adminId,
+        `✅ <b>Réconciliation temps réel — Auto-confirmé</b>\n\n` +
+        `Ordre <code>#${ref}</code> ↔ SMS <code>${sms.transferId || "?"}</code>\n` +
+        `${sms.montant ? sms.montant.toLocaleString() : "?"}DJF | N°${sms.numClient || "?"}\n` +
+        `Score: <b>${meilleurScore}/90</b>`
+      );
+      return true;
+    }
+  }
+
+  // Score 40-79 → suggestion admin
+  await smsDoc.ref.update({ status: "suggestion_admin", ordreCandidat: ref });
+  await sendTelegram(token, adminId,
+    `🔄 <b>Réconciliation temps réel — Suggestion</b>\n\n` +
+    `SMS ↔ Ordre <code>#${ref}</code> (score ${meilleurScore}/90)\n` +
+    `TID: <code>${sms.transferId || "?"}</code> | ${sms.montant ? sms.montant.toLocaleString() : "?"}DJF | N°${sms.numClient || "?"}\n\n` +
+    `Pour confirmer : <code>confirmer ${ref}</code>`
+  );
+  return false;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SECTION 8 — AUDIT LOG
 // ══════════════════════════════════════════════════════════════════
 function logAudit(action, data) {
   db.collection("audit_logs").add({
     action, data: data || {}, ts: FieldValue.serverTimestamp(), source: "cloud-functions",
-  }).catch(() => { /* fire-and-forget */ });
+  }).catch(() => {});
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SECTION 8 — SUPPORT CLIENT (arbre décision)
+// SECTION 9 — SUPPORT CLIENT (arbre décision)
 // ══════════════════════════════════════════════════════════════════
 function repondreSupport(text, session, orders) {
   const t = text.toLowerCase().trim();
@@ -255,7 +307,7 @@ function repondreSupport(text, session, orders) {
   if (/(?:combien.*temps|délai|durée|quand.*confirm|temps.*traitement)/.test(t)) {
     return reply(
       "⏱️ <b>Délais de traitement</b>\n\n" +
-      "• Confirmation automatique : <b>immédiat à 5 minutes</b>\n" +
+      "• Confirmation automatique : <b>immédiat</b>\n" +
       "• Vérification manuelle si besoin : <b>moins de 30 minutes</b>\n\n" +
       "Kaffi-Pay est disponible <b>24h/24 — 7j/7</b>.",
       "résolu", "FAQ délais", "faible", "FAQ délais"
@@ -296,22 +348,19 @@ function repondreSupport(text, session, orders) {
     if (!ligne) {
       return reply(
         `L'ordre <b>#${ordreNum}</b> est introuvable pour votre numéro.\n\nVérifiez le numéro d'ordre (6 à 8 chiffres, visible sur kaffi-pay.com).`,
-        "info_manquante", "Ordre introuvable", "faible", `Ordre #${ordreNum} introuvable pour ${session.phone}`
+        "info_manquante", "Ordre introuvable", "faible", `Ordre #${ordreNum} introuvable`
       );
     }
 
     if (ligne.includes("| Confirmé"))
       return reply(`✅ Votre ordre <b>#${ordreNum}</b> est <b>confirmé</b>. Votre compte 1xBet a bien été crédité.`,
         "résolu", "Confirmé communiqué", "faible", `#${ordreNum} confirmé`);
-
     if (ligne.includes("| Argent Reçu"))
       return reply(`💳 Ordre <b>#${ordreNum}</b> : paiement <b>reçu</b>, crédit 1xBet en cours.`,
         "résolu", "Argent Reçu communiqué", "faible", `#${ordreNum} argent reçu`);
-
     if (ligne.includes("| En attente"))
       return reply(`⏳ Votre ordre <b>#${ordreNum}</b> est <b>en cours de traitement</b>. Vous serez notifié dès confirmation.`,
         "résolu", "En attente communiqué", "faible", `#${ordreNum} en attente`);
-
     if (ligne.includes("| Correction"))
       return reply(`✏️ Votre ordre <b>#${ordreNum}</b> est en <b>vérification</b> par notre équipe.`,
         "escalade", "Correction signalée admin", "moyen", `#${ordreNum} en correction`);
@@ -319,21 +368,18 @@ function repondreSupport(text, session, orders) {
     if (ligne.includes("| Rejeté")) {
       const nonRecu = ligne.toLowerCase().includes("paiement non re") || ligne.toLowerCase().includes("introuvable");
       const fraude  = ligne.toLowerCase().includes("fraude");
-
       if (fraude)
         return reply(
           "❌ Votre ordre a été rejeté pour raison de sécurité.\n\nSi vous pensez qu'il s'agit d'une erreur, envoyez votre Transfer ID Waafi.",
-          "fraude_signalée", "Fraude — réponse prudente", "élevé", `#${ordreNum} fraude — client contacte support`
+          "fraude_signalée", "Fraude — réponse prudente", "élevé", `#${ordreNum} fraude`
         );
-
       if (nonRecu)
         return reply(
           `❌ Ordre <b>#${ordreNum}</b> rejeté : <b>Paiement non reçu</b>.\n\n` +
-          "<b>Causes possibles :</b>\n• Transfer ID incorrect\n• Montant ou numéro expéditeur différent\n• Paiement après soumission\n\n" +
-          "Pour correction, envoyez :\n📌 <b>Transfer ID Waafi</b> — <b>Montant payé</b> — <b>N° expéditeur</b>",
+          "<b>Causes possibles :</b>\n• Transfer ID incorrect\n• Montant ou numéro expéditeur différent\n\n" +
+          "Pour correction :\n📌 <b>Transfer ID Waafi</b> — <b>Montant payé</b> — <b>N° expéditeur</b>",
           "info_manquante", "Rejeté non reçu — demande infos", "moyen", `#${ordreNum} rejeté non reçu`
         );
-
       return reply(
         `❌ Ordre <b>#${ordreNum}</b> <b>rejeté</b>. Envoyez votre Transfer ID Waafi pour vérification.`,
         "info_manquante", "Rejeté — Transfer ID demandé", "moyen", `#${ordreNum} rejeté`
@@ -359,7 +405,7 @@ function reply(reponse_client, decision, action_prise, niveau_urgence, resume_au
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SECTION 9 — ADMIN BOT (logique pure)
+// SECTION 10 — ADMIN BOT (logique pure)
 // ══════════════════════════════════════════════════════════════════
 function traiterAdminBot(text, orders, notifs) {
   const t = text.toLowerCase().trim();
@@ -432,7 +478,7 @@ function traiterAdminBot(text, orders, notifs) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// SECTION 10 — HELPERS
+// SECTION 11 — HELPERS
 // ══════════════════════════════════════════════════════════════════
 async function sendTelegram(token, chatId, text) {
   if (!token || !chatId) return;
@@ -482,7 +528,7 @@ function extractMontant(text) {
 }
 
 function extractNumClient(text, own = "77275572") {
-  const ms = (text.match(/\((\d{8})\)/g) || []).map((s) => s.replace(/[()]/g, ""));
+  const ms     = (text.match(/\((\d{8})\)/g) || []).map((s) => s.replace(/[()]/g, ""));
   const others = ms.filter((n) => n !== own);
   if (others.length) return others[0];
   const m = text.match(/from\s+(77\d{6})/i) || text.match(/de\s+(77\d{6})/i);
@@ -491,8 +537,7 @@ function extractNumClient(text, own = "77275572") {
 
 // ══════════════════════════════════════════════════════════════════
 // TRIGGER 1 — NOUVEL ORDRE
-// Flux : Fraude permanente → Rate limit → Doublon → Transfer ID check
-//        → Analyse fraude → Notification admin
+// + Vérif croisée : SMS non_matché compatible ?  (temps réel)
 // ══════════════════════════════════════════════════════════════════
 exports.onNouvelOrdre = onDocumentCreated(
   { document: "orders/{docId}", region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID], timeoutSeconds: 60 },
@@ -506,15 +551,14 @@ exports.onNouvelOrdre = onDocumentCreated(
 
     logAudit("nouvel_ordre", { ref, type: tx.type, montant: tx.montant, phone });
 
-    // ── FRAUDE 1 : Transfer ID déjà confirmé ────────────────────
+    // ── FRAUDE 1 : Transfer ID déjà confirmé ───────────────────
     if (transferId) {
       const [confirmeSnap, matcheSnap] = await Promise.all([
         db.collection("orders").where("waafitranfertID", "==", transferId).where("status", "==", "Confirmé").limit(1).get(),
         db.collection("waafi_notifications").where("transferId", "==", transferId).where("status", "==", "matché").limit(1).get(),
       ]);
-
       if (!confirmeSnap.empty || !matcheSnap.empty) {
-        const source  = !confirmeSnap.empty ? confirmeSnap.docs[0] : matcheSnap.docs[0];
+        const source    = !confirmeSnap.empty ? confirmeSnap.docs[0] : matcheSnap.docs[0];
         const ancienRef = source.data().orderId || source.data().ordreRef || source.id;
         await db.collection("orders").doc(docId).update({
           status: "Rejeté",
@@ -530,38 +574,37 @@ exports.onNouvelOrdre = onDocumentCreated(
       }
     }
 
-    // ── RATE LIMIT ───────────────────────────────────────────────
+    // ── RATE LIMIT ──────────────────────────────────────────────
     if (phone && phone !== "—") {
       const rl = await verifierRateLimit(phone, tx.type);
       if (!rl.autorise) {
         await db.collection("orders").doc(docId).update({
           status: "Rejeté",
-          flagRaison: `Rate limit dépassé — max ${MAX_PAR_HEURE} ordres/heure pour ce numéro. Réessayez dans ${rl.resetDans} min.`,
+          flagRaison: `Rate limit — max ${MAX_PAR_HEURE} ordres/heure. Réessayez dans ${rl.resetDans} min.`,
           flaggedAt: FieldValue.serverTimestamp(),
         });
         await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
-          `⚠️ <b>Rate limit déclenché</b>\nN°: <code>${phone}</code> | ${tx.type}\nOrdre <code>#${ref}</code> rejeté.`
+          `⚠️ <b>Rate limit</b>\nN°: <code>${phone}</code> | ${tx.type}\nOrdre <code>#${ref}</code> rejeté.`
         );
         logAudit("rate_limit_declenche", { ref, phone, type: tx.type });
         return;
       }
     }
 
-    // ── DÉTECTION DOUBLON ────────────────────────────────────────
+    // ── DOUBLON ─────────────────────────────────────────────────
     const doublon = await detecterDoublon(phone, Number(tx.montant), tx.type, docId);
     if (doublon) {
       await db.collection("orders").doc(docId).update({
-        doublon_suspect: doublon.ordreId,
-        doublon_alerte: true,
+        doublon_suspect: doublon.ordreId, doublon_alerte: true,
         doublon_at: FieldValue.serverTimestamp(),
       });
       await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
-        `⚠️ <b>Possible doublon détecté</b>\n\nOrdre <code>#${ref}</code> ressemble à <code>#${doublon.ordreId}</code>\n` +
+        `⚠️ <b>Possible doublon</b>\n\nOrdre <code>#${ref}</code> ≈ <code>#${doublon.ordreId}</code>\n` +
         `Même n° (${phone}), montant similaire, < 30 min.\nVérifiez avant de confirmer.`
       );
     }
 
-    // ── DÉPÔT : vérification Transfer ID ────────────────────────
+    // ── DÉPÔT avec Transfer ID ───────────────────────────────────
     if (isDepot) {
       const montantOrdre = Number(tx.montant || 0);
       let waafiDoc = null, waafiData = null;
@@ -601,6 +644,27 @@ exports.onNouvelOrdre = onDocumentCreated(
         }
       }
 
+      // ── Vérif croisée TEMPS RÉEL : SMS non_matché compatible ? ──
+      // Un SMS peut être arrivé avant cet ordre sans trouver de correspondance.
+      // On cherche maintenant que l'ordre existe.
+      const nonMatcheSnap = await db.collection("waafi_notifications")
+        .where("status", "in", ["non_matché", "suggestion_admin"])
+        .limit(20).get().catch(() => ({ empty: true, docs: [] }));
+
+      if (!nonMatcheSnap.empty) {
+        for (const smsDoc of nonMatcheSnap.docs) {
+          const sms = smsDoc.data();
+          const matchPhone  = phone && sms.numClient && sms.numClient === phone;
+          const matchAmount = sms.montant && Math.abs(montantOrdre - sms.montant) <= Math.max(5, montantOrdre * 0.05);
+          const matchTID    = transferId && sms.transferId && sms.transferId === transferId;
+
+          if (matchTID || (matchPhone && matchAmount)) {
+            await reconcilierSMS(smsDoc, TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value());
+            break;
+          }
+        }
+      }
+
       // Transfer ID introuvable → rejet
       await db.collection("orders").doc(docId).update({
         status: "Rejeté",
@@ -614,7 +678,7 @@ exports.onNouvelOrdre = onDocumentCreated(
       return;
     }
 
-    // ── ANALYSE FRAUDE (règles embarquées) ──────────────────────
+    // ── ANALYSE FRAUDE (retrait) ────────────────────────────────
     const fraud = analyserFraude(tx, transferId);
     await db.collection("orders").doc(docId).update({
       ia_score_fraude: fraud.score_fraude, ia_risque: fraud.risque,
@@ -630,7 +694,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         `🚨 <b>Ordre rejeté — Fraude (score ${fraud.score_fraude}/100)</b>\n` +
         `Réf: <code>#${ref}</code> | ${fraud.raisons.join(", ")}`
       );
-      logAudit("ordre_rejete_fraude", { ref, score: fraud.score_fraude, raisons: fraud.raisons });
+      logAudit("ordre_rejete_fraude", { ref, score: fraud.score_fraude });
       return;
     }
 
@@ -658,9 +722,8 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     if (before.status === after.status) return;
 
-    // Validation State Machine
     if (!transitionValide(before.status, after.status)) {
-      console.warn(`Transition invalide ignorée: ${before.status} → ${after.status} pour ${event.params.docId}`);
+      console.warn(`Transition invalide ignorée: ${before.status} → ${after.status}`);
       return;
     }
 
@@ -687,7 +750,9 @@ exports.onOrdreUpdated = onDocumentUpdated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// TRIGGER 3 — AUTO-CONFIRMATION (SMS Waafi)
+// TRIGGER 3 — AUTO-CONFIRMATION SMS Waafi (temps réel)
+// Déclenché à chaque nouveau document waafi_notifications
+// Si non_matché → reconcilierSMS() immédiatement (pas d'attente)
 // ══════════════════════════════════════════════════════════════════
 exports.autoConfirmation = onDocumentCreated(
   {
@@ -724,26 +789,48 @@ exports.autoConfirmation = onDocumentCreated(
       return;
     }
 
+    // Mise à jour des champs parsés pour réconciliation
+    await db.collection("waafi_notifications").doc(docId).update({
+      transferId, montant: montantSMS, numClient,
+    });
+
+    // Recherche 1 : par Transfer ID exact
     let ordreSnap = { empty: true };
     if (transferId) {
       ordreSnap = await db.collection("orders")
         .where("waafitranfertID", "==", transferId).where("status", "==", "En attente").limit(1).get();
     }
+    // Recherche 2 : par numéro + montant exact
     if (ordreSnap.empty && numClient && montantSMS) {
       ordreSnap = await db.collection("orders")
         .where("numeroPayment", "==", numClient).where("montant", "==", montantSMS).where("status", "==", "En attente").limit(1).get();
     }
+    // Recherche 3 : par montant seul (fuzzy ±5%)
+    if (ordreSnap.empty && montantSMS) {
+      const byMontant = await db.collection("orders")
+        .where("status", "==", "En attente").limit(20).get();
+      const tol = Math.max(5, montantSMS * 0.05);
+      const match = byMontant.docs.find((d) => Math.abs(Number(d.data().montant) - montantSMS) <= tol);
+      if (match) ordreSnap = { empty: false, docs: [match] };
+    }
 
     if (ordreSnap.empty) {
       await db.collection("waafi_notifications").doc(docId).update({
-        status: "non_matché", erreurMsg: `Aucun ordre — TID: ${transferId}, Montant: ${montantSMS}`,
+        status: "non_matché",
+        erreurMsg: `Aucun ordre — TID: ${transferId}, Montant: ${montantSMS}`,
         transferId, montant: montantSMS, numClient,
       });
-      await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
-        `⚠️ <b>SMS Waafi sans correspondance</b>\nTransfer-ID: <code>${transferId || "?"}</code>\n` +
-        `Montant: <b>${montantSMS ? montantSMS.toLocaleString() : "?"} DJF</b>\n` +
-        `Expéditeur: <code>${numClient || "?"}</code>\n<i>La réconciliation tentera un match automatique sous 10 min.</i>`
-      );
+      // Tentative immédiate de réconciliation floue
+      const smsDocFresh = await db.collection("waafi_notifications").doc(docId).get();
+      const reconciled  = await reconcilierSMS(smsDocFresh, TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value());
+      if (!reconciled) {
+        await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
+          `⚠️ <b>SMS Waafi sans correspondance</b>\nTransfer-ID: <code>${transferId || "?"}</code>\n` +
+          `Montant: <b>${montantSMS ? montantSMS.toLocaleString() : "?"} DJF</b>\n` +
+          `Expéditeur: <code>${numClient || "?"}</code>\n` +
+          `<i>Sera re-tenté dès qu'un ordre compatible arrive.</i>`
+        );
+      }
       return;
     }
 
@@ -753,7 +840,6 @@ exports.autoConfirmation = onDocumentCreated(
     const montantOrdre = Number(ordre.montant || 0);
     const mt           = montantSMS || montantOrdre;
 
-    // Tolérance ±5% sur le montant (pas uniquement 5 DJF fixe)
     const tolerance = Math.max(5, montantOrdre * 0.05);
     if (montantSMS && Math.abs(montantOrdre - montantSMS) > tolerance) {
       await db.collection("waafi_notifications").doc(docId).update({
@@ -785,20 +871,18 @@ exports.autoConfirmation = onDocumentCreated(
 
     logAudit("depot_confirme_sms", { ordreRef, transferId, montant: mt });
 
-    const id1xbet = ordre.userId1xBet || ordre.id1x || "";
+    const id1xbet     = ordre.userId1xBet || ordre.id1x || "";
+    const webhookBase = MACRO_WEBHOOK_URL.value() ||
+      "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
+
     if (id1xbet) {
-      const webhookBase = MACRO_WEBHOOK_URL.value() ||
-        "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
       try {
         await appelWebhook(webhookBase, ordreRef, mt, id1xbet);
         await ordreDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
       } catch (e) {
         await ordreDoc.ref.update({ webhookStatus: "echec", webhookError: e.message });
         await sauvegarderWebhookEchoue(ordreRef, id1xbet, mt);
-        await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
-          `⚠️ <b>Webhook échoué</b> — #${ordreRef}\nID 1xBet: <code>${id1xbet}</code>\n` +
-          `<i>${e.message}</i>\n🔄 <b>Retry automatique dans 1h.</b>`
-        );
+        // Pas de notification ici — onWebhookEchoue va retenter immédiatement
       }
     } else {
       await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
@@ -815,18 +899,86 @@ exports.autoConfirmation = onDocumentCreated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// SCHEDULED 1 — RAPPORT JOURNALIER (08:00 heure de Djibouti)
+// TRIGGER 4 — WEBHOOK ÉCHOUÉ : RETRY TEMPS RÉEL
+//
+// Se déclenche IMMÉDIATEMENT quand failed_webhooks reçoit un doc.
+// 3 tentatives : 0 s → 30 s → 90 s — tout dans une seule exécution.
+// Aucune attente horaire nécessaire.
+// ══════════════════════════════════════════════════════════════════
+exports.onWebhookEchoue = onDocumentCreated(
+  {
+    document: "failed_webhooks/{docId}", region: REGION,
+    secrets: [MACRO_WEBHOOK_URL, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    timeoutSeconds: 300, // 5 min — largement suffisant pour 3 retries
+  },
+  async (event) => {
+    const docId = event.params.docId;
+    const w     = event.data.data();
+
+    const webhookBase = MACRO_WEBHOOK_URL.value() ||
+      "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
+
+    // Délais entre tentatives : 0 s, 30 s, 90 s
+    const delais = [0, 30000, 90000];
+
+    for (let i = 0; i < delais.length; i++) {
+      if (delais[i] > 0) await new Promise((r) => setTimeout(r, delais[i]));
+
+      const tentative = i + 1;
+      try {
+        await appelWebhook(webhookBase, w.ordreRef, w.montant, w.id1xbet);
+
+        // ── Succès ───────────────────────────────────────────────
+        await db.collection("failed_webhooks").doc(docId).update({
+          statut: "succès", tentatives: tentative, resolvedAt: FieldValue.serverTimestamp(),
+        });
+
+        // Mettre à jour le statut webhook sur l'ordre
+        const ordresSnap = await db.collection("orders").where("orderId", "==", w.ordreRef).limit(1).get();
+        if (!ordresSnap.empty) await ordresSnap.docs[0].ref.update({ webhookStatus: "ok_retry_rt" });
+
+        await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
+          `✅ <b>Webhook récupéré (tentative ${tentative}/3)</b>\n` +
+          `Ordre <code>#${w.ordreRef}</code> | ID 1xBet: <code>${w.id1xbet}</code>`
+        );
+
+        logAudit("webhook_retry_succes_rt", { ordreRef: w.ordreRef, tentative });
+        return;
+
+      } catch (e) {
+        console.warn(`Webhook retry RT tentative ${tentative}/3 échoué: ${e.message}`);
+        await db.collection("failed_webhooks").doc(docId).update({
+          tentatives: tentative, dernierEchec: e.message,
+        });
+
+        if (tentative === delais.length) {
+          // ── Toutes les tentatives épuisées ─────────────────────
+          await db.collection("failed_webhooks").doc(docId).update({ statut: "abandonné" });
+          await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
+            `🔴 <b>Webhook abandonné — 3 tentatives échouées</b>\n\n` +
+            `Ordre <code>#${w.ordreRef}</code> | ID 1xBet: <code>${w.id1xbet}</code>\n` +
+            `Montant: <b>${Number(w.montant || 0).toLocaleString()} DJF</b>\n` +
+            `<b>⚠️ Recharge manuelle REQUISE.</b>`
+          );
+          logAudit("webhook_abandonne_rt", { ordreRef: w.ordreRef, erreur: e.message });
+        }
+      }
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// SCHEDULED 1 — RAPPORT JOURNALIER (08:00 Africa/Djibouti)
 // ══════════════════════════════════════════════════════════════════
 exports.rapportJournalier = onSchedule(
   { schedule: "0 8 * * *", timeZone: TZ, region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
   async () => {
-    const hier   = new Date(); hier.setDate(hier.getDate() - 1);
-    const debut  = new Date(hier); debut.setHours(0, 0, 0, 0);
-    const fin    = new Date(hier); fin.setHours(23, 59, 59, 999);
+    const hier  = new Date(); hier.setDate(hier.getDate() - 1);
+    const debut = new Date(hier); debut.setHours(0, 0, 0, 0);
+    const fin   = new Date(hier); fin.setHours(23, 59, 59, 999);
 
     const snap = await db.collection("orders")
-      .where("ts", ">=", debut.getTime())
-      .where("ts", "<=", fin.getTime())
+      .where("ts", ">=", debut.getTime()).where("ts", "<=", fin.getTime())
       .get().catch(() => db.collection("orders").get());
 
     const ordres    = snap.docs.map((d) => d.data());
@@ -847,11 +999,9 @@ exports.rapportJournalier = onSchedule(
       `🚨 Fraudes: <b>${fraudes.length}</b>  📈 Taux: <b>${taux}%</b>\n` +
       `💰 Volume dépôts confirmés: <b>${volume.toLocaleString()} DJF</b>\n\n` +
       (rejetes.length > confirmes.length ? "⚠️ Plus de rejets que de confirmations — vérifiez." :
-       fraudes.length > 2 ? "🚨 Activité frauduleuse élevée." :
-       "✅ Journée normale.")
+       fraudes.length > 2 ? "🚨 Activité frauduleuse élevée." : "✅ Journée normale.")
     );
 
-    // Cache des stats journalières dans Firestore
     const yy = String(hier.getFullYear()).slice(-2);
     const mm = String(hier.getMonth() + 1).padStart(2, "0");
     const dd = String(hier.getDate()).padStart(2, "0");
@@ -860,39 +1010,36 @@ exports.rapportJournalier = onSchedule(
       confirmes: confirmes.length, rejetes: rejetes.length, fraudes: fraudes.length,
       volume, taux, computedAt: FieldValue.serverTimestamp(),
     });
-
-    console.log(`Rapport journalier envoyé — ${ordres.length} ordres, ${volume.toLocaleString()} DJF`);
   }
 );
 
 // ══════════════════════════════════════════════════════════════════
-// SCHEDULED 2 — ORDRES BLOQUÉS (toutes les 15 min)
-// Alerte si un ordre est En attente depuis > 30 min
+// SCHEDULED 2 — ORDRES BLOQUÉS (toutes les 5 min)
+// Seul cas où un scheduler est nécessaire : détecter le temps écoulé.
+// Alerte si un ordre reste En attente > 30 min.
 // ══════════════════════════════════════════════════════════════════
 exports.ordresBloqués = onSchedule(
-  { schedule: "every 15 minutes", region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  { schedule: "every 5 minutes", region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
   async () => {
     const cutoff = new Date(Date.now() - 30 * 60 * 1000);
 
     const snap = await db.collection("orders")
-      .where("status", "==", "En attente")
-      .orderBy("ts", "asc")
+      .where("status", "==", "En attente").orderBy("ts", "asc")
       .get().catch(() => db.collection("orders").where("status", "==", "En attente").get());
 
     const bloqués = snap.docs.filter((d) => {
       const ts = d.data().ts;
-      if (!ts) return false;
-      return new Date(ts) < cutoff;
+      return ts && new Date(ts) < cutoff;
     });
 
     if (!bloqués.length) return;
 
-    // Éviter les alertes répétées — vérifier si déjà alerté dans les 30 dernières min
-    const alertRef = db.collection("alertes_etat").doc("ordres_bloques");
+    // Anti-spam : 1 alerte max toutes les 30 min
+    const alertRef  = db.collection("alertes_etat").doc("ordres_bloques");
     const alertSnap = await alertRef.get();
     if (alertSnap.exists) {
-      const lastAlert = alertSnap.data().ts?.toDate?.() || new Date(0);
-      if (Date.now() - lastAlert.getTime() < 30 * 60 * 1000) return;
+      const last = alertSnap.data().ts?.toDate?.() || new Date(0);
+      if (Date.now() - last.getTime() < 30 * 60 * 1000) return;
     }
 
     const lignes = bloqués.map((d) => {
@@ -907,141 +1054,11 @@ exports.ordresBloqués = onSchedule(
     );
 
     await alertRef.set({ ts: FieldValue.serverTimestamp(), count: bloqués.length });
-    console.log(`Ordres bloqués: ${bloqués.length} alertes envoyées`);
   }
 );
 
 // ══════════════════════════════════════════════════════════════════
-// SCHEDULED 3 — RETRY WEBHOOKS ÉCHOUÉS (toutes les heures)
-// Backoff exponentiel : 1h → 2h → 4h, puis abandon + alerte
-// ══════════════════════════════════════════════════════════════════
-exports.retryWebhooks = onSchedule(
-  { schedule: "every 60 minutes", region: REGION, secrets: [MACRO_WEBHOOK_URL, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
-  async () => {
-    const maintenant = new Date();
-    const snap = await db.collection("failed_webhooks")
-      .where("statut", "==", "en_attente")
-      .where("prochainEssai", "<=", maintenant)
-      .limit(20)
-      .get();
-
-    if (snap.empty) return;
-
-    const webhookBase = MACRO_WEBHOOK_URL.value() ||
-      "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
-
-    for (const doc of snap.docs) {
-      const w = doc.data();
-      const tentatives = (w.tentatives || 0) + 1;
-
-      try {
-        await appelWebhook(webhookBase, w.ordreRef, w.montant, w.id1xbet);
-
-        await doc.ref.update({ statut: "succès", tentatives, resolvedAt: FieldValue.serverTimestamp() });
-        await db.collection("orders").where("orderId", "==", w.ordreRef).limit(1).get().then((s) => {
-          if (!s.empty) s.docs[0].ref.update({ webhookStatus: "ok_retry" });
-        });
-        console.log(`Webhook retry succès: #${w.ordreRef}`);
-      } catch (e) {
-        if (tentatives >= w.maxTentatives) {
-          await doc.ref.update({ statut: "abandonné", tentatives, dernierEchec: e.message });
-          await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
-            `🔴 <b>Webhook abandonné après ${tentatives} tentatives</b>\n` +
-            `Ordre <code>#${w.ordreRef}</code> | ID 1xBet: <code>${w.id1xbet}</code>\n` +
-            `<b>Recharge manuelle REQUISE.</b>`
-          );
-        } else {
-          // Backoff exponentiel : 2^tentatives heures
-          const delai = Math.pow(2, tentatives) * 60 * 60 * 1000;
-          await doc.ref.update({
-            tentatives, statut: "en_attente",
-            prochainEssai: new Date(Date.now() + delai),
-            dernierEchec: e.message,
-          });
-          console.log(`Webhook retry ${tentatives}/${w.maxTentatives} échoué: ${e.message}`);
-        }
-      }
-    }
-  }
-);
-
-// ══════════════════════════════════════════════════════════════════
-// SCHEDULED 4 — RÉCONCILIATION SMS (toutes les 10 min)
-// Tente de matcher les SMS non_matché avec des ordres En attente
-// par correspondance floue : numéro OU (montant ±5% ET type)
-// ══════════════════════════════════════════════════════════════════
-exports.reconciliationSMS = onSchedule(
-  { schedule: "every 10 minutes", region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
-  async () => {
-    const snap = await db.collection("waafi_notifications")
-      .where("status", "==", "non_matché")
-      .orderBy("createdAt", "desc")
-      .limit(20)
-      .get().catch(() =>
-        db.collection("waafi_notifications").where("status", "==", "non_matché").limit(20).get()
-      );
-
-    if (snap.empty) return;
-
-    for (const smsDoc of snap.docs) {
-      const sms = smsDoc.data();
-      if (!sms.montant && !sms.numClient) continue;
-
-      // Candidats en attente
-      const candidats = [];
-
-      if (sms.numClient) {
-        const byPhone = await db.collection("orders")
-          .where("numeroPayment", "==", sms.numClient)
-          .where("status", "==", "En attente")
-          .limit(5).get();
-        candidats.push(...byPhone.docs);
-      }
-
-      if (sms.montant) {
-        const byMontant = await db.collection("orders")
-          .where("montant", "==", sms.montant)
-          .where("status", "==", "En attente")
-          .limit(5).get();
-        for (const d of byMontant.docs) {
-          if (!candidats.find((c) => c.id === d.id)) candidats.push(d);
-        }
-      }
-
-      if (!candidats.length) continue;
-
-      // Meilleur candidat : score de correspondance
-      let meilleur = null, meilleurScore = 0;
-      for (const c of candidats) {
-        const o = c.data();
-        let score = 0;
-        if (sms.numClient && o.numeroPayment === sms.numClient) score += 50;
-        if (sms.montant && Math.abs(Number(o.montant) - sms.montant) <= sms.montant * 0.05) score += 40;
-        if (score > meilleurScore) { meilleur = c; meilleurScore = score; }
-      }
-
-      if (meilleur && meilleurScore >= 40) {
-        const o   = meilleur.data();
-        const ref = o.orderId || meilleur.id;
-
-        await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
-          `🔄 <b>Réconciliation possible</b>\n\n` +
-          `SMS sans ordre ↔ Ordre en attente <code>#${ref}</code>\n` +
-          `Score: ${meilleurScore}/90\n` +
-          `SMS: TID <code>${sms.transferId || "?"}</code> | ${sms.montant ? sms.montant.toLocaleString() : "?"}DJF | N°${sms.numClient || "?"}\n` +
-          `Ordre: ${o.montant}DJF | N°${o.numeroPayment || "?"}\n\n` +
-          `Pour confirmer : <code>confirmer ${ref}</code>`
-        );
-
-        await smsDoc.ref.update({ status: "suggestion_admin", ordreCandidat: ref });
-      }
-    }
-  }
-);
-
-// ══════════════════════════════════════════════════════════════════
-// SCHEDULED 5 — NETTOYAGE COMPTEURS (chaque nuit à minuit)
-// Supprime les compteurs daily_YYMMDD de plus de 7 jours
+// SCHEDULED 3 — NETTOYAGE (chaque nuit à minuit)
 // ══════════════════════════════════════════════════════════════════
 exports.nettoyageCompteurs = onSchedule(
   { schedule: "0 0 * * *", timeZone: TZ, region: REGION },
@@ -1053,25 +1070,32 @@ exports.nettoyageCompteurs = onSchedule(
     const limite = `daily_${yy}${mm}${dd}`;
 
     const snap = await db.collection("counters")
-      .where("__name__", "<=", limite)
-      .get().catch(() => ({ docs: [] }));
+      .where("__name__", "<=", limite).get().catch(() => ({ docs: [] }));
 
-    if (snap.docs.length === 0) { console.log("Nettoyage compteurs: rien à supprimer"); return; }
+    if (snap.docs.length > 0) {
+      const batch = db.batch();
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      console.log(`Nettoyage: ${snap.docs.length} compteurs supprimés`);
+    }
 
-    const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-    console.log(`Nettoyage: ${snap.docs.length} compteurs supprimés`);
-
-    // Nettoyage rate_limits expirés
+    // Rate limits expirés
     const rlSnap = await db.collection("rate_limits")
-      .where("expiresAt", "<", Date.now())
-      .limit(100).get().catch(() => ({ docs: [] }));
+      .where("expiresAt", "<", Date.now()).limit(100).get().catch(() => ({ docs: [] }));
     if (rlSnap.docs.length > 0) {
       const batch2 = db.batch();
       rlSnap.docs.forEach((d) => batch2.delete(d.ref));
       await batch2.commit();
-      console.log(`Nettoyage: ${rlSnap.docs.length} rate_limits expirés supprimés`);
+    }
+
+    // Audit logs > 30 jours
+    const cutoffAudit = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const auditSnap = await db.collection("audit_logs")
+      .where("ts", "<", cutoffAudit).limit(100).get().catch(() => ({ docs: [] }));
+    if (auditSnap.docs.length > 0) {
+      const batch3 = db.batch();
+      auditSnap.docs.forEach((d) => batch3.delete(d.ref));
+      await batch3.commit();
     }
   }
 );
@@ -1129,18 +1153,14 @@ exports.healthCheck = onRequest(
     try {
       await db.collection("orders").limit(1).get();
       firestoreMs = `${Date.now() - t0}ms`;
-    } catch (e) {
-      firestoreMs = `erreur: ${e.message}`; statut = "degraded";
-    }
+    } catch (e) { firestoreMs = `erreur: ${e.message}`; statut = "degraded"; }
 
-    // État circuit breaker
     let cb = "non testé";
     try {
       const cbSnap = await db.collection("circuit_breakers").doc("macrodroid").get();
       cb = cbSnap.exists ? cbSnap.data().etat : "closed (jamais utilisé)";
     } catch { /* ignore */ }
 
-    // Webhooks en attente
     let webhooksAttente = 0;
     try {
       const wSnap = await db.collection("failed_webhooks").where("statut", "==", "en_attente").limit(1).get();
@@ -1149,9 +1169,9 @@ exports.healthCheck = onRequest(
 
     res.json({
       statut, timestamp: new Date().toISOString(), region: REGION,
-      firestore: firestoreMs, ai: "logique embarquée v4.0",
+      firestore: firestoreMs, ai: "logique embarquée v5.0",
       circuit_breaker: cb, webhooks_en_attente: webhooksAttente,
-      version: "4.0",
+      mode: "temps_reel_24/7", version: "5.0",
     });
   }
 );
@@ -1175,7 +1195,6 @@ exports.supportClient = onRequest(
       const supportToken = SUPPORT_BOT_TOKEN.value();
       if (!supportToken) return;
 
-      // Session
       const sessionRef  = db.collection("support_sessions").doc(String(chatId));
       const sessionSnap = await sessionRef.get();
       const session     = sessionSnap.exists ? sessionSnap.data() : {};
@@ -1190,7 +1209,6 @@ exports.supportClient = onRequest(
       const ordreInMsg = (text.match(/(?:#\s*)?(\d{6,8})\b/i) || [])[1] || null;
       if (ordreInMsg) await sessionRef.set({ lastOrder: ordreInMsg }, { merge: true });
 
-      // Historique ordres
       let orders = [];
       if (session.phone) {
         try {
@@ -1202,15 +1220,13 @@ exports.supportClient = onRequest(
           });
         } catch {
           const snap = await db.collection("orders").where("numeroPayment", "==", session.phone).limit(10).get().catch(() => ({ docs: [] }));
-          orders = snap.docs.map((d) => { const o = d.data(); return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`; });
+          orders = snap.docs.map((d) => { const o = d.data(); return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status}`; });
         }
       }
 
-      // Lookup direct par orderId si numéro fourni sans phone
       if (ordreInMsg && !session.phone && orders.length === 0) {
         const snap = await db.collection("orders").where("orderId", "==", ordreInMsg).limit(1).get().catch(() => ({ docs: [] }));
-        if (!snap.docs.length) { /* pas trouvé */ }
-        else {
+        if (snap.docs.length) {
           const o = snap.docs[0].data();
           orders = [`• #${o.orderId || snap.docs[0].id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`];
         }
@@ -1237,7 +1253,7 @@ exports.supportClient = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// HTTP — ADMIN BOT (actions + requêtes avancées)
+// HTTP — ADMIN BOT
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
   { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID], timeoutSeconds: 60 },
@@ -1258,7 +1274,7 @@ exports.adminBot = onRequest(
 
       const t = text.toLowerCase().trim();
 
-      // ── ACTION : confirmer #ID ──────────────────────────────
+      // ── confirmer #ID ───────────────────────────────────────────
       const confirmMatch = text.match(/^confirmer?\s+#?(\d{6,8})\b/i);
       if (confirmMatch) {
         const num  = confirmMatch[1];
@@ -1279,7 +1295,7 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // ── ACTION : rejeter #ID [raison] ───────────────────────
+      // ── rejeter #ID [raison] ────────────────────────────────────
       const rejectMatch = text.match(/^rejeter?\s+#?(\d{6,8})(?:\s+(.+))?$/i);
       if (rejectMatch) {
         const num    = rejectMatch[1];
@@ -1298,7 +1314,7 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // ── QUERY : client 77XXXXXXX ────────────────────────────
+      // ── client 77XXXXXXX ────────────────────────────────────────
       const clientMatch = text.match(/^client\s+((?:77|78|70|71|21)\d{6})\b/i);
       if (clientMatch) {
         const phone = clientMatch[1];
@@ -1311,7 +1327,7 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // ── QUERY : alerte (En attente > 30 min) ───────────────
+      // ── alerte (ordres > 30 min) ────────────────────────────────
       if (t === "alerte" || t === "/alerte") {
         const cutoff = new Date(Date.now() - 30 * 60 * 1000);
         const snap   = await db.collection("orders").where("status", "==", "En attente")
@@ -1327,9 +1343,10 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // ── QUERY : nonmatche ───────────────────────────────────
+      // ── nonmatche ───────────────────────────────────────────────
       if (t === "nonmatche" || t === "/nonmatche") {
-        const snap = await db.collection("waafi_notifications").where("status", "in", ["non_matché", "suggestion_admin"])
+        const snap = await db.collection("waafi_notifications")
+          .where("status", "in", ["non_matché", "suggestion_admin"])
           .orderBy("createdAt", "desc").limit(10).get()
           .catch(() => db.collection("waafi_notifications").where("status", "==", "non_matché").limit(10).get());
         if (snap.empty) { await sendTelegram(token, adminId, "✅ Aucun SMS sans correspondance."); return; }
@@ -1341,7 +1358,7 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // ── QUERY : circuit (état circuit breaker) ───────────────
+      // ── circuit ─────────────────────────────────────────────────
       if (t === "circuit" || t === "/circuit") {
         const snap = await db.collection("circuit_breakers").doc("macrodroid").get();
         if (!snap.exists) { await sendTelegram(token, adminId, "✅ Circuit breaker: <b>closed</b> (jamais utilisé)"); return; }
@@ -1354,13 +1371,12 @@ exports.adminBot = onRequest(
           (ouvertDepuis ? `Ouvert depuis: ${ouvertDepuis} min\n` : "") +
           (cb.dernierEchec ? `Dernier échec: <i>${cb.dernierEchec}</i>` : "")
         );
-        if (cb.etat === "open") {
+        if (cb.etat === "open")
           await sendTelegram(token, adminId, "Pour réinitialiser : envoyez <code>reset circuit</code>");
-        }
         return;
       }
 
-      // ── ACTION : reset circuit ───────────────────────────────
+      // ── reset circuit ────────────────────────────────────────────
       if (t === "reset circuit" || t === "/reset_circuit") {
         await db.collection("circuit_breakers").doc("macrodroid").set({ etat: "closed", echecs: 0, resetAt: Date.now() });
         logAudit("circuit_reset", { adminId });
@@ -1368,7 +1384,7 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // ── Requêtes statiques ───────────────────────────────────
+      // ── Requêtes générales ───────────────────────────────────────
       const [ordersSnap, notifSnap] = await Promise.all([
         db.collection("orders").orderBy("ts", "desc").limit(20).get()
           .catch(() => db.collection("orders").limit(20).get()),
@@ -1392,7 +1408,7 @@ exports.adminBot = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// CALLABLE — ANALYSE ADMIN (stats Firestore + indicateurs)
+// CALLABLE — ANALYSE ADMIN
 // ══════════════════════════════════════════════════════════════════
 exports.analyseAdmin = onCall(
   { region: REGION, secrets: [] },
@@ -1407,10 +1423,7 @@ exports.analyseAdmin = onCall(
     const taux    = txs.length ? Math.round(conf.length / txs.length * 100) : 0;
     const moy     = conf.length ? Math.round(volume / conf.length) : 0;
 
-    // Webhooks en attente
-    const wSnap = await db.collection("failed_webhooks").where("statut", "==", "en_attente").get().catch(() => ({ size: 0 }));
-
-    // Circuit breaker
+    const wSnap  = await db.collection("failed_webhooks").where("statut", "==", "en_attente").get().catch(() => ({ size: 0 }));
     const cbSnap = await db.collection("circuit_breakers").doc("macrodroid").get().catch(() => null);
     const cbEtat = cbSnap?.exists ? cbSnap.data().etat : "closed";
 
@@ -1419,7 +1432,7 @@ exports.analyseAdmin = onCall(
     else if (fraudes.length > 3)       alerte = `${fraudes.length} fraudes détectées récemment`;
     else if (taux < 50 && txs.length > 10) alerte = `Taux de confirmation faible : ${taux}%`;
     else if (cbEtat === "open")        alerte = "Circuit breaker MacroDroid OUVERT — vérifiez MacroDroid";
-    else if (wSnap.size > 0)           alerte = `${wSnap.size} webhook(s) en attente de retry`;
+    else if (wSnap.size > 0)           alerte = `${wSnap.size} webhook(s) en cours de retry automatique`;
 
     return {
       success: true,
@@ -1431,11 +1444,12 @@ exports.analyseAdmin = onCall(
         score_sante: Math.max(0, Math.min(100, taux - fraudes.length * 10)),
         circuit_breaker: cbEtat,
         webhooks_en_attente: wSnap.size,
+        mode: "temps_reel_24/7",
       },
       stats: { confirmes: conf.length, attente: att.length, rejetes: rej.length, fraudes: fraudes.length, volume },
     };
   }
 );
 
-// Alias pour compatibilité app frontend
+// Alias compatibilité frontend
 exports.geminiAnalyseAdmin = exports.analyseAdmin;
