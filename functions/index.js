@@ -146,7 +146,7 @@ async function detecterDoublon(phone, montant, type, excluId) {
 // Pas de circuit breaker ici : on déclenche immédiatement à chaque confirmation.
 async function triggerMacrodroid(url, ordreId, montant, id1xbet) {
   if (!url) throw new Error("MACRODROID_WEBHOOK_URL non configuré dans Firebase Secrets");
-  const webhookUrl = `${url}?id1xbet=${encodeURIComponent(id1xbet)}&montant=${encodeURIComponent(montant)}&ordreId=${encodeURIComponent(ordreId)}`;
+  const webhookUrl = `${url}?id1xbet=${encodeURIComponent(id1xbet)}&montant=${encodeURIComponent(montant)}&ordreid=${encodeURIComponent(ordreId)}`;
   const resp = await fetch(webhookUrl, { signal: AbortSignal.timeout(15000) });
   if (!resp.ok) throw new Error(`MacroDroid HTTP ${resp.status}`);
   return resp;
@@ -923,37 +923,52 @@ exports.ordresBloques = onSchedule(
       }
     }
 
-    // ── PARTIE 2 : Maintenance file d'attente MacroDroid ──────────
-    // 2a. Réinitialiser les jobs "processing" bloqués (> 5 min → pending)
-    const cutoff5   = new Date(Date.now() - 5 * 60 * 1000);
-    const staleSnap = await db.collection("macrodroid_jobs")
-      .where("status", "==", "processing").get().catch(() => ({ docs: [] }));
+    // ── PARTIE 2 : Retry webhook pour les jobs en file d'attente ──
+    // Toutes les 5 min → retente MacroDroid jusqu'à ce qu'il réponde
+    const pendingJobsSnap = await db.collection("macrodroid_jobs")
+      .where("status", "==", "pending")
+      .limit(10).get().catch(() => ({ docs: [] }));
 
-    for (const jobDoc of staleSnap.docs) {
-      const pickedAt = jobDoc.data().pickedAt?.toDate?.() || new Date(0);
-      if (pickedAt < cutoff5) {
-        await jobDoc.ref.update({ status: "pending" });
-        logAudit("macrodroid_job_reset_stale", { jobId: jobDoc.id, ordreId: jobDoc.data().ordreId });
+    for (const jobDoc of pendingJobsSnap.docs) {
+      const job = jobDoc.data();
+      if (!job.id1xbet || !job.ordreId || !webhookBase) continue;
+      try {
+        await triggerMacrodroid(webhookBase, job.ordreId, job.montant, job.id1xbet);
+        await jobDoc.ref.update({ status: "done", doneAt: FieldValue.serverTimestamp(), doneBySchedule: true });
+        const ordSnap = await db.collection("orders").where("orderId", "==", job.ordreId).limit(1).get();
+        if (!ordSnap.empty) {
+          await ordSnap.docs[0].ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
+        }
+        logAudit("macrodroid_schedule_ok", { ordreId: job.ordreId, id1xbet: job.id1xbet });
+        await sendTelegram(token, adminId,
+          `✅ <b>Recharge auto réussie</b> — #${job.ordreId}\nID 1xBet <code>${job.id1xbet}</code> | ${Number(job.montant||0).toLocaleString()} DJF`);
+      } catch (e) {
+        // MacroDroid encore hors-ligne — réessai dans 5 min
       }
     }
 
-    // 2b. Convertir les anciens ordres "echec" en jobs queue (migration)
+    // Réinitialiser les jobs "processing" bloqués (> 5 min → pending)
+    const cutoff5   = new Date(Date.now() - 5 * 60 * 1000);
+    const staleSnap = await db.collection("macrodroid_jobs")
+      .where("status", "==", "processing").get().catch(() => ({ docs: [] }));
+    for (const jobDoc of staleSnap.docs) {
+      const pickedAt = jobDoc.data().pickedAt?.toDate?.() || new Date(0);
+      if (pickedAt < cutoff5) await jobDoc.ref.update({ status: "pending" });
+    }
+
+    // Migrer les anciens ordres "echec" vers la file d'attente
     const snapEchec = await db.collection("orders")
       .where("status", "==", "Confirmé")
       .where("webhookStatus", "==", "echec")
       .get().catch(() => ({ docs: [] }));
-
     for (const oDoc of snapEchec.docs) {
       const oData   = oDoc.data();
       const id1x    = oData.userId1xBet || oData.id1x || "";
       const ordreId = oData.orderId || oDoc.id;
       if (!id1x) continue;
-
-      const existSnap = await db.collection("macrodroid_jobs")
-        .where("ordreId", "==", ordreId).limit(5).get();
+      const existSnap = await db.collection("macrodroid_jobs").where("ordreId", "==", ordreId).limit(5).get();
       const hasActive = existSnap.docs.some(d => ["pending", "processing"].includes(d.data().status));
       if (hasActive) continue;
-
       const jobRef = db.collection("macrodroid_jobs").doc();
       await jobRef.set({ ordreId, id1xbet: id1x, montant: oData.montant || 0, status: "pending", createdAt: FieldValue.serverTimestamp() });
       await oDoc.ref.update({ webhookStatus: "queue", macroJobId: jobRef.id });
