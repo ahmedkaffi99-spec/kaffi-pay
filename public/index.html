@@ -446,14 +446,14 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="field">
         <label>🎯 ID Compte 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="tel" id="depot-id" placeholder="Ex: 1234567890" inputmode="numeric" maxlength="10" style="flex:1;">
+          <input type="tel" id="depot-id" placeholder="Ex: 1234567890" inputmode="numeric" maxlength="12" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
           <button onclick="pasteField('depot-id')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
         </div>
       </div>
       <div class="field">
         <label>🔑 Waafi Transfer ID</label>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="tel" id="depot-hash" placeholder="Ex: 73471675" inputmode="numeric" maxlength="15" style="flex:1;">
+          <input type="tel" id="depot-hash" placeholder="Ex: 77422311" inputmode="numeric" maxlength="15" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
           <button onclick="pasteField('depot-hash')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
         </div>
       </div>
