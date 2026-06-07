@@ -320,139 +320,39 @@ function logAudit(action, data) {
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 8 — SUPPORT CLIENT
+// Flux : client envoie numéro d'ordre → cherche dans Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
-function repondreSupport(text, session, orders) {
-  const t         = text.toLowerCase().trim();
-  const cleanText = text.replace(/\s/g, "");
+function statutOrdreMsg(ordreId, o) {
+  const montant = Number(o.montant || 0).toLocaleString();
+  const type    = o.type || "Ordre";
+  const wbOk    = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
+  const wbFail  = o.webhookStatus === "echec";
 
-  // Numéro Waafi envoyé (8 chiffres commençant par 77/78/70/71/21)
-  // Doit être vérifié AVANT la détection du numéro d'ordre
-  const isPhone = /^(77|78|70|71|21)\d{6}$/.test(cleanText);
-  if (isPhone) {
-    return reply(
-      `✅ Numéro Waafi enregistré : <code>${cleanText}</code>\n\nIndiquez maintenant votre <b>numéro d'ordre</b> (ex: <code>#06073</code>).`,
-      "info_manquante", "Numéro Waafi enregistré", "faible", "Phone saved"
-    );
-  }
+  let statut = "";
+  if (o.status === "Confirmé" && wbOk)
+    statut = "✅ <b>Crédité avec succès</b> — votre compte 1xBet a été rechargé.";
+  else if (o.status === "Confirmé" && wbFail)
+    statut = "⚠️ <b>Confirmé mais crédit échoué</b> — notre équipe va intervenir.";
+  else if (o.status === "Confirmé")
+    statut = "✅ <b>Confirmé</b> — crédit 1xBet en cours...";
+  else if (o.status === "En attente")
+    statut = "⏳ <b>En attente</b> — traitement en cours.";
+  else if (o.status === "Argent Reçu")
+    statut = "💳 <b>Paiement reçu</b> — confirmation en cours.";
+  else if (o.status === "Correction")
+    statut = `✏️ <b>Correction requise</b>\n${o.correctionMsg || "Vérifiez votre Transfer ID et resoumettez."}`;
+  else if (o.status === "Rejeté")
+    statut = `❌ <b>Rejeté</b> — ${o.flagRaison || "Paiement non reçu."}`;
+  else if (o.status === "Annulé")
+    statut = "🚫 <b>Annulé.</b>";
+  else
+    statut = `Statut : <b>${o.status}</b>`;
 
-  // Numéro d'ordre — exclure les numéros de téléphone (8 chiffres 77/78/70/71/21)
-  const ordreMatch = text.match(/(?:#\s*|n[°o]\.?\s*)?(\d{5,8})\b/i);
-  const rawNum     = ordreMatch ? ordreMatch[1] : null;
-  const ordreNum   = rawNum && !/^(77|78|70|71|21)\d{6}$/.test(rawNum) ? rawNum : null;
-
-  const hasTransferId = /transfer[- ]?id|tid\b/i.test(t) || /\b\d{9,}\b/.test(text);
-  const isGreeting    = /^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj)\b/.test(t);
-
-  if (/comment.*(fonc|march|utilis|process)|étape|procédure|comment faire/.test(t)) {
-    return reply(
-      "ℹ️ <b>Comment fonctionne Kaffi-Pay ?</b>\n\n" +
-      "1. Soumettez votre ordre sur <b>kaffi-pay.com</b>\n" +
-      "2. Effectuez le paiement Waafi avec le <b>Transfer ID</b> fourni\n" +
-      "3. Votre compte 1xBet est crédité <b>automatiquement</b>\n\n" +
-      "Pour suivre un ordre, envoyez votre <b>numéro d'ordre</b>.",
-      "résolu", "FAQ fonctionnement", "faible", "FAQ comment ça marche"
-    );
-  }
-
-  if (/(?:combien.*temps|délai|durée|quand.*confirm|temps.*traitement)/.test(t)) {
-    return reply(
-      "⏱️ <b>Délais de traitement</b>\n\n" +
-      "• Confirmation automatique : <b>immédiat</b>\n" +
-      "• Vérification manuelle si besoin : <b>moins de 30 minutes</b>\n\n" +
-      "Kaffi-Pay est disponible <b>24h/24 — 7j/7</b>.",
-      "résolu", "FAQ délais", "faible", "FAQ délais"
-    );
-  }
-
-  if (/\b(frais|commission|taux|prix|coût)\b/.test(t)) {
-    return reply(
-      "💰 Les frais sont affichés sur <b>kaffi-pay.com</b> avant de soumettre votre ordre.",
-      "résolu", "FAQ frais", "faible", "FAQ frais"
-    );
-  }
-
-  if (/\b(annul|cancel|retrait|rembours)\b/.test(t)) {
-    return reply(
-      "ℹ️ Pour une demande d'annulation ou de remboursement, envoyez votre <b>numéro d'ordre</b> et votre <b>Transfer ID</b>.",
-      "escalade", "Demande annulation", "moyen", "Demande annulation/remboursement"
-    );
-  }
-
-  if (hasTransferId && (orders.length > 0 || session.phone)) {
-    return reply(
-      "Merci pour ces informations. Votre demande a été transmise à notre équipe pour vérification.\n\nNous vous répondrons dans les plus brefs délais.",
-      "escalade", "Transfer ID reçu — escalade admin", "moyen",
-      "Client a fourni infos paiement — vérification requise"
-    );
-  }
-
-  if (ordreNum) {
-    if (!session.phone) {
-      return reply(
-        `Pour vérifier l'ordre <b>#${ordreNum}</b>, merci d'indiquer votre <b>numéro Waafi</b> (ex: <code>77123456</code>).`,
-        "info_manquante", "Numéro Waafi requis", "faible", `Ordre #${ordreNum} sans numéro`
-      );
-    }
-    const ligne = orders.find((o) => o.includes(`#${ordreNum}`));
-    if (!ligne) {
-      return reply(
-        `L'ordre <b>#${ordreNum}</b> est introuvable pour votre numéro.\n\nVérifiez le numéro d'ordre (6 à 8 chiffres).`,
-        "info_manquante", "Ordre introuvable", "faible", `Ordre #${ordreNum} introuvable`
-      );
-    }
-    if (ligne.includes("| Confirmé"))
-      return reply(`✅ Votre ordre <b>#${ordreNum}</b> est <b>confirmé</b>. Votre compte 1xBet a bien été crédité.`,
-        "résolu", "Confirmé communiqué", "faible", `#${ordreNum} confirmé`);
-    if (ligne.includes("| Argent Reçu"))
-      return reply(`💳 Ordre <b>#${ordreNum}</b> : paiement <b>reçu</b>, crédit 1xBet en cours.`,
-        "résolu", "Argent Reçu communiqué", "faible", `#${ordreNum} argent reçu`);
-    if (ligne.includes("| En attente"))
-      return reply(`⏳ Votre ordre <b>#${ordreNum}</b> est <b>en cours de traitement</b>. Vous serez notifié dès confirmation.`,
-        "résolu", "En attente communiqué", "faible", `#${ordreNum} en attente`);
-    if (ligne.includes("| Correction"))
-      return reply(
-        `✏️ Votre ordre <b>#${ordreNum}</b> a été retourné en <b>correction</b>.\n\n` +
-        "Il y a une discordance entre les informations soumises et votre paiement Waafi.\n\n" +
-        "Veuillez vérifier votre <b>Transfer ID</b>, <b>montant</b> et <b>numéro Waafi</b>, puis <b>resoumettre un nouvel ordre</b>.",
-        "info_manquante", "Correction — client invité à resoumettre", "moyen", `#${ordreNum} en correction`
-      );
-    if (ligne.includes("| Rejeté")) {
-      const nonRecu = ligne.toLowerCase().includes("paiement non re") || ligne.toLowerCase().includes("introuvable");
-      const fraude  = ligne.toLowerCase().includes("fraude");
-      if (fraude)
-        return reply(
-          "❌ Votre ordre a été rejeté pour raison de sécurité.\n\nSi vous pensez qu'il s'agit d'une erreur, envoyez votre Transfer ID Waafi.",
-          "fraude_signalée", "Fraude — réponse prudente", "élevé", `#${ordreNum} fraude`
-        );
-      if (nonRecu)
-        return reply(
-          `❌ Ordre <b>#${ordreNum}</b> rejeté : <b>Paiement non reçu</b>.\n\n` +
-          "<b>Causes possibles :</b>\n• Transfer ID incorrect\n• Montant ou numéro expéditeur différent\n\n" +
-          "Pour correction :\n📌 <b>Transfer ID Waafi</b> — <b>Montant payé</b> — <b>N° expéditeur</b>",
-          "info_manquante", "Rejeté non reçu", "moyen", `#${ordreNum} rejeté non reçu`
-        );
-      return reply(
-        `❌ Ordre <b>#${ordreNum}</b> <b>rejeté</b>. Envoyez votre Transfer ID Waafi pour vérification.`,
-        "info_manquante", "Rejeté — TID demandé", "moyen", `#${ordreNum} rejeté`
-      );
-    }
-  }
-
-  if (isGreeting) {
-    const suite = session.phone
-      ? "Que puis-je faire pour vous ?\n\nIndiquez votre <b>numéro d'ordre</b> pour le suivi."
-      : "Pour vous aider, indiquez votre <b>numéro d'ordre</b> (ex : <code>2606061</code>).";
-    return reply(`Bonjour ! Je suis le support Kaffi-Pay.\n\n${suite}`, "info_manquante", "Salutation", "faible", "Salutation");
-  }
-
-  return reply(
-    "Bonjour ! Pour vous aider, indiquez votre <b>numéro d'ordre</b> (ex : <code>2606061</code>).",
-    "info_manquante", "Message non reconnu", "faible", "Fallback"
+  return (
+    `🔍 <b>Ordre #${ordreId}</b>\n` +
+    `Type : ${type} | Montant : <b>${montant} DJF</b>\n\n` +
+    statut
   );
-}
-
-function reply(reponse_client, decision, action_prise, niveau_urgence, resume_audit) {
-  return { reponse_client: reponse_client + "\n\n— <i>Support Kaffi-Pay</i>", decision, action_prise, niveau_urgence, resume_audit };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1117,6 +1017,7 @@ exports.healthCheck = onRequest(
 
 // ══════════════════════════════════════════════════════════════════
 // HTTP — SUPPORT CLIENT
+// Flux simple : client donne numéro d'ordre → Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
 exports.supportClient = onRequest(
   { region: REGION, secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID], timeoutSeconds: 60 },
@@ -1131,68 +1032,64 @@ exports.supportClient = onRequest(
     const supportToken = SUPPORT_BOT_TOKEN.value();
     if (!text || !supportToken) return;
 
+    const send = (txt) => sendTelegramToBot(supportToken, chatId, txt + "\n\n— <i>Support Kaffi-Pay</i>");
+
     try {
-      const sessionRef  = db.collection("support_sessions").doc(chatId);
-      const sessionSnap = await sessionRef.get();
-      const session     = sessionSnap.exists ? sessionSnap.data() : {};
+      const t = text.toLowerCase().trim();
 
-      const cleanText = text.replace(/\s/g, "");
-      const isPhone   = /^(77|78|70|71|21)\d{6}$/.test(cleanText);
-      if (isPhone && !session.phone) {
-        await sessionRef.set({ phone: cleanText, chatId, startedAt: FieldValue.serverTimestamp() }, { merge: true });
-        session.phone = cleanText;
+      // Extraire le numéro d'ordre (5-8 chiffres, avec ou sans #)
+      const ordreMatch = text.match(/(?:#\s*)?(\d{5,8})\b/i);
+      const ordreId    = ordreMatch ? ordreMatch[1] : null;
+
+      // Salutation
+      if (/^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj)\b/.test(t)) {
+        await send("Bonjour ! Je suis le support Kaffi-Pay.\n\nEnvoyez votre <b>numéro d'ordre</b> pour voir son statut.\n\nExemple : <code>#06073</code>");
+        return;
       }
 
-      // Ne pas traiter un numéro de téléphone comme un numéro d'ordre
-      const rawOrdreInMsg = (text.match(/(?:#\s*)?(\d{5,8})\b/i) || [])[1] || null;
-      const ordreInMsg    = rawOrdreInMsg && !/^(77|78|70|71|21)\d{6}$/.test(rawOrdreInMsg) ? rawOrdreInMsg : null;
-      if (ordreInMsg) await sessionRef.set({ lastOrder: ordreInMsg }, { merge: true });
+      // FAQ : comment ça marche
+      if (/comment.*(fonc|march|utilis)|étape|procédure/.test(t)) {
+        await send(
+          "ℹ️ <b>Comment fonctionne Kaffi-Pay ?</b>\n\n" +
+          "1. Soumettez votre ordre sur <b>kaffi-pay.com</b>\n" +
+          "2. Payez via Waafi avec le Transfer ID fourni\n" +
+          "3. Votre compte 1xBet est rechargé <b>automatiquement</b>\n\n" +
+          "Pour suivre un ordre : envoyez votre <b>numéro d'ordre</b> (ex: <code>#06073</code>)"
+        );
+        return;
+      }
 
-      let orders = [];
-      if (session.phone) {
-        try {
-          const snap = await db.collection("orders")
-            .where("numeroPayment", "==", session.phone).orderBy("ts", "desc").limit(10).get();
-          orders = snap.docs.map((d) => {
-            const o = d.data();
-            return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | ${o.flagRaison || ""}`;
-          });
-        } catch {
-          const snap = await db.collection("orders").where("numeroPayment", "==", session.phone).limit(10).get().catch(() => ({ docs: [] }));
-          orders = snap.docs.map((d) => { const o = d.data(); return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status}`; });
+      // FAQ : délais
+      if (/délai|durée|combien.*temps|quand.*confirm/.test(t)) {
+        await send("⏱️ Confirmation automatique : <b>immédiat</b>\nVérification manuelle si besoin : <b>moins de 30 min</b>\nDisponible <b>24h/24 — 7j/7</b>");
+        return;
+      }
+
+      // Numéro d'ordre détecté → chercher dans Firestore
+      if (ordreId) {
+        const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get();
+        if (snap.empty) {
+          await send(`❓ Ordre <b>#${ordreId}</b> introuvable.\n\nVérifiez votre numéro d'ordre sur <b>kaffi-pay.com</b>.`);
+          return;
         }
-      }
+        const o   = snap.docs[0].data();
+        const msg = statutOrdreMsg(ordreId, o);
+        await send(msg);
 
-      if (ordreInMsg && !session.phone && orders.length === 0) {
-        const snap = await db.collection("orders").where("orderId", "==", ordreInMsg).limit(1).get().catch(() => ({ docs: [] }));
-        if (snap.docs.length) {
-          const o = snap.docs[0].data();
-          orders = [`• #${o.orderId || snap.docs[0].id} | ${o.type} | ${o.montant} DJF | ${o.status}`];
+        // Alerte admin si rejeté ou correction
+        if (o.status === "Rejeté" || o.status === "Correction") {
+          await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
+            `🆘 <b>Support</b> | 👤 ${firstName} demande statut <b>#${ordreId}</b> (${o.status})`);
         }
+        return;
       }
 
-      const aiDecision = repondreSupport(text, session, orders);
-      await sendTelegramToBot(supportToken, chatId, aiDecision.reponse_client);
+      // Aucun ordre ID trouvé
+      await send("Pour voir le statut de votre ordre, envoyez votre <b>numéro d'ordre</b>.\n\nExemple : <code>#06073</code>");
 
-      await db.collection("support_sessions").doc(String(chatId)).collection("messages").add({
-        text, decision: aiDecision.decision, action: aiDecision.action_prise,
-        urgence: aiDecision.niveau_urgence, ts: FieldValue.serverTimestamp(),
-      });
-
-      const urg = { faible: "🟢", moyen: "🟡", "élevé": "🔴" }[aiDecision.niveau_urgence] || "⚪";
-      const dec = { résolu: "✅", escalade: "🆘", info_manquante: "❓", fraude_signalée: "🚨" }[aiDecision.decision] || "ℹ️";
-
-      await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
-        `${urg} <b>Support</b> ${dec} | 👤 ${firstName} | <code>${session.phone || "?"}</code>\n` +
-        `💬 <i>"${text.substring(0, 80)}"</i>\n⚡ ${aiDecision.action_prise}` +
-        (aiDecision.decision === "escalade" ? "\n⚠️ <b>Intervention manuelle requise.</b>" : "")
-      );
     } catch (e) {
       console.error("supportClient crash:", e.message, e.stack);
-      try {
-        await sendTelegramToBot(supportToken, chatId,
-          "Désolé, une erreur s'est produite. Réessayez dans quelques instants.\n\n— <i>Support Kaffi-Pay</i>");
-      } catch {}
+      try { await send("Désolé, une erreur s'est produite. Réessayez dans quelques instants."); } catch {}
     }
   }
 );
