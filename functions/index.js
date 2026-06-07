@@ -144,9 +144,9 @@ async function detecterDoublon(phone, montant, type, excluId) {
 
 // Appel direct MacroDroid — utilisé pour confirmations (auto + admin).
 // Pas de circuit breaker ici : on déclenche immédiatement à chaque confirmation.
-async function triggerMacrodroid(url, ordreRef, montant, id1xbet) {
+async function triggerMacrodroid(url, ordreId, montant, id1xbet) {
   if (!url) throw new Error("MACRODROID_WEBHOOK_URL non configuré dans Firebase Secrets");
-  const webhookUrl = `${url}?id1xbet=${encodeURIComponent(id1xbet)}&montant=${encodeURIComponent(montant)}&ref=${encodeURIComponent(ordreRef)}`;
+  const webhookUrl = `${url}?id1xbet=${encodeURIComponent(id1xbet)}&montant=${encodeURIComponent(montant)}&ordreId=${encodeURIComponent(ordreId)}`;
   const resp = await fetch(webhookUrl, { signal: AbortSignal.timeout(15000) });
   if (!resp.ok) throw new Error(`MacroDroid HTTP ${resp.status}`);
   return resp;
@@ -214,7 +214,7 @@ function scorerCorrespondance(ordreData, notifData) {
 async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
   const ordre        = ordreDoc.data();
   const notif        = waafiDoc.data();
-  const ordreRef     = ordre.orderId || ordre.ref || ordreDoc.id;
+  const ordreId      = ordre.orderId || ordreDoc.id;
   const montantOrdre = Number(ordre.montant || 0);
   const montantNotif = notif.montant  || montantOrdre;
   const numReel      = notif.numClient || ordre.numeroPayment || "";
@@ -230,14 +230,14 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
   // Confirmation atomique (runTransaction évite les doubles confirmations)
   // ⚠️  waafi_notifications garde son status d'arrivée — on ne le touche plus.
   // Le match est enregistré dans la collection "ordre_traite".
-  const traitRef = db.collection("ordre_traite").doc(notif.transferId || ordreRef);
+  const traitRef = db.collection("ordre_traite").doc(notif.transferId || ordreId);
   const claimed = await db.runTransaction(async (tx) => {
     const [ordreSnap, traitSnap] = await Promise.all([
       tx.get(ordreDoc.ref),
       tx.get(traitRef),
     ]);
     if (!ordreSnap.exists || ordreSnap.data().status !== "En attente") return false;
-    if (traitSnap.exists) return false; // paiement déjà utilisé pour un autre ordre
+    if (traitSnap.exists) return false;
 
     tx.update(ordreDoc.ref, {
       status: "Confirmé",
@@ -249,8 +249,7 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
       confirmedAt: FieldValue.serverTimestamp(),
     });
     tx.set(traitRef, {
-      ordreRef,
-      ordreId: ordreRef,
+      ordreId,
       waafiNotifId: waafiDoc.id,
       transferId: notif.transferId || "",
       montant: montantNotif,
@@ -264,11 +263,11 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
 
   if (!claimed) return false;
 
-  logAudit("depot_confirme_match", { ordreRef, transferId: notif.transferId, montant: montantNotif });
+  logAudit("depot_confirme_match", { ordreId, transferId: notif.transferId, montant: montantNotif });
 
   await sendTelegram(token, adminId,
     `✅ <b>Dépôt confirmé automatiquement</b>${corrections.length ? " ✏️" : ""}\n\n` +
-    `Réf: <b>#${ordreRef}</b> | <b>${Number(montantNotif).toLocaleString()} DJF</b>\n` +
+    `Ordre: <b>#${ordreId}</b> | <b>${Number(montantNotif).toLocaleString()} DJF</b>\n` +
     `Transfer-ID: <code>${notif.transferId || "?"}</code> | N°: <code>${numReel}</code>` +
     (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "")
   );
@@ -281,9 +280,9 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
     for (let i = 0; i < delais.length; i++) {
       if (delais[i] > 0) await new Promise((r) => setTimeout(r, delais[i]));
       try {
-        await triggerMacrodroid(webhookBase, ordreRef, montantNotif, id1xbet);
+        await triggerMacrodroid(webhookBase, ordreId, montantNotif, id1xbet);
         await ordreDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), webhookTentative: i + 1 });
-        logAudit("macrodroid_ok", { ordreRef, id1xbet, tentative: i + 1 });
+        logAudit("macrodroid_ok", { ordreId, id1xbet, tentative: i + 1 });
         dernierErreur = null;
         break;
       } catch (e) {
@@ -293,12 +292,12 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
     if (dernierErreur) {
       await ordreDoc.ref.update({ webhookStatus: "echec", webhookError: dernierErreur });
       await sendTelegram(token, adminId,
-        `🔴 <b>MacroDroid échoué (3 tentatives)</b> — #${ordreRef}\n<code>${dernierErreur}</code>`
+        `🔴 <b>MacroDroid échoué (3 tentatives)</b> — #${ordreId}\n<code>${dernierErreur}</code>`
       );
     }
   } else if (!id1xbet) {
     await sendTelegram(token, adminId,
-      `⚠️ <b>ID 1xBet manquant</b> — #${ordreRef}\n${Number(montantNotif).toLocaleString()} DJF confirmé.`
+      `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\n${Number(montantNotif).toLocaleString()} DJF confirmé.`
     );
   } else {
     await sendTelegram(token, adminId,
@@ -503,14 +502,14 @@ exports.onNouvelOrdre = onDocumentCreated(
   async (event) => {
     const tx         = event.data.data();
     const docId      = event.params.docId;
-    const ref        = tx.orderId || tx.ref || docId;
+    const ordreId    = tx.orderId || docId;
     const transferId = (tx.waafitranfertID || tx.hash || "").trim();
     const isDepot    = tx.type === "Dépôt";
     const phone      = (tx.numeroPayment || tx.waafiNumber || "").trim();
     const token      = TELEGRAM_TOKEN.value();
     const adminId    = TELEGRAM_ADMIN_ID.value();
 
-    logAudit("nouvel_ordre", { ref, type: tx.type, montant: tx.montant, phone });
+    logAudit("nouvel_ordre", { ordreId, type: tx.type, montant: tx.montant, phone });
 
     // ── FRAUDE 1 : Transfer ID déjà utilisé pour un autre ordre ─
     // Vérifie 3 sources : ordre confirmé, notif matchée, notif traitée.
@@ -533,7 +532,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         if (srcConfirme) {
           ancienRef = srcConfirme.data().orderId || srcConfirme.id;
         } else if (srcMatch) {
-          ancienRef = srcMatch.data().ordreRef || srcMatch.data().orderId || srcMatch.id;
+          ancienRef = srcMatch.data().ordreId || srcMatch.id;
         }
 
         await db.collection("orders").doc(docId).update({
@@ -547,13 +546,13 @@ exports.onNouvelOrdre = onDocumentCreated(
 
         await sendTelegram(token, adminId,
           `🚨 <b>TENTATIVE DE FRAUDE — Paiement réutilisé</b>\n\n` +
-          `Nouvel ordre : <code>#${ref}</code>\n` +
+          `Nouvel ordre : <code>#${ordreId}</code>\n` +
           `Transfer-ID : <code>${transferId}</code>\n` +
           `Ce TID a déjà été utilisé pour l'ordre <code>#${ancienRef}</code>.\n\n` +
           `⛔ Ordre <b>rejeté automatiquement</b>.`
         );
 
-        logAudit("fraude_tid_reutilise", { ref, transferId, ancienRef, phone });
+        logAudit("fraude_tid_reutilise", { ordreId, transferId, ancienRef, phone });
         return;
       }
     }
@@ -568,7 +567,7 @@ exports.onNouvelOrdre = onDocumentCreated(
           flaggedAt: FieldValue.serverTimestamp(),
         });
         await sendTelegram(token, adminId,
-          `⚠️ <b>Rate limit</b>\nN°: <code>${phone}</code> | ${tx.type}\nOrdre <code>#${ref}</code> rejeté.`
+          `⚠️ <b>Rate limit</b>\nN°: <code>${phone}</code> | ${tx.type}\nOrdre <code>#${ordreId}</code> rejeté.`
         );
         return;
       }
@@ -582,7 +581,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         doublon_at: FieldValue.serverTimestamp(),
       });
       await sendTelegram(token, adminId,
-        `⚠️ <b>Possible doublon</b>\nOrdre <code>#${ref}</code> ≈ <code>#${doublon.ordreId}</code>\n` +
+        `⚠️ <b>Possible doublon</b>\nOrdre <code>#${ordreId}</code> ≈ <code>#${doublon.ordreId}</code>\n` +
         `Même n° (${phone}), montant similaire, < 30 min.`
       );
     }
@@ -600,7 +599,7 @@ exports.onNouvelOrdre = onDocumentCreated(
           flaggedAt: FieldValue.serverTimestamp(),
         });
         await sendTelegram(token, adminId,
-          `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nRéf: <code>#${ref}</code>`
+          `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`
         );
         return;
       }
@@ -663,12 +662,12 @@ exports.onNouvelOrdre = onDocumentCreated(
           });
           await sendTelegram(token, adminId,
             `✏️ <b>Correspondance partielle (${score}/3) — Correction requise</b>\n\n` +
-            `Ordre <code>#${ref}</code> | ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
+            `Ordre <code>#${ordreId}</code> | ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
             `${msgDetails}\n\n` +
             `<i>Le client doit corriger et resoumettre l'ordre.</i>\n` +
-            `Forcer si OK : <code>confirmer ${ref}</code>`
+            `Forcer si OK : <code>confirmer ${ordreId}</code>`
           );
-          logAudit("depot_correction_partielle", { ref, score, mismatches });
+          logAudit("depot_correction_partielle", { ordreId, score, mismatches });
           return;
         }
 
@@ -681,9 +680,9 @@ exports.onNouvelOrdre = onDocumentCreated(
         });
         await sendTelegram(token, adminId,
           `❌ <b>Dépôt rejeté — Correspondance insuffisante (${score}/3)</b>\n\n` +
-          `Ordre <code>#${ref}</code>\n${msgDetails}`
+          `Ordre <code>#${ordreId}</code>\n${msgDetails}`
         );
-        logAudit("depot_rejete_mauvaise_correspondance", { ref, score, mismatches });
+        logAudit("depot_rejete_mauvaise_correspondance", { ordreId, score, mismatches });
         return;
       }
 
@@ -695,12 +694,12 @@ exports.onNouvelOrdre = onDocumentCreated(
       });
       await sendTelegram(token, adminId,
         `❌ <b>Dépôt rejeté — Paiement introuvable</b>\n\n` +
-        `Réf: <code>#${ref}</code>\n` +
+        `Ordre: <code>#${ordreId}</code>\n` +
         `Transfer-ID: <code>${transferId}</code>\n` +
         `Montant: ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
         `<i>Aucune notification Waafi correspondante trouvée.</i>`
       );
-      logAudit("depot_rejete_tId_introuvable", { ref, transferId });
+      logAudit("depot_rejete_tId_introuvable", { ordreId, transferId });
       return;
     }
 
@@ -723,15 +722,15 @@ exports.onNouvelOrdre = onDocumentCreated(
       });
       await sendTelegram(token, adminId,
         `🚨 <b>Retrait rejeté — Fraude (score ${fraud.score_fraude}/100)</b>\n` +
-        `Réf: <code>#${ref}</code> | ${fraud.raisons.join(", ")}`
+        `Ordre: <code>#${ordreId}</code> | ${fraud.raisons.join(", ")}`
       );
-      logAudit("ordre_rejete_fraude", { ref, score: fraud.score_fraude });
+      logAudit("ordre_rejete_fraude", { ordreId, score: fraud.score_fraude });
       return;
     }
 
     await sendTelegram(token, adminId,
       `📤 <b>Nouveau Retrait</b>\n` +
-      `Réf: <b>#${ref}</b> | <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
+      `Ordre: <b>#${ordreId}</b> | <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
       `Code: <code>${tx.withdrawalCode || "?"}</code> | N° Waafi: <code>${tx.waafiNumber || "?"}</code>\n` +
       (doublon ? "⚠️ <i>Doublon possible</i>\n" : "") +
       `Risque: <i>${fraud.risque} (${fraud.score_fraude}/100)</i>`
@@ -754,23 +753,23 @@ exports.onOrdreUpdated = onDocumentUpdated(
       return;
     }
 
-    const ref     = after.orderId || after.ref || event.params.docId;
-    const montant = Number(after.montant || 0).toLocaleString();
-    const type    = after.type || "Ordre";
+    const ordreId  = after.orderId || event.params.docId;
+    const montant  = Number(after.montant || 0).toLocaleString();
+    const type     = after.type || "Ordre";
 
-    logAudit("transition_statut", { ref, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
+    logAudit("transition_statut", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
 
     let msg = "";
     if (after.status === "Confirmé")
-      msg = `✅ <b>${type} confirmé</b>\n#${ref} — ${montant} DJF\n` +
+      msg = `✅ <b>${type} confirmé</b>\n#${ordreId} — ${montant} DJF\n` +
             (after.confirmedBy === "admin_telegram" ? "👤 Via bot admin"
               : after.confirmedBy?.startsWith("auto") ? "🤖 Automatique" : "👤 Manuel");
     else if (after.status === "Rejeté")
-      msg = `❌ <b>${type} rejeté</b>\n#${ref} — ${after.flagRaison || "Raison inconnue"}`;
+      msg = `❌ <b>${type} rejeté</b>\n#${ordreId} — ${after.flagRaison || "Raison inconnue"}`;
     else if (after.status === "Argent Reçu")
-      msg = `💳 <b>Paiement Waafi reçu</b>\n#${ref} — ${montant} DJF\nCrédit 1xBet en cours…`;
+      msg = `💳 <b>Paiement Waafi reçu</b>\n#${ordreId} — ${montant} DJF\nCrédit 1xBet en cours…`;
     else if (after.status === "Correction")
-      msg = `✏️ <b>Correction demandée</b>\n#${ref}\n${after.correctionMsg || ""}`;
+      msg = `✏️ <b>Correction demandée</b>\n#${ordreId}\n${after.correctionMsg || ""}`;
 
     if (msg) await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(), msg);
   }
@@ -844,16 +843,16 @@ exports.ordresBloques = onSchedule(
       for (const oDoc of snapEchec.docs) {
         const oData  = oDoc.data();
         const id1x   = oData.userId1xBet || oData.id1x || "";
-        const ref    = oData.orderId || oDoc.id;
-        const mont   = oData.montant || 0;
+        const ordreId = oData.orderId || oDoc.id;
+        const mont    = oData.montant || 0;
         if (!id1x) continue;
 
         try {
-          await triggerMacrodroid(webhookBase, ref, mont, id1x);
+          await triggerMacrodroid(webhookBase, ordreId, mont, id1x);
           await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAuto: true });
-          logAudit("macrodroid_auto_retry_ok", { ref, id1x });
+          logAudit("macrodroid_auto_retry_ok", { ordreId, id1x });
           await sendTelegram(token, adminId,
-            `✅ <b>Recharge auto réussie</b> — #${ref}\nID 1xBet <code>${id1x}</code>`);
+            `✅ <b>Recharge auto réussie</b> — #${ordreId}\nID 1xBet <code>${id1x}</code>`);
         } catch (e) {
           // Laisse en echec, réessayera dans 5 min
         }
