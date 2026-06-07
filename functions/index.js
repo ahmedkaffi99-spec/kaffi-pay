@@ -597,27 +597,52 @@ exports.onNouvelOrdre = onDocumentCreated(
 
     logAudit("nouvel_ordre", { ref, type: tx.type, montant: tx.montant, phone });
 
-    // ── FRAUDE 1 : Transfer ID déjà confirmé ────────────────────
+    // ── FRAUDE 1 : Transfer ID déjà utilisé pour un autre ordre ─
+    // Vérifie 3 sources : ordre confirmé, notif matchée, notif traitée.
+    // Si trouvé → tentative de réutilisation d'un paiement = FRAUDE.
     if (transferId) {
-      const [confirmeSnap, matcheSnap] = await Promise.all([
+      const [confirmeSnap, matcheSnap, traiteSnap] = await Promise.all([
         db.collection("orders")
-          .where("waafitranfertID", "==", transferId).where("status", "==", "Confirmé").limit(1).get(),
+          .where("waafitranfertID", "==", transferId)
+          .where("status", "==", "Confirmé").limit(1).get(),
         db.collection("waafi_notifications")
-          .where("transferId", "==", transferId).where("status", "==", "matché").limit(1).get(),
+          .where("transferId", "==", transferId)
+          .where("status", "==", "matché").limit(1).get(),
+        db.collection("waafi_notifications")
+          .where("transferId", "==", transferId)
+          .where("status", "==", "traité").limit(1).get(),
       ]);
-      if (!confirmeSnap.empty || !matcheSnap.empty) {
-        const src       = !confirmeSnap.empty ? confirmeSnap.docs[0] : matcheSnap.docs[0];
-        const ancienRef = src.data().orderId || src.data().ordreRef || src.id;
+
+      const srcConfirme = confirmeSnap.docs[0];
+      const srcMatch    = matcheSnap.docs[0] || traiteSnap.docs[0];
+
+      if (srcConfirme || srcMatch) {
+        // Récupérer la référence de l'ordre d'origine
+        let ancienRef = "inconnu";
+        if (srcConfirme) {
+          ancienRef = srcConfirme.data().orderId || srcConfirme.id;
+        } else if (srcMatch) {
+          ancienRef = srcMatch.data().ordreRef || srcMatch.data().orderId || srcMatch.id;
+        }
+
         await db.collection("orders").doc(docId).update({
           status: "Rejeté",
-          flagRaison: `FRAUDE — Transfer ID ${transferId} déjà utilisé (#${ancienRef})`,
+          flagRaison: `FRAUDE — Paiement Waafi TID ${transferId} déjà utilisé pour l'ordre #${ancienRef}`,
           flaggedAt: FieldValue.serverTimestamp(),
+          fraudType: "tid_reutilise",
+          fraudTID: transferId,
+          fraudAncienOrdre: ancienRef,
         });
+
         await sendTelegram(token, adminId,
-          `🚨 <b>FRAUDE — Transfer ID réutilisé</b>\n\nOrdre <code>#${ref}</code> rejeté.\n` +
-          `TID <code>${transferId}</code> déjà utilisé dans <code>#${ancienRef}</code>.`
+          `🚨 <b>TENTATIVE DE FRAUDE — Paiement réutilisé</b>\n\n` +
+          `Nouvel ordre : <code>#${ref}</code>\n` +
+          `Transfer-ID : <code>${transferId}</code>\n` +
+          `Ce TID a déjà été utilisé pour l'ordre <code>#${ancienRef}</code>.\n\n` +
+          `⛔ Ordre <b>rejeté automatiquement</b>.`
         );
-        logAudit("fraude_transfer_id_reutilise", { ref, transferId, ancienRef });
+
+        logAudit("fraude_tid_reutilise", { ref, transferId, ancienRef, phone });
         return;
       }
     }
