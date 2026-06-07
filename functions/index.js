@@ -21,7 +21,7 @@
  */
 
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { onCall, onRequest }                    = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError }        = require("firebase-functions/v2/https");
 const { onSchedule }                           = require("firebase-functions/v2/scheduler");
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
@@ -620,8 +620,12 @@ exports.onNouvelOrdre = onDocumentCreated(
         return;
       }
 
-      const webhookBase = MACRO_WEBHOOK_URL.value() ||
-        "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
+      const webhookBase = MACRO_WEBHOOK_URL.value();
+      if (!webhookBase) {
+        console.error("MACRODROID_WEBHOOK_URL secret non configuré — ordre non traité:", ref);
+        await db.collection("orders").doc(docId).update({ status: "Erreur", erreurMsg: "Webhook non configuré" });
+        return;
+      }
 
       // Recherche 1 : par Transfer ID exact dans les notifs prêtes
       let waafiDoc = null;
@@ -771,8 +775,8 @@ exports.autoConfirmation = onDocumentCreated(
 
     if (sms.status === "traité" || sms.status === "en_cours" || sms.status === "prêt") return;
 
-    const expectedSecret = MACRO_SECRET.value() || "KaffiPay2026";
-    if (sms.secret && sms.secret !== expectedSecret) {
+    const configuredSecret = MACRO_SECRET.value();
+    if (configuredSecret && sms.secret !== configuredSecret) {
       await db.collection("waafi_notifications").doc(docId).update({ status: "rejeté_secret_invalide" });
       return;
     }
@@ -821,8 +825,11 @@ exports.autoConfirmation = onDocumentCreated(
     const waafiDocRef = db.collection("waafi_notifications").doc(docId);
     const waafiSnap   = await waafiDocRef.get();
 
-    const webhookBase = MACRO_WEBHOOK_URL.value() ||
-      "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
+    const webhookBase = MACRO_WEBHOOK_URL.value();
+    if (!webhookBase) {
+      console.error("MACRODROID_WEBHOOK_URL secret non configuré — autoConfirmation interrompue");
+      return;
+    }
 
     await confirmerDepot(ordreDoc, waafiSnap, webhookBase, token, adminId);
   }
@@ -845,8 +852,11 @@ exports.onWebhookEchoue = onDocumentCreated(
     const token  = TELEGRAM_TOKEN.value();
     const adminId = TELEGRAM_ADMIN_ID.value();
 
-    const webhookBase = MACRO_WEBHOOK_URL.value() ||
-      "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
+    const webhookBase = MACRO_WEBHOOK_URL.value();
+    if (!webhookBase) {
+      console.error("MACRODROID_WEBHOOK_URL secret non configuré — retry webhook interrompu");
+      return;
+    }
 
     // Délais : immédiat, puis 30 s, puis 90 s
     const delais = [0, 30000, 90000];
@@ -1016,7 +1026,6 @@ exports.nettoyageCompteurs = onSchedule(
 exports.smsWebhook = onRequest(
   { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
   async (req, res) => {
-    res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (req.method !== "POST")    { res.status(405).send("Method Not Allowed"); return; }
 
@@ -1024,8 +1033,8 @@ exports.smsWebhook = onRequest(
     const notif  = body.notification || body.not_body || body.message || body.text || "";
     const secret = body.secret || "";
 
-    const expectedSecret = MACRO_SECRET.value() || "KaffiPay2026";
-    if (secret && secret !== expectedSecret) { res.status(403).json({ error: "Secret invalide" }); return; }
+    const configuredSecret = MACRO_SECRET.value();
+    if (configuredSecret && secret !== configuredSecret) { res.status(403).json({ error: "Secret invalide" }); return; }
     if (!notif) { res.status(400).json({ error: "Champ 'notification' requis" }); return; }
 
     const transferId = extractTransferId(notif);
@@ -1034,7 +1043,7 @@ exports.smsWebhook = onRequest(
 
     const docRef = await db.collection("waafi_notifications").add({
       notification: notif, transferId, montant, numClient,
-      secret: expectedSecret, source: "macrodroid", status: "nouveau",
+      source: "macrodroid", status: "nouveau",
       createdAt: FieldValue.serverTimestamp(),
     });
 
@@ -1072,10 +1081,8 @@ exports.healthCheck = onRequest(
     } catch { /* ignore */ }
 
     res.json({
-      statut, timestamp: new Date().toISOString(), region: REGION,
-      firestore: firestoreMs, version: "5.1",
-      flow: "waafi_notification_first → ordre_second",
-      circuit_breaker: cb, webhooks_en_attente: webhooksAttente,
+      statut, timestamp: new Date().toISOString(),
+      version: "5.1", firestore: firestoreMs,
     });
   }
 );
@@ -1311,7 +1318,9 @@ exports.adminBot = onRequest(
 // ══════════════════════════════════════════════════════════════════
 exports.analyseAdmin = onCall(
   { region: REGION, secrets: [] },
-  async () => {
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Authentification requise");
+
     const snap    = await db.collection("orders").orderBy("ts", "desc").limit(100).get();
     const txs     = snap.docs.map((d) => d.data());
     const conf    = txs.filter((t) => t.status === "Confirmé");
