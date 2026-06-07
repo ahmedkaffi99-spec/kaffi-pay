@@ -251,18 +251,8 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
   const montantNotif = notif.montant  || montantOrdre;
   const numReel      = notif.numClient || ordre.numeroPayment || "";
 
-  // Vérification montant ±5%
-  const tolerance = Math.max(5, montantOrdre * 0.05);
-  if (notif.montant && Math.abs(montantOrdre - notif.montant) > tolerance) {
-    await sendTelegram(token, adminId,
-      `⚠️ <b>Montant incorrect</b> pour #${ordreRef}\n` +
-      `Notif Waafi: ${notif.montant} DJF / Ordre: ${montantOrdre} DJF\n` +
-      `Δ: ${Math.abs(montantOrdre - notif.montant)} DJF — Vérification manuelle requise.`
-    );
-    await waafiDoc.ref.update({ status: "montant_incorrect", ordreRef });
-    return false;
-  }
-
+  // scorerCorrespondance a déjà validé la correspondance 3/3 avant d'appeler cette fonction.
+  // On enregistre uniquement les corrections mineures (dans la tolérance).
   const corrections = [];
   if (notif.montant && Math.abs(montantOrdre - notif.montant) > 1)
     corrections.push(`Montant corrigé: ${montantOrdre} → ${notif.montant} DJF`);
@@ -407,8 +397,12 @@ function repondreSupport(text, session, orders) {
       return reply(`⏳ Votre ordre <b>#${ordreNum}</b> est <b>en cours de traitement</b>. Vous serez notifié dès confirmation.`,
         "résolu", "En attente communiqué", "faible", `#${ordreNum} en attente`);
     if (ligne.includes("| Correction"))
-      return reply(`✏️ Votre ordre <b>#${ordreNum}</b> est en <b>vérification</b> par notre équipe.`,
-        "escalade", "Correction signalée", "moyen", `#${ordreNum} en correction`);
+      return reply(
+        `✏️ Votre ordre <b>#${ordreNum}</b> a été retourné en <b>correction</b>.\n\n` +
+        "Il y a une discordance entre les informations soumises et votre paiement Waafi.\n\n" +
+        "Veuillez vérifier votre <b>Transfer ID</b>, <b>montant</b> et <b>numéro Waafi</b>, puis <b>resoumettre un nouvel ordre</b>.",
+        "info_manquante", "Correction — client invité à resoumettre", "moyen", `#${ordreNum} en correction`
+      );
     if (ligne.includes("| Rejeté")) {
       const nonRecu = ligne.toLowerCase().includes("paiement non re") || ligne.toLowerCase().includes("introuvable");
       const fraude  = ligne.toLowerCase().includes("fraude");
@@ -549,7 +543,10 @@ async function sendTelegramToBot(token, chatId, text) {
 }
 
 function extractTransferId(text) {
-  const m = text.match(/Transfer-?Id[:\s]+(\d+)/i);
+  // Waafi SMS variations: "Transfer Id : 123456", "TransferId:123456", "TID 123456", "Ref: 123456"
+  const m = text.match(/Transfer[-\s]?Id\s*[:\s]+\s*(\d+)/i)
+         || text.match(/\bTID\s*[:\s]+\s*(\d+)/i)
+         || text.match(/\bRef(?:erence)?\s*[:\s]+\s*(\d{6,})/i);
   return m ? m[1].trim() : null;
 }
 
@@ -771,8 +768,11 @@ exports.onNouvelOrdre = onDocumentCreated(
 
     // ════════════════════════════════════════════════════════════
     //  RETRAIT — Analyse fraude + notification admin
+    //  Pour un retrait, il n'y a pas de Transfer ID Waafi.
+    //  On passe le code de retrait à la place pour vérifier son format.
     // ════════════════════════════════════════════════════════════
-    const fraud = analyserFraude(tx, transferId);
+    const tidRetrait = (tx.withdrawalCode || "").trim();
+    const fraud = analyserFraude(tx, tidRetrait);
     await db.collection("orders").doc(docId).update({
       ia_score_fraude: fraud.score_fraude, ia_risque: fraud.risque,
       ia_raisons: fraud.raisons, ia_action: fraud.action,
@@ -1062,7 +1062,7 @@ exports.rapportJournalier = onSchedule(
 // SCHEDULED 2 — ORDRES BLOQUÉS (toutes les 5 min)
 // Seul cas time-based : détecter le temps écoulé depuis création
 // ══════════════════════════════════════════════════════════════════
-exports.ordresBloqués = onSchedule(
+exports.ordresBloques = onSchedule(
   { schedule: "every 5 minutes", region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
   async () => {
     const cutoff = new Date(Date.now() - 30 * 60 * 1000);
