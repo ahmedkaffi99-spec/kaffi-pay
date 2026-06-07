@@ -322,10 +322,24 @@ function logAudit(action, data) {
 // SECTION 8 — SUPPORT CLIENT
 // ══════════════════════════════════════════════════════════════════
 function repondreSupport(text, session, orders) {
-  const t = text.toLowerCase().trim();
+  const t         = text.toLowerCase().trim();
+  const cleanText = text.replace(/\s/g, "");
 
-  const ordreMatch    = text.match(/(?:#\s*|n[°o]\.?\s*)?(\d{5,8})\b/i);
-  const ordreNum      = ordreMatch ? ordreMatch[1] : null;
+  // Numéro Waafi envoyé (8 chiffres commençant par 77/78/70/71/21)
+  // Doit être vérifié AVANT la détection du numéro d'ordre
+  const isPhone = /^(77|78|70|71|21)\d{6}$/.test(cleanText);
+  if (isPhone) {
+    return reply(
+      `✅ Numéro Waafi enregistré : <code>${cleanText}</code>\n\nIndiquez maintenant votre <b>numéro d'ordre</b> (ex: <code>#06073</code>).`,
+      "info_manquante", "Numéro Waafi enregistré", "faible", "Phone saved"
+    );
+  }
+
+  // Numéro d'ordre — exclure les numéros de téléphone (8 chiffres 77/78/70/71/21)
+  const ordreMatch = text.match(/(?:#\s*|n[°o]\.?\s*)?(\d{5,8})\b/i);
+  const rawNum     = ordreMatch ? ordreMatch[1] : null;
+  const ordreNum   = rawNum && !/^(77|78|70|71|21)\d{6}$/.test(rawNum) ? rawNum : null;
+
   const hasTransferId = /transfer[- ]?id|tid\b/i.test(t) || /\b\d{9,}\b/.test(text);
   const isGreeting    = /^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj)\b/.test(t);
 
@@ -1108,19 +1122,17 @@ exports.supportClient = onRequest(
   { region: REGION, secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
+
+    const msg          = (req.body || {}).message || (req.body || {}).edited_message;
+    if (!msg) return;
+    const chatId       = String(msg.chat.id);
+    const text         = (msg.text || "").trim();
+    const firstName    = (msg.from || {}).first_name || "Client";
+    const supportToken = SUPPORT_BOT_TOKEN.value();
+    if (!text || !supportToken) return;
+
     try {
-      const msg = (req.body || {}).message || (req.body || {}).edited_message;
-      if (!msg) return;
-
-      const chatId    = msg.chat.id;
-      const text      = (msg.text || "").trim();
-      const firstName = (msg.from || {}).first_name || "Client";
-      if (!text) return;
-
-      const supportToken = SUPPORT_BOT_TOKEN.value();
-      if (!supportToken) return;
-
-      const sessionRef  = db.collection("support_sessions").doc(String(chatId));
+      const sessionRef  = db.collection("support_sessions").doc(chatId);
       const sessionSnap = await sessionRef.get();
       const session     = sessionSnap.exists ? sessionSnap.data() : {};
 
@@ -1131,7 +1143,9 @@ exports.supportClient = onRequest(
         session.phone = cleanText;
       }
 
-      const ordreInMsg = (text.match(/(?:#\s*)?(\d{5,8})\b/i) || [])[1] || null;
+      // Ne pas traiter un numéro de téléphone comme un numéro d'ordre
+      const rawOrdreInMsg = (text.match(/(?:#\s*)?(\d{5,8})\b/i) || [])[1] || null;
+      const ordreInMsg    = rawOrdreInMsg && !/^(77|78|70|71|21)\d{6}$/.test(rawOrdreInMsg) ? rawOrdreInMsg : null;
       if (ordreInMsg) await sessionRef.set({ lastOrder: ordreInMsg }, { merge: true });
 
       let orders = [];
@@ -1173,7 +1187,13 @@ exports.supportClient = onRequest(
         `💬 <i>"${text.substring(0, 80)}"</i>\n⚡ ${aiDecision.action_prise}` +
         (aiDecision.decision === "escalade" ? "\n⚠️ <b>Intervention manuelle requise.</b>" : "")
       );
-    } catch (e) { console.error("supportClient crash:", e.message); }
+    } catch (e) {
+      console.error("supportClient crash:", e.message, e.stack);
+      try {
+        await sendTelegramToBot(supportToken, chatId,
+          "Désolé, une erreur s'est produite. Réessayez dans quelques instants.\n\n— <i>Support Kaffi-Pay</i>");
+      } catch {}
+    }
   }
 );
 
