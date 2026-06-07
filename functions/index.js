@@ -259,9 +259,17 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
     corrections.push(`N° corrigé: ${ordre.numeroPayment} → ${notif.numClient}`);
 
   // Confirmation atomique (runTransaction évite les doubles confirmations)
+  // ⚠️  waafi_notifications garde son status d'arrivée — on ne le touche plus.
+  // Le match est enregistré dans la collection "ordre_traite".
+  const traitRef = db.collection("ordre_traite").doc(notif.transferId || ordreRef);
   const claimed = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ordreDoc.ref);
-    if (!snap.exists || snap.data().status !== "En attente") return false;
+    const [ordreSnap, traitSnap] = await Promise.all([
+      tx.get(ordreDoc.ref),
+      tx.get(traitRef),
+    ]);
+    if (!ordreSnap.exists || ordreSnap.data().status !== "En attente") return false;
+    if (traitSnap.exists) return false; // paiement déjà utilisé pour un autre ordre
+
     tx.update(ordreDoc.ref, {
       status: "Confirmé",
       confirmedBy: "auto_match_waafi",
@@ -271,14 +279,21 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
       corrections,
       confirmedAt: FieldValue.serverTimestamp(),
     });
-    tx.update(waafiDoc.ref, { status: "matché", ordreRef });
+    tx.set(traitRef, {
+      ordreRef,
+      ordreId: ordreRef,
+      waafiNotifId: waafiDoc.id,
+      transferId: notif.transferId || "",
+      montant: montantNotif,
+      numClient: numReel,
+      userId1xBet: ordre.userId1xBet || "",
+      confirmedAt: FieldValue.serverTimestamp(),
+      status: "confirmé",
+    });
     return true;
   });
 
-  if (!claimed) {
-    await waafiDoc.ref.update({ status: "déjà_traité", ordreRef });
-    return false;
-  }
+  if (!claimed) return false;
 
   logAudit("depot_confirme_match", { ordreRef, transferId: notif.transferId, montant: montantNotif });
 
@@ -600,20 +615,16 @@ exports.onNouvelOrdre = onDocumentCreated(
     // Vérifie 3 sources : ordre confirmé, notif matchée, notif traitée.
     // Si trouvé → tentative de réutilisation d'un paiement = FRAUDE.
     if (transferId) {
-      const [confirmeSnap, matcheSnap, traiteSnap] = await Promise.all([
+      const [confirmeSnap, ordreTraiteSnap] = await Promise.all([
         db.collection("orders")
           .where("waafitranfertID", "==", transferId)
           .where("status", "==", "Confirmé").limit(1).get(),
-        db.collection("waafi_notifications")
-          .where("transferId", "==", transferId)
-          .where("status", "==", "matché").limit(1).get(),
-        db.collection("waafi_notifications")
-          .where("transferId", "==", transferId)
-          .where("status", "==", "traité").limit(1).get(),
+        db.collection("ordre_traite")
+          .where("transferId", "==", transferId).limit(1).get(),
       ]);
 
       const srcConfirme = confirmeSnap.docs[0];
-      const srcMatch    = matcheSnap.docs[0] || traiteSnap.docs[0];
+      const srcMatch    = ordreTraiteSnap.docs[0];
 
       if (srcConfirme || srcMatch) {
         // Récupérer la référence de l'ordre d'origine
@@ -696,14 +707,17 @@ exports.onNouvelOrdre = onDocumentCreated(
       const webhookBase = MACRO_WEBHOOK_URL.value() ||
         "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
 
-      // Recherche 1 : par Transfer ID exact dans les notifs prêtes
+      // Recherche 1 : par Transfer ID exact (pas de filtre status — status = état à l'arrivée)
+      // On vérifie ensuite que ce TID n'est pas déjà dans ordre_traite (déjà utilisé)
       let waafiDoc = null;
-      const byTID = await db.collection("waafi_notifications")
-        .where("transferId", "==", transferId)
-        .where("status", "in", ["prêt", "nouveau", "non_matché"])
-        .limit(1).get();
+      const [byTID, dejaTraiteSnap] = await Promise.all([
+        db.collection("waafi_notifications")
+          .where("transferId", "==", transferId).limit(1).get(),
+        db.collection("ordre_traite")
+          .where("transferId", "==", transferId).limit(1).get(),
+      ]);
 
-      if (!byTID.empty) {
+      if (!byTID.empty && dejaTraiteSnap.empty) {
         waafiDoc = byTID.docs[0];
       }
 
@@ -713,14 +727,15 @@ exports.onNouvelOrdre = onDocumentCreated(
         const tolerance    = Math.max(5, montantOrdre * 0.05);
         const byPhone = await db.collection("waafi_notifications")
           .where("numClient", "==", phone)
-          .where("status", "in", ["prêt", "nouveau", "non_matché"])
           .limit(10).get();
 
         for (const d of byPhone.docs) {
           const n = d.data();
-          if (n.montant && Math.abs(montantOrdre - n.montant) <= tolerance) {
-            waafiDoc = d; break;
-          }
+          if (!n.montant || Math.abs(montantOrdre - n.montant) > tolerance) continue;
+          const dejaTID = n.transferId
+            ? (await db.collection("ordre_traite").where("transferId", "==", n.transferId).limit(1).get()).empty
+            : true;
+          if (dejaTID) { waafiDoc = d; break; }
         }
       }
 
