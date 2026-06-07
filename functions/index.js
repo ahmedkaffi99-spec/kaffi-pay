@@ -272,41 +272,9 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
     (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "")
   );
 
-  // Déclenchement MacroDroid — fast path (webhook direct) + fallback file d'attente
+  // MacroDroid est déclenché par onOrdreUpdated dès que status → "Confirmé"
   const id1xbet = ordre.userId1xBet || ordre.id1x || "";
-  if (id1xbet) {
-    let webhookOk = false;
-    if (webhookBase) {
-      const delais = [0, 5000, 10000];
-      for (let i = 0; i < delais.length; i++) {
-        if (delais[i] > 0) await new Promise((r) => setTimeout(r, delais[i]));
-        try {
-          await triggerMacrodroid(webhookBase, ordreId, montantNotif, id1xbet);
-          await ordreDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), webhookTentative: i + 1 });
-          logAudit("macrodroid_ok", { ordreId, id1xbet, tentative: i + 1 });
-          webhookOk = true;
-          break;
-        } catch (e) { /* next retry */ }
-      }
-    }
-    if (!webhookOk) {
-      // Webhook indisponible ou URL incorrecte → file d'attente Firestore
-      // MacroDroid poll GET /macroJob?secret=xxx pour récupérer les tâches
-      const jobRef = db.collection("macrodroid_jobs").doc();
-      await jobRef.set({
-        ordreId, id1xbet, montant: montantNotif,
-        status: "pending",
-        createdAt: FieldValue.serverTimestamp(),
-      });
-      await ordreDoc.ref.update({ webhookStatus: "queue", macroJobId: jobRef.id });
-      logAudit("macrodroid_queued", { ordreId, jobId: jobRef.id });
-      await sendTelegram(token, adminId,
-        `📋 <b>Recharge mise en file</b> — #${ordreId}\n` +
-        `ID 1xBet: <code>${id1xbet}</code> | ${Number(montantNotif).toLocaleString()} DJF\n` +
-        `MacroDroid récupèrera la tâche au prochain poll (≤ 60s).`
-      );
-    }
-  } else {
+  if (!id1xbet) {
     await sendTelegram(token, adminId,
       `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\n${Number(montantNotif).toLocaleString()} DJF confirmé.`
     );
@@ -750,7 +718,12 @@ exports.onNouvelOrdre = onDocumentCreated(
 // TRIGGER 2 — ORDRE MIS À JOUR (State Machine)
 // ══════════════════════════════════════════════════════════════════
 exports.onOrdreUpdated = onDocumentUpdated(
-  { document: "orders/{docId}", region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  {
+    document: "orders/{docId}",
+    region: REGION,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL],
+    timeoutSeconds: 60,
+  },
   async (event) => {
     const before = event.data.before.data();
     const after  = event.data.after.data();
@@ -764,6 +737,8 @@ exports.onOrdreUpdated = onDocumentUpdated(
     const ordreId  = after.orderId || event.params.docId;
     const montant  = Number(after.montant || 0).toLocaleString();
     const type     = after.type || "Ordre";
+    const token    = TELEGRAM_TOKEN.value();
+    const adminId  = TELEGRAM_ADMIN_ID.value();
 
     logAudit("transition_statut", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
 
@@ -779,7 +754,54 @@ exports.onOrdreUpdated = onDocumentUpdated(
     else if (after.status === "Correction")
       msg = `✏️ <b>Correction demandée</b>\n#${ordreId}\n${after.correctionMsg || ""}`;
 
-    if (msg) await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(), msg);
+    if (msg) await sendTelegram(token, adminId, msg);
+
+    // ── Déclenchement MacroDroid — uniquement quand ordre → "Confirmé" ──
+    // Point d'entrée unique : fonctionne quelle que soit la source de confirmation
+    // (auto match SMS, admin bot, console Firebase, ordresBloques)
+    if (after.status !== "Confirmé") return;
+
+    const id1xbet     = after.userId1xBet || after.id1x || "";
+    const webhookBase = MACRO_WEBHOOK_URL.value() || "";
+    const montantVal  = Number(after.montant || 0);
+
+    if (!id1xbet) return;
+
+    let webhookOk = false;
+    if (webhookBase) {
+      const delais = [0, 5000, 10000];
+      for (let i = 0; i < delais.length; i++) {
+        if (delais[i] > 0) await new Promise((r) => setTimeout(r, delais[i]));
+        try {
+          await triggerMacrodroid(webhookBase, ordreId, montantVal, id1xbet);
+          await event.data.after.ref.update({
+            webhookStatus: "ok",
+            webhookAt: FieldValue.serverTimestamp(),
+            webhookTentative: i + 1,
+          });
+          logAudit("macrodroid_ok", { ordreId, id1xbet, tentative: i + 1 });
+          webhookOk = true;
+          break;
+        } catch (e) { /* next retry */ }
+      }
+    }
+
+    if (!webhookOk) {
+      // MacroDroid hors-ligne → file d'attente, ordresBloques retry toutes les 5 min
+      const jobRef = db.collection("macrodroid_jobs").doc();
+      await jobRef.set({
+        ordreId, id1xbet, montant: montantVal,
+        status: "pending",
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      await event.data.after.ref.update({ webhookStatus: "queue", macroJobId: jobRef.id });
+      logAudit("macrodroid_queued", { ordreId, jobId: jobRef.id });
+      await sendTelegram(token, adminId,
+        `📋 <b>Recharge en file</b> — #${ordreId}\n` +
+        `ID 1xBet: <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF\n` +
+        `Retry automatique toutes les 5 min.`
+      );
+    }
   }
 );
 
@@ -1242,41 +1264,12 @@ exports.adminBot = onRequest(
           await sendTelegram(token, adminId, `⛔ Impossible de confirmer un ordre en statut <b>${data.status}</b>.`); return;
         }
 
-        // 1. Confirmer l'ordre
+        // Confirmer → onOrdreUpdated déclenche MacroDroid automatiquement
         await doc.ref.update({ status: "Confirmé", confirmedBy: "admin_telegram", confirmedAt: FieldValue.serverTimestamp() });
         logAudit("confirme_admin_telegram", { num, adminId, ancienStatut: data.status });
-
-        // 2. Appeler MacroDroid
-        const id1xbet    = data.userId1xBet || data.id1x || data.idBet || "";
         const montantVal = Number(data.montant || data.amount || 0);
-        const wbUrl      = MACRO_WEBHOOK_URL.value() || "";
-
-        if (!id1xbet) {
-          await sendTelegram(token, adminId,
-            `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n⚠️ ID 1xBet manquant — recharge manuelle requise.`);
-          return;
-        }
-        if (!wbUrl) {
-          await sendTelegram(token, adminId,
-            `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n⚠️ MACRODROID_WEBHOOK_URL non configuré.`);
-          return;
-        }
-
         await sendTelegram(token, adminId,
-          `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 Déclenchement MacroDroid...`);
-
-        try {
-          await triggerMacrodroid(wbUrl, num, montantVal, id1xbet);
-          await doc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
-          logAudit("macrodroid_admin_ok", { num, adminId, id1xbet });
-          await sendTelegram(token, adminId,
-            `🎉 <b>MacroDroid déclenché !</b>\nID 1xBet <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF crédité.`);
-        } catch (e) {
-          await doc.ref.update({ webhookStatus: "echec", webhookError: e.message });
-          logAudit("macrodroid_admin_echec", { num, adminId, erreur: e.message });
-          await sendTelegram(token, adminId,
-            `❌ MacroDroid échoué : <code>${e.message}</code>\nTapez <code>recharge ${num}</code> pour réessayer.`);
-        }
+          `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 MacroDroid en cours de déclenchement...`);
         return;
       }
 
