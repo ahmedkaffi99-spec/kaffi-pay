@@ -1,20 +1,16 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════════╗
- * ║  KAFFI PAY — CLOUD FUNCTIONS v5.1                                    ║
+ * ║  KAFFI PAY — CLOUD FUNCTIONS v6.0                                    ║
  * ║                                                                      ║
- * ║  FLOW CORRECT :                                                      ║
- * ║  1. User paie Waafi → SMS → waafi_notifications (STATUS: prêt)       ║
+ * ║  FLOW :                                                              ║
+ * ║  1. User paie Waafi → SMS → smsWebhook → waafi_notifications         ║
  * ║  2. User soumet ordre avec Transfer ID                               ║
  * ║  3. onNouvelOrdre cherche la notif correspondante → confirme         ║
+ * ║  4. Admin confirme via bot → triggerMacrodroid immédiat              ║
  * ║                                                                      ║
- * ║  autoConfirmation = parse SMS + alerte admin + cas rare (délai SMS)  ║
- * ║  onNouvelOrdre    = moteur principal de confirmation dépôt           ║
- * ║  onWebhookEchoue  = retry webhook temps réel (0s / 30s / 90s)       ║
- * ║                                                                      ║
- * ║  Fonctions (13) :                                                    ║
- * ║  [Triggers]  onNouvelOrdre · onOrdreUpdated · autoConfirmation       ║
- * ║              onWebhookEchoue                                         ║
- * ║  [Scheduled] rapportJournalier · ordresBloqués · nettoyageCompteurs  ║
+ * ║  Fonctions (7) :                                                     ║
+ * ║  [Triggers]  onNouvelOrdre · onOrdreUpdated                          ║
+ * ║  [Scheduled] ordresBloques                                           ║
  * ║  [HTTP]      smsWebhook · healthCheck · supportClient · adminBot     ║
  * ╚══════════════════════════════════════════════════════════════════════╝
  */
@@ -30,7 +26,6 @@ initializeApp();
 const db = getFirestore();
 
 const REGION = "europe-west1";
-const TZ     = "Africa/Djibouti";
 
 const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
@@ -157,45 +152,6 @@ async function triggerMacrodroid(url, ordreRef, montant, id1xbet) {
   return resp;
 }
 
-// appelWebhook conservé pour onWebhookEchoue (retries) avec circuit breaker
-const CB_SEUIL   = 3;
-const CB_TIMEOUT = 5 * 60 * 1000;
-
-async function appelWebhook(url, ordreRef, montant, id1xbet) {
-  const cbRef  = db.collection("circuit_breakers").doc("macrodroid");
-  const cbSnap = await cbRef.get();
-  const cb     = cbSnap.exists ? cbSnap.data() : { etat: "closed", echecs: 0 };
-
-  if (cb.etat === "open") {
-    const tempsRestant = (cb.ouvertA || 0) + CB_TIMEOUT - Date.now();
-    if (tempsRestant > 0)
-      throw new Error(`Circuit breaker OPEN — réessai dans ${Math.ceil(tempsRestant / 60000)} min`);
-    await cbRef.update({ etat: "half-open" });
-  }
-
-  try {
-    const webhookUrl = `${url}?id1xbet=${encodeURIComponent(id1xbet)}&montant=${encodeURIComponent(montant)}&ref=${encodeURIComponent(ordreRef)}`;
-    const resp       = await fetch(webhookUrl, { signal: AbortSignal.timeout(10000) });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    await cbRef.set({ etat: "closed", echecs: 0, dernierSucces: Date.now() });
-    return resp;
-  } catch (e) {
-    const echecs = (cb.echecs || 0) + 1;
-    if (echecs >= CB_SEUIL)
-      await cbRef.set({ etat: "open", echecs, ouvertA: Date.now(), dernierEchec: e.message });
-    else
-      await cbRef.set({ etat: "closed", echecs, dernierEchec: e.message }, { merge: true });
-    throw e;
-  }
-}
-
-async function sauvegarderWebhookEchoue(ordreRef, id1xbet, montant) {
-  await db.collection("failed_webhooks").doc(ordreRef).set({
-    ordreRef, id1xbet, montant,
-    tentatives: 0, maxTentatives: 3, statut: "en_attente",
-    createdAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-}
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 5b — SCORING CORRESPONDANCE (3 critères)
@@ -251,7 +207,7 @@ function scorerCorrespondance(ordreData, notifData) {
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 6 — CONFIRMATION DÉPÔT + WEBHOOK MacroDroid
-// Appelé par onNouvelOrdre (flux principal) et autoConfirmation (cas rare)
+// Appelé par onNouvelOrdre (flux principal) et smsWebhook (cas rare)
 // waafiDoc = document waafi_notifications correspondant
 // ordreDoc = document orders à confirmer
 // ══════════════════════════════════════════════════════════════════
@@ -326,7 +282,6 @@ async function confirmerDepot(ordreDoc, waafiDoc, webhookBase, token, adminId) {
       logAudit("macrodroid_ok", { ordreRef, id1xbet });
     } catch (e) {
       await ordreDoc.ref.update({ webhookStatus: "echec", webhookError: e.message });
-      await sauvegarderWebhookEchoue(ordreRef, id1xbet, montantNotif);
       await sendTelegram(token, adminId,
         `🔴 <b>MacroDroid échoué</b> — #${ordreRef}\n<code>${e.message}</code>\n\nTapez <code>recharge ${ordreRef}</code> pour réessayer.`
       );
@@ -897,215 +852,6 @@ exports.onOrdreUpdated = onDocumentUpdated(
   }
 );
 
-// ══════════════════════════════════════════════════════════════════
-// TRIGGER 3 — NOTIFICATION WAAFI REÇUE
-//
-//  RÔLE PRINCIPAL : parser le SMS + alerter admin + stocker "prêt"
-//  RÔLE SECONDAIRE (cas rare) : si un ordre En attente existe déjà
-//    avec ce Transfer ID (délai SMS ou ordre soumis avant paiement)
-//    → confirmer directement
-//
-//  Le flux normal : autoConfirmation stocke "prêt",
-//  puis onNouvelOrdre vient chercher la notif quand l'ordre arrive.
-// ══════════════════════════════════════════════════════════════════
-exports.autoConfirmation = onDocumentCreated(
-  {
-    document: "waafi_notifications/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL, MACRO_SECRET],
-    timeoutSeconds: 60,
-  },
-  async (event) => {
-    const sms   = event.data.data();
-    const docId = event.params.docId;
-    const token   = TELEGRAM_TOKEN.value();
-    const adminId = TELEGRAM_ADMIN_ID.value();
-
-    // Éviter double-exécution : si déjà parsé (processedAt existe), ignorer
-    if (sms.processedAt) return;
-
-    const expectedSecret = MACRO_SECRET.value() || "KaffiPay2026";
-    if (sms.secret && sms.secret !== expectedSecret) return;
-
-    // Extraire les données du SMS
-    const notification = sms.notification || sms.not_body || sms.message || sms.texte || sms.body || "";
-    const transferId   = sms.transferId   || extractTransferId(notification);
-    const montantSMS   = sms.montant      || extractMontant(notification);
-    const numClient    = sms.numClient    || extractNumClient(notification);
-
-    if (!transferId && !montantSMS) return; // SMS non parsable — on ne touche pas au doc
-
-    // Stocker uniquement les champs parsés — PAS de status
-    await db.collection("waafi_notifications").doc(docId).update({
-      transferId, montant: montantSMS, numClient,
-      processedAt: FieldValue.serverTimestamp(),
-    });
-
-    await sendTelegram(token, adminId,
-      `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
-      `Transfer-ID: <code>${transferId || "?"}</code>\n` +
-      `Montant: <b>${montantSMS ? Number(montantSMS).toLocaleString() : "?"} DJF</b>\n` +
-      `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
-      `<i>✅ En attente de l'ordre client — confirmation automatique dès soumission.</i>`
-    );
-
-    // ── CAS RARE : ordre déjà soumis avant que le SMS arrive ────
-    if (!transferId) return;
-
-    const ordreSnap = await db.collection("orders")
-      .where("waafitranfertID", "==", transferId)
-      .where("status", "==", "En attente")
-      .limit(1).get();
-
-    if (ordreSnap.empty) return;
-
-    // Vérifier que ce TID n'est pas déjà dans ordre_traite
-    const dejaTraite = await db.collection("ordre_traite")
-      .where("transferId", "==", transferId).limit(1).get();
-    if (!dejaTraite.empty) return;
-
-    const ordreDoc  = ordreSnap.docs[0];
-    const waafiSnap = await db.collection("waafi_notifications").doc(docId).get();
-    const webhookBase = MACRO_WEBHOOK_URL.value() ||
-      "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
-
-    const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), waafiSnap.data());
-    const ordreRef2 = ordreDoc.data().orderId || ordreDoc.id;
-
-    if (decision === "confirmer") {
-      await confirmerDepot(ordreDoc, waafiSnap, webhookBase, token, adminId);
-    } else if (decision === "correction") {
-      const msgDetails = mismatches.map((m) => `• ${m}`).join("\n");
-      await ordreDoc.ref.update({
-        status: "Correction",
-        correctionMsg: `Correspondance partielle (${score}/3) — corrigez et resoumettez.\n${mismatches.join(" | ")}`,
-        correctionDetails: mismatches, correctionScore: score,
-        correctionAt: FieldValue.serverTimestamp(),
-      });
-      await sendTelegram(token, adminId,
-        `✏️ <b>Correction requise (${score}/3)</b>\n\nOrdre <code>#${ordreRef2}</code>\n${msgDetails}\n\n` +
-        `<i>Le client doit corriger et resoumettre.</i>`
-      );
-    } else {
-      const msgDetails = mismatches.map((m) => `• ${m}`).join("\n");
-      await ordreDoc.ref.update({
-        status: "Rejeté",
-        flagRaison: `Données incorrectes (${score}/3) — ${mismatches.join(", ")}`,
-        flaggedAt: FieldValue.serverTimestamp(),
-      });
-      await sendTelegram(token, adminId,
-        `❌ <b>Correspondance insuffisante (${score}/3)</b>\nOrdre <code>#${ordreRef2}</code>\n${msgDetails}`
-      );
-    }
-  }
-);
-
-// ══════════════════════════════════════════════════════════════════
-// TRIGGER 4 — WEBHOOK ÉCHOUÉ : RETRY TEMPS RÉEL
-// Déclenché IMMÉDIATEMENT sur création failed_webhooks
-// 3 tentatives : 0 s → 30 s → 90 s dans une seule exécution
-// ══════════════════════════════════════════════════════════════════
-exports.onWebhookEchoue = onDocumentCreated(
-  {
-    document: "failed_webhooks/{docId}", region: REGION,
-    secrets: [MACRO_WEBHOOK_URL, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
-    timeoutSeconds: 300,
-  },
-  async (event) => {
-    const docId = event.params.docId;
-    const w     = event.data.data();
-    const token  = TELEGRAM_TOKEN.value();
-    const adminId = TELEGRAM_ADMIN_ID.value();
-
-    const webhookBase = MACRO_WEBHOOK_URL.value() ||
-      "https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet";
-
-    // Délais : immédiat, puis 30 s, puis 90 s
-    const delais = [0, 30000, 90000];
-
-    for (let i = 0; i < delais.length; i++) {
-      if (delais[i] > 0) await new Promise((r) => setTimeout(r, delais[i]));
-      const tentative = i + 1;
-
-      try {
-        await appelWebhook(webhookBase, w.ordreRef, w.montant, w.id1xbet);
-
-        await db.collection("failed_webhooks").doc(docId).update({
-          statut: "succès", tentatives: tentative, resolvedAt: FieldValue.serverTimestamp(),
-        });
-        const s = await db.collection("orders").where("orderId", "==", w.ordreRef).limit(1).get();
-        if (!s.empty) await s.docs[0].ref.update({ webhookStatus: "ok_retry_rt" });
-
-        await sendTelegram(token, adminId,
-          `✅ <b>Webhook récupéré (${tentative}/3)</b>\n` +
-          `Ordre <code>#${w.ordreRef}</code> | ID 1xBet: <code>${w.id1xbet}</code>`
-        );
-        logAudit("webhook_retry_succes_rt", { ordreRef: w.ordreRef, tentative });
-        return;
-
-      } catch (e) {
-        await db.collection("failed_webhooks").doc(docId).update({
-          tentatives: tentative, dernierEchec: e.message,
-        });
-        if (tentative === delais.length) {
-          await db.collection("failed_webhooks").doc(docId).update({ statut: "abandonné" });
-          await sendTelegram(token, adminId,
-            `🔴 <b>Webhook abandonné — 3 tentatives échouées</b>\n\n` +
-            `Ordre <code>#${w.ordreRef}</code> | ID 1xBet: <code>${w.id1xbet}</code>\n` +
-            `<b>⚠️ Recharge manuelle REQUISE.</b>`
-          );
-          logAudit("webhook_abandonne_rt", { ordreRef: w.ordreRef, erreur: e.message });
-        }
-      }
-    }
-  }
-);
-
-// ══════════════════════════════════════════════════════════════════
-// SCHEDULED 1 — RAPPORT JOURNALIER (08:00 Africa/Djibouti)
-// ══════════════════════════════════════════════════════════════════
-exports.rapportJournalier = onSchedule(
-  { schedule: "0 8 * * *", timeZone: TZ, region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
-  async () => {
-    const hier  = new Date(); hier.setDate(hier.getDate() - 1);
-    const debut = new Date(hier); debut.setHours(0, 0, 0, 0);
-    const fin   = new Date(hier); fin.setHours(23, 59, 59, 999);
-
-    const snap = await db.collection("orders")
-      .where("ts", ">=", debut.getTime()).where("ts", "<=", fin.getTime())
-      .get().catch(() => db.collection("orders").get());
-
-    const ordres    = snap.docs.map((d) => d.data());
-    const depots    = ordres.filter((o) => o.type === "Dépôt");
-    const retraits  = ordres.filter((o) => o.type === "Retrait");
-    const confirmes = ordres.filter((o) => o.status === "Confirmé");
-    const rejetes   = ordres.filter((o) => o.status === "Rejeté");
-    const fraudes   = ordres.filter((o) => o.flagRaison?.toUpperCase().includes("FRAUDE"));
-    const volume    = depots.filter((o) => o.status === "Confirmé").reduce((s, o) => s + Number(o.montant || 0), 0);
-    const taux      = ordres.length ? Math.round(confirmes.length / ordres.length * 100) : 0;
-
-    const dateStr = hier.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
-
-    await sendTelegram(TELEGRAM_TOKEN.value(), TELEGRAM_ADMIN_ID.value(),
-      `📅 <b>Rapport ${dateStr}</b>\n\n` +
-      `📥 Dépôts: <b>${depots.length}</b>  📤 Retraits: <b>${retraits.length}</b>\n` +
-      `✅ Confirmés: <b>${confirmes.length}</b>  ❌ Rejetés: <b>${rejetes.length}</b>\n` +
-      `🚨 Fraudes: <b>${fraudes.length}</b>  📈 Taux: <b>${taux}%</b>\n` +
-      `💰 Volume: <b>${volume.toLocaleString()} DJF</b>\n\n` +
-      (rejetes.length > confirmes.length ? "⚠️ Plus de rejets que de confirmations." :
-       fraudes.length > 2 ? "🚨 Activité frauduleuse élevée." : "✅ Journée normale.")
-    );
-
-    const yy = String(hier.getFullYear()).slice(-2);
-    const mm = String(hier.getMonth() + 1).padStart(2, "0");
-    const dd = String(hier.getDate()).padStart(2, "0");
-    await db.collection("daily_stats").doc(`${yy}${mm}${dd}`).set({
-      date: dateStr, depots: depots.length, retraits: retraits.length,
-      confirmes: confirmes.length, rejetes: rejetes.length,
-      fraudes: fraudes.length, volume, taux,
-      computedAt: FieldValue.serverTimestamp(),
-    });
-  }
-);
 
 // ══════════════════════════════════════════════════════════════════
 // SCHEDULED 2 — ORDRES BLOQUÉS (toutes les 5 min)
@@ -1149,33 +895,15 @@ exports.ordresBloques = onSchedule(
   }
 );
 
-// ══════════════════════════════════════════════════════════════════
-// SCHEDULED 3 — NETTOYAGE (minuit)
-// ══════════════════════════════════════════════════════════════════
-exports.nettoyageCompteurs = onSchedule(
-  { schedule: "0 0 * * *", timeZone: TZ, region: REGION },
-  async () => {
-    // Nettoie les rate_limits expirés
-    const rlSnap = await db.collection("rate_limits")
-      .where("expiresAt", "<", Date.now()).limit(100).get().catch(() => ({ docs: [] }));
-    if (rlSnap.docs.length > 0) {
-      const b = db.batch(); rlSnap.docs.forEach((d) => b.delete(d.ref)); await b.commit();
-    }
-
-    const auditSnap = await db.collection("audit_logs")
-      .where("ts", "<", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
-      .limit(100).get().catch(() => ({ docs: [] }));
-    if (auditSnap.docs.length > 0) {
-      const b = db.batch(); auditSnap.docs.forEach((d) => b.delete(d.ref)); await b.commit();
-    }
-  }
-);
 
 // ══════════════════════════════════════════════════════════════════
 // HTTP — WEBHOOK MACRODROID (réception SMS Waafi)
+// Parse le SMS, stocke dans waafi_notifications, alerte admin.
+// Cas rare : si un ordre "En attente" avec ce TID existe déjà,
+// confirme directement (ordre soumis avant l'arrivée du SMS).
 // ══════════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
-  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1195,12 +923,71 @@ exports.smsWebhook = onRequest(
 
     const docRef = await db.collection("waafi_notifications").add({
       notification: notif, transferId, montant, numClient,
-      secret: expectedSecret, source: "macrodroid", status: "nouveau",
+      secret: expectedSecret, source: "macrodroid",
+      processedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
     });
 
-    // autoConfirmation va parser et stocker status="prêt" immédiatement
     res.json({ success: true, id: docRef.id });
+
+    // Alerte admin — exécuté après la réponse
+    const token   = TELEGRAM_TOKEN.value();
+    const adminId = TELEGRAM_ADMIN_ID.value();
+
+    if (!transferId && !montant) return; // SMS non parsable
+
+    await sendTelegram(token, adminId,
+      `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
+      `Transfer-ID: <code>${transferId || "?"}</code>\n` +
+      `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
+      `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
+      `<i>✅ En attente de l'ordre client — confirmation automatique dès soumission.</i>`
+    );
+
+    // Cas rare : ordre déjà soumis avant que le SMS arrive
+    if (!transferId) return;
+
+    const ordreSnap = await db.collection("orders")
+      .where("waafitranfertID", "==", transferId)
+      .where("status", "==", "En attente")
+      .limit(1).get();
+
+    if (ordreSnap.empty) return;
+
+    const dejaTraite = await db.collection("ordre_traite")
+      .where("transferId", "==", transferId).limit(1).get();
+    if (!dejaTraite.empty) return;
+
+    const ordreDoc    = ordreSnap.docs[0];
+    const waafiSnap   = await docRef.get();
+    const webhookBase = MACRO_WEBHOOK_URL.value() || "";
+    const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), waafiSnap.data());
+    const ordreRef2   = ordreDoc.data().orderId || ordreDoc.id;
+
+    if (decision === "confirmer") {
+      await confirmerDepot(ordreDoc, waafiSnap, webhookBase, token, adminId);
+    } else if (decision === "correction") {
+      await ordreDoc.ref.update({
+        status: "Correction",
+        correctionMsg: `Correspondance partielle (${score}/3) — corrigez et resoumettez.\n${mismatches.join(" | ")}`,
+        correctionDetails: mismatches, correctionScore: score,
+        correctionAt: FieldValue.serverTimestamp(),
+      });
+      await sendTelegram(token, adminId,
+        `✏️ <b>Correction requise (${score}/3)</b>\n\nOrdre <code>#${ordreRef2}</code>\n` +
+        mismatches.map((m) => `• ${m}`).join("\n") + `\n\n<i>Le client doit corriger et resoumettre.</i>`
+      );
+    } else {
+      await ordreDoc.ref.update({
+        status: "Rejeté",
+        flagRaison: `Données incorrectes (${score}/3) — ${mismatches.join(", ")}`,
+        flaggedAt: FieldValue.serverTimestamp(),
+      });
+      await sendTelegram(token, adminId,
+        `❌ <b>Correspondance insuffisante (${score}/3)</b>\nOrdre <code>#${ordreRef2}</code>\n` +
+        mismatches.map((m) => `• ${m}`).join("\n")
+      );
+    }
   }
 );
 
@@ -1220,23 +1007,11 @@ exports.healthCheck = onRequest(
       firestoreMs = `${Date.now() - t0}ms`;
     } catch (e) { firestoreMs = `erreur: ${e.message}`; statut = "degraded"; }
 
-    let cb = "non testé";
-    try {
-      const cbSnap = await db.collection("circuit_breakers").doc("macrodroid").get();
-      cb = cbSnap.exists ? cbSnap.data().etat : "closed (jamais utilisé)";
-    } catch { /* ignore */ }
-
-    let webhooksAttente = 0;
-    try {
-      const wSnap = await db.collection("failed_webhooks").where("statut", "==", "en_attente").limit(1).get();
-      webhooksAttente = wSnap.size;
-    } catch { /* ignore */ }
-
     res.json({
       statut, timestamp: new Date().toISOString(), region: REGION,
-      firestore: firestoreMs, version: "5.1",
-      flow: "waafi_notification_first → ordre_second",
-      circuit_breaker: cb, webhooks_en_attente: webhooksAttente,
+      firestore: firestoreMs, version: "6.0",
+      flow: "sms_webhook → waafi_notifications → onNouvelOrdre → confirmerDepot",
+      exports: 7,
     });
   }
 );
@@ -1381,7 +1156,6 @@ exports.adminBot = onRequest(
             `🎉 <b>MacroDroid déclenché !</b>\nID 1xBet <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF crédité.`);
         } catch (e) {
           await doc.ref.update({ webhookStatus: "echec", webhookError: e.message });
-          await sauvegarderWebhookEchoue(num, id1xbet, montantVal);
           logAudit("macrodroid_admin_echec", { num, adminId, erreur: e.message });
           await sendTelegram(token, adminId,
             `❌ MacroDroid échoué : <code>${e.message}</code>\nTapez <code>recharge ${num}</code> pour réessayer.`);
