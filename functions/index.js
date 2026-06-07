@@ -42,11 +42,12 @@ const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
 // SECTION 1 — STATE MACHINE
 // ══════════════════════════════════════════════════════════════════
 const TRANSITIONS_VALIDES = {
-  "En attente":  ["Confirmé", "Rejeté", "Argent Reçu", "Correction"],
+  "En attente":  ["Confirmé", "Rejeté", "Argent Reçu", "Correction", "Annulé"],
   "Argent Reçu": ["Confirmé", "Rejeté"],
   "Correction":  ["Confirmé", "Rejeté", "En attente"],
   "Confirmé":    [],
   "Rejeté":      [],
+  "Annulé":      [],
 };
 
 function transitionValide(de, vers) {
@@ -525,7 +526,8 @@ function traiterAdminBot(text, orders, notifs) {
     "👤 <code>client 77123456</code>  ⚠️ <code>alerte</code>\n" +
     "📭 <code>nonmatche</code>  🔄 <code>circuit</code>\n" +
     "✅ <code>confirmer 2606061</code>\n" +
-    "❌ <code>rejeter 2606061 raison</code>"
+    "❌ <code>rejeter 2606061 raison</code>\n" +
+    "🔗 <code>webhook support</code>"
   );
 }
 
@@ -1309,7 +1311,7 @@ exports.supportClient = onRequest(
 // HTTP — ADMIN BOT
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
-  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID], timeoutSeconds: 60 },
+  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
     try {
@@ -1436,6 +1438,25 @@ exports.adminBot = onRequest(
         await db.collection("circuit_breakers").doc("macrodroid").set({ etat: "closed", echecs: 0, resetAt: Date.now() });
         logAudit("circuit_reset", { adminId });
         await sendTelegram(token, adminId, "✅ Circuit breaker réinitialisé — <b>CLOSED</b>");
+        return;
+      }
+
+      // webhook support — configure le webhook Telegram du bot support
+      if (t === "webhook support" || t === "/webhook_support") {
+        const sToken = SUPPORT_BOT_TOKEN.value();
+        if (!sToken) { await sendTelegram(token, adminId, "❌ Secret SUPPORT_BOT_TOKEN non configuré."); return; }
+        const funcUrl = "https://europe-west1-kaffi-pay.cloudfunctions.net/supportClient";
+        const r = await fetch(`https://api.telegram.org/bot${sToken}/setWebhook`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: funcUrl, allowed_updates: ["message"] }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const rj = await r.json().catch(() => ({}));
+        if (rj.ok) {
+          await sendTelegram(token, adminId, `✅ Webhook support bot configuré :\n<code>${funcUrl}</code>`);
+        } else {
+          await sendTelegram(token, adminId, `❌ Erreur webhook : ${rj.description || r.status}`);
+        }
         return;
       }
 
