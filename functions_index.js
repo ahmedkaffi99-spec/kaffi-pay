@@ -1,11 +1,9 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════╗
  * ║           KAFFI PAY — CLOUD FUNCTIONS v3.0                      ║
- * ║  • Détection fraude & doublons (Gemini AI)                      ║
+ * ║  • Détection fraude & doublons                                  ║
  * ║  • Confirmation automatique SMS Waafi                           ║
  * ║  • Notifications Telegram admin                                 ║
- * ║  • Analyse admin Gemini (résumé, prédictions)                   ║
- * ║  • Vérification preuves paiement (Gemini Vision)                ║
  * ║  • Health check endpoint                                        ║
  * ╚══════════════════════════════════════════════════════════════════╝
  */
@@ -15,25 +13,18 @@ const { onCall, onRequest }                    = require("firebase-functions/v2/
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
-const { GoogleGenerativeAI }                   = require("@google/generative-ai");
-
 initializeApp();
 const db = getFirestore();
 
 const REGION = "europe-west1";
 
 // ── Secrets ────────────────────────────────────────────────────────
-const GEMINI_KEY        = defineSecret("GEMINI_KEY");
 const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-function getGemini(key) {
-  return new GoogleGenerativeAI(key).getGenerativeModel({ model: "gemini-2.0-flash" });
-}
 
 async function sendTelegram(token, chatId, text) {
   if (!token || !chatId) return;
@@ -93,7 +84,7 @@ exports.onNouvelOrdre = onDocumentCreated(
   {
     document:  "orders/{docId}",
     region:    REGION,
-    secrets:   [GEMINI_KEY, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
+    secrets:   [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -128,61 +119,7 @@ exports.onNouvelOrdre = onDocumentCreated(
       }
     }
 
-    // ── 1b. Analyse fraude Gemini ──────────────────────────────────
-    let fraud = { score_fraude: 0, risque: "faible", raisons: [], action: "valider" };
-    try {
-      const model      = getGemini(GEMINI_KEY.value());
-      const aiResp     = await model.generateContent(`
-Tu es un système de détection de fraude pour Kaffi Pay (Djibouti, échange 1xBet↔Waafi).
-Réponds UNIQUEMENT en JSON valide, sans texte autour.
-
-{
-  "score_fraude": 0-100,
-  "risque": "faible"|"moyen"|"élevé",
-  "raisons": ["raison1"],
-  "action": "valider"|"vérifier"|"rejeter"
-}
-
-Transaction :
-- Type: ${tx.type}
-- Montant: ${tx.montant} DJF
-- Transfer ID: ${transferId}
-- N° Expéditeur: ${tx.numeroPayment || "?"}
-- Heure: ${new Date().getHours()}h
-
-Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numéro ne commence pas par 77 = suspect.
-`);
-      fraud = JSON.parse(aiResp.response.text().replace(/```json|```/g, "").trim());
-    } catch (e) {
-      console.error("Gemini fraud error:", e.message);
-    }
-
-    await db.collection("orders").doc(docId).update({
-      ia_score_fraude: fraud.score_fraude,
-      ia_risque:       fraud.risque,
-      ia_raisons:      fraud.raisons,
-      ia_action:       fraud.action,
-      ia_analysedAt:   FieldValue.serverTimestamp(),
-    });
-
-    // ── 1c. Rejet auto si fraude élevée ───────────────────────────
-    if (fraud.action === "rejeter" || fraud.risque === "élevé") {
-      await db.collection("orders").doc(docId).update({
-        status:     "Rejeté",
-        flagRaison: "IA Fraude: " + fraud.raisons.join(", "),
-      });
-      await sendTelegram(
-        TELEGRAM_TOKEN.value(),
-        TELEGRAM_ADMIN_ID.value(),
-        `🚨 <b>Ordre rejeté par IA</b>\n` +
-        `Réf: <code>#${ref}</code>\n` +
-        `Score: ${fraud.score_fraude}/100 — ${fraud.risque.toUpperCase()}\n` +
-        `Raisons: ${fraud.raisons.join(", ")}`
-      );
-      return;
-    }
-
-    // ── 1d. Notification Telegram admin ───────────────────────────
+    // ── 1b. Notification Telegram admin ───────────────────────────
     const details = isDepot
       ? `ID 1xBet: <code>${tx.userId1xBet || tx.id1x || "?"}</code>\n` +
         `Transfer ID: <code>${transferId || "?"}</code>\n` +
@@ -196,8 +133,7 @@ Règles : montant > 50000 = suspect, Transfer ID < 6 chiffres = invalide, numér
       `${isDepot ? "📥" : "📤"} <b>Nouvel ordre ${tx.type}</b>\n\n` +
       `Réf: <b>#${ref}</b>\n` +
       `Montant: <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
-      `${details}\n\n` +
-      `Risque IA: <i>${fraud.risque} (${fraud.score_fraude}/100)</i>`
+      `${details}`
     );
   }
 );
@@ -252,116 +188,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 3. ANALYSE IA ADMIN (résumé + prédictions)
-// ══════════════════════════════════════════════════════════════════
-exports.geminiAnalyseAdmin = onCall(
-  { region: REGION, secrets: [GEMINI_KEY] },
-  async () => {
-    const snap = await db.collection("orders")
-      .orderBy("ts", "desc")
-      .limit(100)
-      .get();
-
-    const txs       = snap.docs.map((d) => d.data());
-    const confirmes = txs.filter((t) => t.status === "Confirmé");
-    const attente   = txs.filter((t) => t.status === "En attente");
-    const rejetes   = txs.filter((t) => t.status === "Rejeté");
-    const volume    = confirmes.reduce((s, t) => s + Number(t.montant || 0), 0);
-    const model     = getGemini(GEMINI_KEY.value());
-
-    const aiResp = await model.generateContent(`
-Tu es l'assistant IA de Kaffi Pay (Djibouti).
-Réponds UNIQUEMENT en JSON valide.
-
-Données (100 dernières transactions) :
-- Confirmées: ${confirmes.length} — Volume: ${volume.toLocaleString()} DJF
-- En attente: ${attente.length}
-- Rejetées: ${rejetes.length}
-- Taux confirmation: ${txs.length ? Math.round((confirmes.length / txs.length) * 100) : 0}%
-- Montant moyen: ${confirmes.length ? Math.round(volume / confirmes.length) : 0} DJF
-
-5 dernières:
-${txs.slice(0, 5).map((t) => `• ${t.type} ${t.montant} DJF — ${t.status} — ${t.date}`).join("\n")}
-
-{
-  "resume": "résumé 2 phrases",
-  "alerte": "problème urgent ou null",
-  "conseil": "1 conseil",
-  "prediction_demain": nombre_djf,
-  "heure_pic": "ex: 14h-16h",
-  "score_sante": 0-100
-}
-`);
-
-    const txt = aiResp.response.text().replace(/```json|```/g, "").trim();
-    try {
-      return {
-        success: true,
-        data:    JSON.parse(txt),
-        stats:   { confirmes: confirmes.length, attente: attente.length, rejetes: rejetes.length, volume },
-      };
-    } catch {
-      return { success: false, error: "Erreur parsing IA" };
-    }
-  }
-);
-
-// ══════════════════════════════════════════════════════════════════
-// 4. VÉRIFICATION PREUVE DE PAIEMENT (Gemini Vision)
-// ══════════════════════════════════════════════════════════════════
-exports.geminiVerifPreuve = onCall(
-  { region: REGION, secrets: [GEMINI_KEY] },
-  async (request) => {
-    const { imageBase64, mimeType, ordreRef, montantAttendu, transferIdAttendu } = request.data;
-    if (!imageBase64) throw new Error("Image requise");
-
-    const model  = getGemini(GEMINI_KEY.value());
-    const result = await model.generateContent([
-      `Tu vérifies une preuve de paiement Waafi pour Kaffi Pay (Djibouti).
-Réponds UNIQUEMENT en JSON valide.
-
-Montant attendu: ${montantAttendu} DJF
-Transfer ID attendu: ${transferIdAttendu}
-
-{
-  "est_valide": true|false,
-  "transfer_id_detecte": "ID ou null",
-  "montant_detecte": nombre ou null,
-  "expediteur_detecte": "numéro ou null",
-  "correspondance_montant": true|false,
-  "correspondance_transfer_id": true|false,
-  "confiance": 0-100,
-  "raison": "explication courte"
-}`,
-      { inlineData: { data: imageBase64, mimeType: mimeType || "image/jpeg" } },
-    ]);
-
-    const txt = result.response.text().replace(/```json|```/g, "").trim();
-    try {
-      const parsed = JSON.parse(txt);
-      if (ordreRef) {
-        const snap = await db.collection("orders")
-          .where("orderId", "==", ordreRef)
-          .limit(1)
-          .get();
-        if (!snap.empty) {
-          await snap.docs[0].ref.update({
-            ia_preuve_valide:    parsed.est_valide,
-            ia_preuve_confiance: parsed.confiance,
-            ia_preuve_raison:    parsed.raison,
-            ia_preuve_checkedAt: FieldValue.serverTimestamp(),
-          });
-        }
-      }
-      return { success: true, data: parsed };
-    } catch {
-      return { success: false, error: "Impossible d'analyser l'image" };
-    }
-  }
-);
-
-// ══════════════════════════════════════════════════════════════════
-// 5. AUTO-CONFIRMATION — SMS Waafi → Confirme l'ordre + Webhook
+// 3. AUTO-CONFIRMATION — SMS Waafi → Confirme l'ordre + Webhook
 //
 //  Flux :
 //    MacroDroid détecte SMS Waafi
@@ -580,7 +407,7 @@ exports.autoConfirmation = onDocumentCreated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// 6. HEALTH CHECK — Vérifier que le backend fonctionne
+// 4. HEALTH CHECK — Vérifier que le backend fonctionne
 // ══════════════════════════════════════════════════════════════════
 exports.healthCheck = onRequest(
   { region: REGION },

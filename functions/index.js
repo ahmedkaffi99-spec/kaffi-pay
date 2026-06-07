@@ -16,7 +16,6 @@
  * ║              onWebhookEchoue                                         ║
  * ║  [Scheduled] rapportJournalier · ordresBloqués · nettoyageCompteurs  ║
  * ║  [HTTP]      smsWebhook · healthCheck · supportClient · adminBot     ║
- * ║  [Callable]  analyseAdmin                                            ║
  * ╚══════════════════════════════════════════════════════════════════════╝
  */
 
@@ -799,9 +798,9 @@ exports.onNouvelOrdre = onDocumentCreated(
     const tidRetrait = (tx.withdrawalCode || "").trim();
     const fraud = analyserFraude(tx, tidRetrait);
     await db.collection("orders").doc(docId).update({
-      ia_score_fraude: fraud.score_fraude, ia_risque: fraud.risque,
-      ia_raisons: fraud.raisons, ia_action: fraud.action,
-      ia_analysedAt: FieldValue.serverTimestamp(),
+      score_fraude: fraud.score_fraude, risque_fraude: fraud.risque,
+      raisons_fraude: fraud.raisons, action_fraude: fraud.action,
+      fraudeAnalysedAt: FieldValue.serverTimestamp(),
     });
 
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
