@@ -453,7 +453,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="field">
         <label>🔑 Waafi Transfer ID</label>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="tel" id="depot-hash" placeholder="Ex: 73471675" inputmode="numeric" maxlength="10" style="flex:1;">
+          <input type="tel" id="depot-hash" placeholder="Ex: 73471675" inputmode="numeric" maxlength="15" style="flex:1;">
           <button onclick="pasteField('depot-hash')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
         </div>
       </div>
@@ -1170,18 +1170,17 @@ async function genererOrderId(){
 
 async function submitDepot(){
   const m=document.getElementById('depot-montant').value;
-  const id=document.getElementById('depot-id').value;
-  const h=document.getElementById('depot-hash').value;
-  const telDepot=document.getElementById('depot-numero-waafi')? document.getElementById('depot-numero-waafi').value : '';
+  const id=document.getElementById('depot-id').value.trim();
+  const h=document.getElementById('depot-hash').value.trim();
+  const telDepot=document.getElementById('depot-numero-waafi')? document.getElementById('depot-numero-waafi').value.trim() : '';
   if(!m||Number(m)<50){showToast('⚠️ Minimum 50 DJF','error');return;}
   if(!id){showToast('⚠️ ID 1xBet requis','error');return;}
-  if(!h||!/^\d{8,10}$/.test(h)){showToast('⚠️ Waafi Transfer ID invalide (8-10 chiffres)','error');return;}
+  if(!h||!/^\d{6,15}$/.test(h)){showToast('⚠️ Waafi Transfer ID invalide','error');return;}
   setLoading('depot',true);
-  const orderId=await genererOrderId();
-  setLoading('depot',false);
-  const now=new Date();
-  const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
-  {
+  try{
+    const orderId=await genererOrderId();
+    const now=new Date();
+    const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
       orderId:orderId,
       userId1xBet:id,
@@ -1194,11 +1193,13 @@ async function submitDepot(){
       type:'Dépôt',
       status:'En attente',
       createdAt:now,
+      ts:now.getTime(),
       ref:orderId
     };
     document.getElementById('depot-montant').value='';
     document.getElementById('depot-id').value='';
     document.getElementById('depot-hash').value='';
+    if(document.getElementById('depot-numero-waafi')) document.getElementById('depot-numero-waafi').value='';
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx);
     if(!window.db){
@@ -1206,52 +1207,61 @@ async function submitDepot(){
       var waitFb = setInterval(function(){
         if(window.db){ clearInterval(waitFb); saveTxFirebaseWithTimer(tx); }
       }, 500);
-      setTimeout(function(){ clearInterval(waitFb); }, 15000);
+      setTimeout(function(){ clearInterval(waitFb); showToast('❌ Firebase indisponible','error'); }, 15000);
     } else {
       saveTxFirebaseWithTimer(tx);
     }
+  } catch(e){
+    showToast('❌ Erreur : '+e.message,'error');
+  } finally {
+    setLoading('depot',false);
   }
 }
 
 async function submitRetrait(){
-  const c=document.getElementById('retrait-code').value;
-  const t=document.getElementById('retrait-tel').value;
+  const c=document.getElementById('retrait-code').value.trim();
+  const t=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
-  if(!c||c.length!==4){showToast('⚠️ Code retrait : 4 caractères requis','error');return;}
+  if(!c||c.length<2){showToast('⚠️ Code retrait requis','error');return;}
   if(!t||t.length!==8||!t.startsWith('77')){showToast('⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)','error');return;}
   if(!m||Number(m)<250){showToast('⚠️ Minimum 250 DJF','error');return;}
   setLoading('retrait',true);
-  const orderId=await genererOrderId();
-  const now=new Date();
-  const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
-  const tx={
-    orderId:orderId,
-    withdrawalCode:c,
-    waafiNumber:t,
-    montant:Number(m),
-    amount:Number(m).toLocaleString()+' DJF',
-    methodeRecepteur:'Waafi',
-    date:dateStr,
-    type:'Retrait',
-    status:'En attente',
-    createdAt:now,
-    ref:orderId
-  };
-  setLoading('retrait',false);
-  document.getElementById('retrait-code').value='';
-  document.getElementById('retrait-tel').value='';
-  document.getElementById('retrait-montant').value='';
-  currentSuiviTx=tx; suiviRef=orderId;
-  showSuivi(orderId,tx);
-  // Attendre Firebase si pas encore prêt
-  if(!window.db){
-    showToast('⏳ Connexion Firebase en cours...','warning');
-    var waitFb2 = setInterval(function(){
-      if(window.db){ clearInterval(waitFb2); saveTxFirebase(tx); }
-    }, 500);
-    setTimeout(function(){ clearInterval(waitFb2); }, 15000);
-  } else {
-    saveTxFirebase(tx);
+  try{
+    const orderId=await genererOrderId();
+    const now=new Date();
+    const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+    const tx={
+      orderId:orderId,
+      withdrawalCode:c,
+      waafiNumber:t,
+      montant:Number(m),
+      amount:Number(m).toLocaleString()+' DJF',
+      methodeRecepteur:'Waafi',
+      date:dateStr,
+      type:'Retrait',
+      status:'En attente',
+      createdAt:now,
+      ts:now.getTime(),
+      ref:orderId
+    };
+    document.getElementById('retrait-code').value='';
+    document.getElementById('retrait-tel').value='';
+    document.getElementById('retrait-montant').value='';
+    currentSuiviTx=tx; suiviRef=orderId;
+    showSuivi(orderId,tx);
+    if(!window.db){
+      showToast('⏳ Connexion Firebase en cours...','warning');
+      var waitFb2 = setInterval(function(){
+        if(window.db){ clearInterval(waitFb2); saveTxFirebase(tx); }
+      }, 500);
+      setTimeout(function(){ clearInterval(waitFb2); showToast('❌ Firebase indisponible','error'); }, 15000);
+    } else {
+      saveTxFirebase(tx);
+    }
+  } catch(e){
+    showToast('❌ Erreur : '+e.message,'error');
+  } finally {
+    setLoading('retrait',false);
   }
 }
 
