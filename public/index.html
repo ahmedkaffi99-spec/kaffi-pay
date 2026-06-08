@@ -430,9 +430,9 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="payment-box-title">📲 Envoyez d'abord votre paiement à :</div>
         <div class="payment-row">
           <div class="pay-label">📱 Numéro Waafi</div>
-          <div class="pay-val">
+          <div class="pay-val" style="display:flex;align-items:center;gap:8px;">
             <span class="pay-num">77275572</span>
-
+            <button onclick="copyPayNum('77275572',this)" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:5px 10px;font-size:0.72rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s;">📋 Copier</button>
           </div>
         </div>
         <div class="payment-row">
@@ -1905,6 +1905,23 @@ function renderSuivi(){
 
   document.getElementById('suivi-wa-btn').href =
     'https://t.me/kaffipay_support_bot?start=ordre_'+ encodeURIComponent(tx.orderId||tx.ref||'');
+}
+
+function copyPayNum(num, btn){
+  var orig = btn.textContent;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(num).then(function(){
+      btn.textContent='✅ Copié !';
+      setTimeout(function(){ btn.textContent=orig; }, 2000);
+    }).catch(function(){ fallbackCopy(num, btn, orig); });
+  } else { fallbackCopy(num, btn, orig); }
+}
+function fallbackCopy(num, btn, orig){
+  var ta = document.createElement('textarea');
+  ta.value = num; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); btn.textContent='✅ Copié !'; setTimeout(function(){ btn.textContent=orig; }, 2000); } catch(e){}
+  document.body.removeChild(ta);
 }
 
 function previewProof(input){
