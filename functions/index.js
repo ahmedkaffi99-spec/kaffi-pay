@@ -1,6 +1,6 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════════╗
- * ║  KAFFI PAY — CLOUD FUNCTIONS v6.0                                    ║
+ * ║  KAFFI PAY — CLOUD FUNCTIONS v6.1                                    ║
  * ║                                                                      ║
  * ║  FLOW :                                                              ║
  * ║  1. User paie Waafi → SMS → smsWebhook → waafi_notifications         ║
