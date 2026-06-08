@@ -464,6 +464,17 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">8 chiffres · commence par 77</div>
       </div>
 
+      <div class="field">
+        <label>💬 Votre numéro WhatsApp</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div style="position:relative;flex:1;">
+            <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
+            <input type="tel" id="depot-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+          </div>
+        </div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter si besoin · optionnel</div>
+      </div>
+
       <button class="submit-btn" onclick="submitDepot()" id="depot-btn">
         <span id="depot-btn-text">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="depot-spinner"></div>
@@ -1182,6 +1193,7 @@ async function submitDepot(){
   const id=document.getElementById('depot-id').value.trim();
   const h=document.getElementById('depot-hash').value.trim();
   const telDepot=document.getElementById('depot-numero-waafi')? document.getElementById('depot-numero-waafi').value.trim() : '';
+  const whatsapp=document.getElementById('depot-whatsapp')? document.getElementById('depot-whatsapp').value.trim() : '';
   if(!m||Number(m)<50){showToast('⚠️ Minimum 50 DJF','error');return;}
   if(!id){showToast('⚠️ ID 1xBet requis','error');return;}
   if(!h||!/^\d{6,15}$/.test(h)){showToast('⚠️ Waafi Transfer ID invalide','error');return;}
@@ -1199,6 +1211,7 @@ async function submitDepot(){
       date:dateStr,
       methodePayment:'Waafi',
       numeroPayment:telDepot||'—',
+      whatsapp: whatsapp ? '+253'+whatsapp : '',
       type:'Dépôt',
       status:'En attente',
       createdAt:now,
@@ -1209,6 +1222,7 @@ async function submitDepot(){
     document.getElementById('depot-id').value='';
     document.getElementById('depot-hash').value='';
     if(document.getElementById('depot-numero-waafi')) document.getElementById('depot-numero-waafi').value='';
+    if(document.getElementById('depot-whatsapp')) document.getElementById('depot-whatsapp').value='';
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx);
     if(!window.db){
@@ -1477,6 +1491,7 @@ function openOrderDetail(ref){
     {l:'ID 1xBet', v:tx.userId1xBet||tx.id1x||'—', c:tx.userId1xBet||tx.id1x||''},
     {l:'Transfer ID', v:tx.waafitranfertID||tx.hash||'—', c:tx.waafitranfertID||tx.hash||''},
     {l:'N° Expéditeur', v:tx.numeroPayment||'—', c:tx.numeroPayment||''},
+    {l:'WhatsApp', v:tx.whatsapp||'—', c:tx.whatsapp||''},
     {l:'Statut', v:tx.status||'En attente', c:''}
   ]:[
     {l:'N° Commande', v:tx.orderId||tx.ref||'—', c:tx.orderId||tx.ref||''},

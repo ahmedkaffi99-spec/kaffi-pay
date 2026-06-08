@@ -290,6 +290,7 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
     `✅ <b>Dépôt confirmé automatiquement</b>${corrections.length ? " ✏️" : ""}\n\n` +
     `Ordre: <b>#${ordreId}</b> | <b>${Number(montantNotif).toLocaleString()} DJF</b>\n` +
     `Transfer-ID: <code>${notif.transferId || "?"}</code> | N°: <code>${numReel}</code>` +
+    (ordre.whatsapp ? `\nWhatsApp: <code>${ordre.whatsapp}</code>` : "") +
     (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "")
   );
 
