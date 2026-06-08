@@ -465,13 +465,16 @@ async function sendWhatsApp(phone, message) {
     console.warn("WhatsApp skipped: missing instanceId, token, or phone", { instanceId: !!instanceId, token: !!token, phone: !!phone });
     return { ok: false, reason: "missing_config" };
   }
+  // Normalise l'instance ID : "#179983" ou "179983" → "instance179983"
+  let iid = instanceId.replace(/^#/, "").trim();
+  if (/^\d+$/.test(iid)) iid = "instance" + iid;
   const to = phone.startsWith("+") ? phone : "+" + phone;
   try {
-    const resp = await fetch(`https://api.ultramsg.com/${instanceId}/messages/chat`, {
+    const resp = await fetch(`https://api.ultramsg.com/${iid}/messages/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, to, body: message }),
-      signal: AbortSignal.timeout(10000),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token, to, body: message }).toString(),
+      signal: AbortSignal.timeout(15000),
     });
     const body = await resp.text();
     if (!resp.ok) {
