@@ -1458,7 +1458,7 @@ exports.supportClient = onRequest(
 // HTTP — ADMIN BOT
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
-  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_WEBHOOK_URL, MACRO_SECRET], timeoutSeconds: 60 },
+  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_WEBHOOK_URL, MACRO_SECRET, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
     try {
