@@ -771,7 +771,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     </div>
   </div>
   <div style="display:flex;gap:8px;flex-shrink:0;">
-    <button onclick="dismissInstall()" style="background:transparent;border:1px solid rgba(255,255,255,0.12);border-radius:999px;padding:7px 13px;font-size:0.72rem;color:rgba(255,255,255,0.45);cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;">Plus tard</button>
+    <button onclick="dismissInstall()" style="background:transparent;border:none;padding:7px 4px;font-size:0.72rem;color:rgba(255,255,255,0.3);cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;">✕</button>
     <button onclick="triggerInstall()" style="background:linear-gradient(135deg,#f5d020,#f5a623);border:none;border-radius:999px;padding:7px 15px;font-size:0.75rem;font-weight:700;color:#07101e;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;">⚡ Installer</button>
   </div>
 </div>
@@ -2698,33 +2698,61 @@ try {
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
 } catch(e) {}
 
-// ── PWA Install prompt ──
+// ── PWA Install — bouton toujours visible sauf si déjà installé ──
 var _pwaPrompt = null;
+var _pwaStandalone = window.matchMedia('(display-mode: standalone)').matches
+                  || window.navigator.standalone === true;
+
+function _pwaCheckShow(){
+  if(_pwaStandalone) return;
+  var bar = document.getElementById('pwa-install-bar');
+  if(bar) bar.style.display = 'flex';
+}
+
+// Affiche dès le chargement si pas encore installé
+window.addEventListener('load', function(){ _pwaCheckShow(); });
+
+// Stocke le prompt natif quand disponible (Android Chrome)
 window.addEventListener('beforeinstallprompt', function(e){
   e.preventDefault();
   _pwaPrompt = e;
-  try{ if(sessionStorage.getItem('pwa_dismissed')) return; }catch(ex){}
-  var bar = document.getElementById('pwa-install-bar');
-  if(bar){ bar.style.display = 'flex'; }
+  _pwaCheckShow();
 });
+
+// Cache quand l'app vient d'être installée
 window.addEventListener('appinstalled', function(){
+  _pwaStandalone = true;
   var bar = document.getElementById('pwa-install-bar');
   if(bar) bar.style.display = 'none';
   _pwaPrompt = null;
 });
+
 function triggerInstall(){
-  if(!_pwaPrompt) return;
-  var bar = document.getElementById('pwa-install-bar');
-  if(bar) bar.style.display = 'none';
-  _pwaPrompt.prompt();
-  _pwaPrompt.userChoice.then(function(r){
-    _pwaPrompt = null;
-  });
+  if(_pwaPrompt){
+    // Android Chrome : prompt natif
+    _pwaPrompt.prompt();
+    _pwaPrompt.userChoice.then(function(r){
+      if(r.outcome === 'accepted'){
+        var bar = document.getElementById('pwa-install-bar');
+        if(bar) bar.style.display = 'none';
+      }
+      _pwaPrompt = null;
+    });
+  } else {
+    // iOS ou navigateur sans prompt : instructions manuelles
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    if(isIOS){
+      showToast('📱 Appuyez sur Partager ↑ puis "Sur l\'écran d\'accueil"','info');
+    } else {
+      showToast('📱 Menu ⋮ → "Ajouter à l\'écran d\'accueil"','info');
+    }
+  }
 }
+
 function dismissInstall(){
+  // Masque pour la session uniquement — réapparaît au prochain chargement
   var bar = document.getElementById('pwa-install-bar');
   if(bar) bar.style.display = 'none';
-  try{ sessionStorage.setItem('pwa_dismissed','1'); }catch(e){}
 }
 
 // ── Service Worker PWA ──
