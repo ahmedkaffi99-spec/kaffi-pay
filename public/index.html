@@ -486,7 +486,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
             <input type="tel" id="depot-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
           </div>
         </div>
-        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter si besoin · optionnel</div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
       </div>
 
       <button class="submit-btn" onclick="submitDepot()" id="depot-btn">
@@ -1210,6 +1210,7 @@ async function submitDepot(){
   if(!m||Number(m)<50){showToast('⚠️ Minimum 50 DJF','error');return;}
   if(!id){showToast('⚠️ ID 1xBet requis','error');return;}
   if(!proofFile){showToast('⚠️ Preuve de paiement requise','error');return;}
+  if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
   setLoading('depot',true);
   try{
     const orderId=await genererOrderId();
