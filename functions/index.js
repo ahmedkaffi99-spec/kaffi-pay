@@ -425,7 +425,8 @@ function traiterAdminBot(text, orders, notifs) {
     "❌ <code>rejetés</code> — ordres rejetés\n" +
     "👤 <code>client 77123456</code> — ordres d'un numéro\n" +
     "📋 <code>macro jobs</code> — file d'attente MacroDroid\n" +
-    "🔄 <code>test macro</code> — tester le webhook\n\n" +
+    "🔄 <code>test macro</code> — tester le webhook\n" +
+    "📱 <code>test whatsapp +25377XXXXXX</code> — tester l'envoi WhatsApp\n\n" +
     "<i>Le système confirme et recharge automatiquement.</i>"
   );
 }
@@ -460,7 +461,10 @@ async function sendTelegramToBot(token, chatId, text) {
 async function sendWhatsApp(phone, message) {
   const instanceId = ULTRAMSG_INSTANCE.value();
   const token      = ULTRAMSG_TOKEN.value();
-  if (!instanceId || !token || !phone) return;
+  if (!instanceId || !token || !phone) {
+    console.warn("WhatsApp skipped: missing instanceId, token, or phone", { instanceId: !!instanceId, token: !!token, phone: !!phone });
+    return { ok: false, reason: "missing_config" };
+  }
   const to = phone.startsWith("+") ? phone : "+" + phone;
   try {
     const resp = await fetch(`https://api.ultramsg.com/${instanceId}/messages/chat`, {
@@ -469,9 +473,15 @@ async function sendWhatsApp(phone, message) {
       body: JSON.stringify({ token, to, body: message }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!resp.ok) console.warn("UltraMsg error:", resp.status, await resp.text());
+    const body = await resp.text();
+    if (!resp.ok) {
+      console.warn("UltraMsg error:", resp.status, body);
+      return { ok: false, status: resp.status, body };
+    }
+    return { ok: true, body };
   } catch (e) {
     console.warn("WhatsApp send failed:", e.message);
+    return { ok: false, reason: e.message };
   }
 }
 
@@ -1567,6 +1577,31 @@ exports.adminBot = onRequest(
           await sendTelegram(token, adminId,
             `❌ MacroDroid ne répond pas :\n<code>${e.message}</code>\n\n` +
             "Vérifiez que :\n• MacroDroid est ouvert sur le téléphone\n• Le webhook est bien configuré dans MacroDroid\n• L'URL dans Firebase Secrets est correcte");
+        }
+        return;
+      }
+
+      // test whatsapp — vérifie que Ultramsg envoie bien
+      if (t.startsWith("test whatsapp")) {
+        const numMatch = text.match(/(\+?\d{8,15})/);
+        if (!numMatch) { await sendTelegram(token, adminId, "Usage: <code>test whatsapp +25377XXXXXX</code>"); return; }
+        const instanceId = ULTRAMSG_INSTANCE.value();
+        const waToken    = ULTRAMSG_TOKEN.value();
+        if (!instanceId || !waToken) {
+          await sendTelegram(token, adminId,
+            "❌ Secrets Ultramsg manquants :\n" +
+            `• ULTRAMSG_INSTANCE_ID : ${instanceId ? "✅" : "❌ non défini"}\n` +
+            `• ULTRAMSG_TOKEN : ${waToken ? "✅" : "❌ non défini"}`);
+          return;
+        }
+        await sendTelegram(token, adminId, `🔄 Test WhatsApp vers <code>${numMatch[1]}</code>...\nInstance: <code>${instanceId}</code>`);
+        const result = await sendWhatsApp(numMatch[1], "✅ Test Kaffi-Pay — WhatsApp fonctionne !");
+        if (result && result.ok) {
+          await sendTelegram(token, adminId, `✅ Message WhatsApp envoyé !\nRéponse: <code>${result.body}</code>`);
+        } else {
+          await sendTelegram(token, adminId,
+            `❌ Échec envoi WhatsApp\nRaison: <code>${result?.reason || result?.body || "inconnu"}</code>\n\n` +
+            "Vérifiez :\n• Instance ID et Token Ultramsg corrects\n• WhatsApp connecté dans Ultramsg (QR scanné)");
         }
         return;
       }
