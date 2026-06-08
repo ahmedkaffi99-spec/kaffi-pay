@@ -1584,27 +1584,51 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // test whatsapp — vérifie que Ultramsg envoie bien
+      // test whatsapp — diagnostic complet Ultramsg
       if (t.startsWith("test whatsapp")) {
         const numMatch = text.match(/(\+?\d{8,15})/);
         if (!numMatch) { await sendTelegram(token, adminId, "Usage: <code>test whatsapp +25377XXXXXX</code>"); return; }
-        const instanceId = ULTRAMSG_INSTANCE.value();
-        const waToken    = ULTRAMSG_TOKEN.value();
-        if (!instanceId || !waToken) {
+        const rawInstance = ULTRAMSG_INSTANCE.value();
+        const waToken     = ULTRAMSG_TOKEN.value();
+        if (!rawInstance || !waToken) {
           await sendTelegram(token, adminId,
             "❌ Secrets Ultramsg manquants :\n" +
-            `• ULTRAMSG_INSTANCE_ID : ${instanceId ? "✅" : "❌ non défini"}\n` +
+            `• ULTRAMSG_INSTANCE_ID : ${rawInstance ? "✅" : "❌ non défini"}\n` +
             `• ULTRAMSG_TOKEN : ${waToken ? "✅" : "❌ non défini"}`);
           return;
         }
-        await sendTelegram(token, adminId, `🔄 Test WhatsApp vers <code>${numMatch[1]}</code>...\nInstance: <code>${instanceId}</code>`);
+        // Normalisation identique à sendWhatsApp
+        let iid = rawInstance.replace(/^#/, "").trim();
+        if (/^\d+$/.test(iid)) iid = "instance" + iid;
+        const apiUrl = `https://api.ultramsg.com/${iid}/messages/chat`;
+        await sendTelegram(token, adminId,
+          `🔍 <b>Diagnostic WhatsApp</b>\n` +
+          `Secret brut : <code>${rawInstance}</code>\n` +
+          `Instance normalisée : <code>${iid}</code>\n` +
+          `URL : <code>${apiUrl}</code>\n` +
+          `Token (5 premiers car.) : <code>${waToken.slice(0,5)}…</code>\n\n` +
+          `🔄 Vérification statut instance…`);
+        // 1) Vérifie le statut de l'instance
+        let statusInfo = "—";
+        try {
+          const sr = await fetch(
+            `https://api.ultramsg.com/${iid}/instance/status?token=${encodeURIComponent(waToken)}`,
+            { signal: AbortSignal.timeout(10000) }
+          );
+          const sb = await sr.text();
+          statusInfo = sb.slice(0, 200);
+        } catch (e) { statusInfo = "Timeout / erreur réseau : " + e.message; }
+        await sendTelegram(token, adminId, `📡 Statut instance :\n<code>${statusInfo}</code>`);
+        // 2) Tente l'envoi
+        await sendTelegram(token, adminId, `📤 Envoi test vers <code>${numMatch[1]}</code>…`);
         const result = await sendWhatsApp(numMatch[1], "✅ Test Kaffi-Pay — WhatsApp fonctionne !");
         if (result && result.ok) {
-          await sendTelegram(token, adminId, `✅ Message WhatsApp envoyé !\nRéponse: <code>${result.body}</code>`);
+          await sendTelegram(token, adminId,
+            `✅ <b>Message envoyé avec succès !</b>\nRéponse Ultramsg : <code>${String(result.body).slice(0,300)}</code>`);
         } else {
           await sendTelegram(token, adminId,
-            `❌ Échec envoi WhatsApp\nRaison: <code>${result?.reason || result?.body || "inconnu"}</code>\n\n` +
-            "Vérifiez :\n• Instance ID et Token Ultramsg corrects\n• WhatsApp connecté dans Ultramsg (QR scanné)");
+            `❌ <b>Échec envoi</b>\nHTTP status : <code>${result?.status || "N/A"}</code>\n` +
+            `Raison : <code>${result?.reason || result?.body || "inconnu"}</code>`);
         }
         return;
       }
