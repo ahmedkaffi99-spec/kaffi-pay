@@ -591,14 +591,28 @@ exports.onNouvelOrdre = onDocumentCreated(
     //  le SMS est déjà dans waafi_notifications (status: "prêt")
     // ════════════════════════════════════════════════════════════
     if (isDepot) {
+      // Ordre avec preuve photo (nouveau flux) — pas de Transfer ID
+      if (!transferId && tx.proofUrl) {
+        await sendTelegram(token, adminId,
+          `📥 <b>Nouveau Dépôt — Preuve à vérifier</b>\n\n` +
+          `Ordre: <b>#${ordreId}</b> | <b>${Number(tx.montant || 0).toLocaleString()} DJF</b>\n` +
+          `ID 1xBet: <code>${tx.userId1xBet || tx.id1x || "?"}</code>\n` +
+          (tx.whatsapp ? `WhatsApp: <code>${tx.whatsapp}</code>\n` : "") +
+          `\n<a href="${tx.proofUrl}">📷 Voir la preuve de paiement</a>\n\n` +
+          `➡️ <code>confirmer ${ordreId}</code> ou <code>rejeter ${ordreId} raison</code>`
+        );
+        logAudit("depot_preuve_soumis", { ordreId, montant: tx.montant });
+        return;
+      }
+
       if (!transferId) {
         await db.collection("orders").doc(docId).update({
           status: "Rejeté",
-          flagRaison: "Transfer ID manquant — paiement Waafi introuvable",
+          flagRaison: "Preuve de paiement manquante",
           flaggedAt: FieldValue.serverTimestamp(),
         });
         await sendTelegram(token, adminId,
-          `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`
+          `❌ <b>Dépôt rejeté — Aucune preuve</b>\nOrdre: <code>#${ordreId}</code>`
         );
         return;
       }
