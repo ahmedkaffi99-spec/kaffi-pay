@@ -823,61 +823,43 @@ exports.macroJob = onRequest(
     const token   = TELEGRAM_TOKEN.value();
     const adminId = TELEGRAM_ADMIN_ID.value();
 
-    // ── ACK : MacroDroid a terminé un job ────────────────────────
-    const doneId = req.query.done || (req.body || {}).done || "";
-    if (doneId) {
-      const jobRef  = db.collection("macrodroid_jobs").doc(doneId);
-      const jobSnap = await jobRef.get();
-      if (!jobSnap.exists) { res.json({ ok: false, error: "Job introuvable" }); return; }
-      const job  = jobSnap.data();
-      const isOk = (req.query.status || "ok") !== "failed";
+    // ── ACK : MacroDroid confirme le résultat d'une recharge ─────
+    // MacroDroid appelle : ?secret=xxx&done={lv=ordreid}&status=ok  (ou failed)
+    const ordreId = req.query.done || (req.body || {}).done || "";
+    if (ordreId) {
+      const isOk = (req.query.status || (req.body || {}).status || "ok") !== "failed";
 
-      await jobRef.update({ status: isOk ? "done" : "failed", doneAt: FieldValue.serverTimestamp() });
+      const ordSnap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get();
+      if (ordSnap.empty) { res.json({ ok: false, error: "Ordre introuvable" }); return; }
 
-      if (job.ordreId) {
-        const ordSnap = await db.collection("orders").where("orderId", "==", job.ordreId).limit(1).get();
-        if (!ordSnap.empty) {
-          await ordSnap.docs[0].ref.update({
-            webhookStatus: isOk ? "ok" : "echec",
-            webhookAt: FieldValue.serverTimestamp(),
-            webhookViaQueue: true,
-          });
-        }
-        if (isOk) {
-          logAudit("macrodroid_queue_ok", { jobId: doneId, ordreId: job.ordreId, id1xbet: job.id1xbet });
-          await sendTelegram(token, adminId,
-            `✅ <b>Recharge confirmée</b> — #${job.ordreId}\n` +
-            `ID 1xBet <code>${job.id1xbet}</code> | ${Number(job.montant || 0).toLocaleString()} DJF`);
-        } else {
-          logAudit("macrodroid_queue_failed", { jobId: doneId, ordreId: job.ordreId });
-        }
+      const oDoc  = ordSnap.docs[0];
+      const oData = oDoc.data();
+
+      await oDoc.ref.update({
+        webhookStatus:    isOk ? "ok_confirmed" : "echec_confirmed",
+        webhookConfirmedAt: FieldValue.serverTimestamp(),
+      });
+
+      logAudit(isOk ? "macrodroid_confirmed_ok" : "macrodroid_confirmed_failed", {
+        ordreId, id1xbet: oData.userId1xBet || oData.id1x || "?",
+      });
+
+      if (isOk) {
+        await sendTelegram(token, adminId,
+          `✅ <b>Recharge confirmée par MacroDroid</b>\n` +
+          `#${ordreId} | <code>${oData.userId1xBet || oData.id1x || "?"}</code> | ${Number(oData.montant || 0).toLocaleString()} DJF`);
+      } else {
+        await sendTelegram(token, adminId,
+          `❌ <b>Recharge échouée (MacroDroid)</b>\n` +
+          `#${ordreId} | <code>${oData.userId1xBet || oData.id1x || "?"}</code>\n` +
+          `Utilise <code>recharge ${ordreId}</code> pour réessayer.`);
       }
+
       res.json({ ok: true });
       return;
     }
 
-    // ── POLL : MacroDroid demande le prochain job pending ─────────
-    const pendingSnap = await db.collection("macrodroid_jobs")
-      .where("status", "==", "pending")
-      .limit(1).get();
-
-    if (pendingSnap.empty) {
-      res.json({ job: null });
-      return;
-    }
-
-    const doc = pendingSnap.docs[0];
-    const job = doc.data();
-    await doc.ref.update({ status: "processing", pickedAt: FieldValue.serverTimestamp() });
-
-    res.json({
-      job: {
-        jobId:   doc.id,
-        ordreId: job.ordreId,
-        id1xbet: job.id1xbet,
-        montant: job.montant,
-      },
-    });
+    res.json({ ok: true, info: "ACK endpoint — done=ordreId&status=ok|failed" });
   }
 );
 
