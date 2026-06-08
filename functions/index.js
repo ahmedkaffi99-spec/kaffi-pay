@@ -1099,54 +1099,187 @@ exports.supportClient = onRequest(
       const ordreMatch = text.match(/(?:#\s*)?(\d{5,8})\b/i);
       const ordreId    = ordreMatch ? ordreMatch[1] : null;
 
-      // Salutation
-      if (/^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj)\b/.test(t)) {
-        await send("Bonjour ! Je suis le support Kaffi-Pay.\n\nEnvoyez votre <b>numéro d'ordre</b> pour voir son statut.\n\nExemple : <code>#06073</code>");
-        return;
-      }
-
-      // FAQ : comment ça marche
-      if (/comment.*(fonc|march|utilis)|étape|procédure/.test(t)) {
-        await send(
-          "ℹ️ <b>Comment fonctionne Kaffi-Pay ?</b>\n\n" +
-          "1. Soumettez votre ordre sur <b>kaffi-pay.com</b>\n" +
-          "2. Payez via Waafi avec le Transfer ID fourni\n" +
-          "3. Votre compte 1xBet est rechargé <b>automatiquement</b>\n\n" +
-          "Pour suivre un ordre : envoyez votre <b>numéro d'ordre</b> (ex: <code>#06073</code>)"
+      // ── /start ──
+      if (t === "/start" || t === "start") {
+        await sendTelegramToBot(supportToken, chatId,
+          `👋 <b>Bienvenue sur le Support Kaffi-Pay !</b>\n\n` +
+          `Je suis votre assistant automatique — disponible <b>24h/24</b>.\n\n` +
+          `<b>Ce que je peux faire :</b>\n` +
+          `🔍 Vérifier le statut de votre ordre\n` +
+          `⚡ Relancer un crédit bloqué\n` +
+          `❓ Répondre à vos questions\n\n` +
+          `<b>Pour commencer :</b> envoyez votre <b>numéro d'ordre</b>\n` +
+          `Exemple : <code>#06073</code>\n\n` +
+          `Tapez <b>aide</b> pour voir toutes les commandes.`
         );
         return;
       }
 
-      // FAQ : délais
-      if (/délai|durée|combien.*temps|quand.*confirm/.test(t)) {
-        await send("⏱️ Confirmation automatique : <b>immédiat</b>\nVérification manuelle si besoin : <b>moins de 30 min</b>\nDisponible <b>24h/24 — 7j/7</b>");
+      // ── Salutations (Français + Arabe + Somali) ──
+      if (/^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj|nabad|marhaba|ahlan|asalam|salaamu|wa calaykum|مرحبا|السلام)\b/.test(t)) {
+        await send(
+          `Bonjour ${firstName} ! 👋\n\n` +
+          `Je suis le support Kaffi-Pay.\n\n` +
+          `Envoyez votre <b>numéro d'ordre</b> pour voir son statut.\n` +
+          `Exemple : <code>#06073</code>\n\n` +
+          `Tapez <b>aide</b> pour toutes les options.`
+        );
         return;
       }
 
-      // Numéro d'ordre détecté → chercher dans Firestore
+      // ── Aide / Menu ──
+      if (/^(aide|help|menu|option|commande|que.*faire|quoi.*faire)/.test(t)) {
+        await send(
+          `📋 <b>Commandes disponibles</b>\n\n` +
+          `🔍 <code>#XXXXX</code> — Statut de votre ordre\n` +
+          `❓ <b>comment ça marche</b> — Explications\n` +
+          `⏱️ <b>délai</b> — Temps de traitement\n` +
+          `💰 <b>tarifs</b> — Frais et limites\n` +
+          `📤 <b>retrait</b> — Info sur les retraits\n` +
+          `🚫 <b>annuler</b> — Comment annuler un ordre\n` +
+          `👤 <b>agent</b> — Parler à un humain\n\n` +
+          `Ou envoyez directement votre numéro d'ordre.`
+        );
+        return;
+      }
+
+      // ── Comment ça marche ──
+      if (/comment.*(fonc|march|utilis)|étape|procédure|expliqu|process/.test(t)) {
+        await send(
+          `ℹ️ <b>Comment fonctionne Kaffi-Pay ?</b>\n\n` +
+          `<b>📥 Dépôt 1xBet :</b>\n` +
+          `1️⃣ Allez sur <b>kaffi-pay.com</b> → onglet Dépôt\n` +
+          `2️⃣ Remplissez : montant, ID 1xBet, WhatsApp\n` +
+          `3️⃣ Payez via Waafi au numéro <code>77275572</code>\n` +
+          `4️⃣ Notez le <b>Waafi Transfer ID</b> reçu par SMS\n` +
+          `5️⃣ Renseignez-le dans le formulaire → soumettez\n` +
+          `6️⃣ Votre compte 1xBet est crédité <b>automatiquement</b>\n\n` +
+          `<b>📤 Retrait 1xBet :</b>\n` +
+          `1️⃣ Sur 1xBet → Finances → Retirer → Code de retrait\n` +
+          `2️⃣ Sur kaffi-pay.com → onglet Retrait\n` +
+          `3️⃣ Entrez le code + votre numéro Waafi\n` +
+          `4️⃣ Recevez l'argent sur Waafi\n\n` +
+          `Pour suivre : envoyez votre <code>#numéro_ordre</code>`
+        );
+        return;
+      }
+
+      // ── Délais ──
+      if (/délai|durée|combien.*temps|quand.*confirm|vite|rapide|attente/.test(t)) {
+        await send(
+          `⏱️ <b>Temps de traitement</b>\n\n` +
+          `• Confirmation automatique : <b>1 à 5 min</b>\n` +
+          `• Crédit 1xBet : <b>moins de 2 min</b> après confirmation\n` +
+          `• Vérification manuelle (rare) : <b>max 30 min</b>\n\n` +
+          `📅 Service disponible <b>24h/24 — 7j/7</b>\n\n` +
+          `Si votre ordre attend depuis plus de 30 min,\nenvoyez votre <b>numéro d'ordre</b> ici.`
+        );
+        return;
+      }
+
+      // ── Tarifs ──
+      if (/tarif|frais|commiss|coût|prix|combien.*payer|minimum/.test(t)) {
+        await send(
+          `💰 <b>Tarifs Kaffi-Pay</b>\n\n` +
+          `• Dépôt minimum : <b>50 DJF</b>\n` +
+          `• Retrait minimum : <b>250 DJF</b>\n` +
+          `• Commission : <b>0 DJF</b> — aucun frais !\n` +
+          `• Vous recevez exactement le montant envoyé\n\n` +
+          `Numéro Waafi pour payer : <code>77275572</code>`
+        );
+        return;
+      }
+
+      // ── Retrait ──
+      if (/^retrait|retirer.*argent|code.*retrait|retrait.*1xbet|comment.*retirer/.test(t)) {
+        await send(
+          `📤 <b>Comment effectuer un retrait 1xBet</b>\n\n` +
+          `1️⃣ Sur 1xBet → <b>Finances → Retirer des fonds</b>\n` +
+          `2️⃣ Choisissez <b>"Code de retrait"</b>\n` +
+          `3️⃣ Saisissez le montant souhaité\n` +
+          `4️⃣ Copiez le <b>code de retrait</b> généré\n` +
+          `5️⃣ Allez sur <b>kaffi-pay.com</b> → onglet Retrait\n` +
+          `6️⃣ Renseignez le code + votre numéro Waafi\n` +
+          `7️⃣ Recevez l'argent sur votre compte Waafi ✅\n\n` +
+          `⚠️ Le code de retrait expire en <b>24 heures</b>.`
+        );
+        return;
+      }
+
+      // ── Annulation ──
+      if (/annul|cancel|suppr.*ordre|comment.*annul/.test(t)) {
+        await send(
+          `🚫 <b>Annuler un ordre</b>\n\n` +
+          `Vous pouvez annuler uniquement si l'ordre est <b>"En attente"</b>.\n\n` +
+          `<b>Comment annuler :</b>\n` +
+          `1️⃣ Allez sur <b>kaffi-pay.com</b>\n` +
+          `2️⃣ Retrouvez votre ordre dans l'historique\n` +
+          `3️⃣ Cliquez sur le bouton <b>🚫 Annuler cet ordre</b>\n\n` +
+          `⚠️ Un ordre <b>Confirmé</b> ne peut pas être annulé.\n\n` +
+          `Envoyez votre numéro d'ordre si vous avez besoin d'aide.`
+        );
+        return;
+      }
+
+      // ── "Pas reçu" / "Non crédité" / problème général ──
+      if (/pas.*reçu|non.*crédit|pas.*crédit|toujours.*pas|n'a pas|pas.*arrivé|problem|problème|erreur|pas.*fonc|pas.*march/.test(t)) {
+        await send(
+          `⚠️ <b>Problème avec votre ordre ?</b>\n\n` +
+          `Je vais vérifier immédiatement.\n\n` +
+          `Envoyez votre <b>numéro d'ordre</b> :\n` +
+          `Exemple : <code>#06073</code>\n\n` +
+          `Votre numéro d'ordre se trouve sur <b>kaffi-pay.com</b> dans l'historique.`
+        );
+        return;
+      }
+
+      // ── Demande d'agent humain ──
+      if (/agent|humain|opérateur|parler.*quelqu|quelqu.*humain|personne|responsable|admin|réel/.test(t)) {
+        const adminToken2 = TELEGRAM_TOKEN.value();
+        const adminId3    = TELEGRAM_ADMIN_ID.value();
+        await send(
+          `👤 <b>Mise en relation avec un agent</b>\n\n` +
+          `Votre demande a été transmise à notre équipe.\n` +
+          `Un agent vous répondra dans les plus brefs délais.\n\n` +
+          `Pour accélérer le traitement, envoyez votre <b>numéro d'ordre</b>.`
+        );
+        await sendTelegram(adminToken2, adminId3,
+          `🆘 <b>Demande d'agent humain</b>\n` +
+          `👤 ${firstName} (chatId: <code>${chatId}</code>)\n` +
+          `Message : <i>${text.substring(0, 200)}</i>`
+        );
+        return;
+      }
+
+      // ── Numéro d'ordre détecté → chercher dans Firestore ──
       if (ordreId) {
         const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get();
         if (snap.empty) {
-          await send(`❓ Ordre <b>#${ordreId}</b> introuvable.\n\nVérifiez votre numéro d'ordre sur <b>kaffi-pay.com</b>.`);
+          await send(
+            `❓ Ordre <b>#${ordreId}</b> introuvable.\n\n` +
+            `Vérifiez votre numéro d'ordre sur <b>kaffi-pay.com</b>.\n` +
+            `Le numéro d'ordre fait 5 à 8 chiffres (ex: <code>#06073</code>).`
+          );
           return;
         }
-        const o      = snap.docs[0].data();
-        const oRef   = snap.docs[0].ref;
-        const wbOk   = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
+        const o          = snap.docs[0].data();
+        const oRef       = snap.docs[0].ref;
+        const wbOk       = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
         const adminToken = TELEGRAM_TOKEN.value();
         const adminId2   = TELEGRAM_ADMIN_ID.value();
 
-        // ── Ordre confirmé mais non crédité → support bot règle directement ──
+        // ── Confirmé mais non crédité → support bot relance MacroDroid ──
         if (o.status === "Confirmé" && !wbOk) {
           const id1xbet = o.userId1xBet || o.id1x || "";
-
           if (!id1xbet) {
-            await send("⚠️ Votre dépôt est confirmé mais votre ID 1xBet est manquant.\nNotre équipe va vous contacter sous peu.");
+            await send(
+              `⚠️ Votre dépôt est confirmé mais votre <b>ID 1xBet est manquant</b>.\n` +
+              `Notre équipe va vous contacter sous peu.`
+            );
             await sendTelegram(adminToken, adminId2,
               `🆘 <b>ID 1xBet manquant</b> — 👤 ${firstName}\nOrdre <b>#${ordreId}</b> | ${Number(o.montant||0).toLocaleString()} DJF`);
             return;
           }
-
           const wbUrl = (MACRO_WEBHOOK_URL && MACRO_WEBHOOK_URL.value) ? MACRO_WEBHOOK_URL.value() : "";
           await send(
             `✅ <b>Dépôt confirmé — Crédit en cours</b>\n\n` +
@@ -1161,34 +1294,67 @@ exports.supportClient = onRequest(
               await callMacrodroidLocked(wbUrl, ordreId, o.montant || 0, id1xbet);
               await oRef.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
               logAudit("macrodroid_ok_support", { ordreId, clientName: firstName });
-            } catch (e) {
-              await oRef.update({ webhookStatus: "echec", webhookErr: e.message });
+            } catch (err) {
+              await oRef.update({ webhookStatus: "echec", webhookErr: err.message });
               await sendTelegram(adminToken, adminId2,
-                `⚠️ MacroDroid échoué (support) — #${ordreId}\n<code>${e.message}</code>`);
+                `⚠️ MacroDroid échoué (support) — #${ordreId}\n<code>${err.message}</code>`);
             }
           }
           return;
         }
 
-        // Confirmé + crédité mais client réclame → alerte admin
+        // ── Confirmé + crédité mais client réclame → alerte admin ──
         if (o.status === "Confirmé" && wbOk) {
-          await send(statutOrdreMsg(ordreId, o));
+          await send(
+            statutOrdreMsg(ordreId, o) +
+            `\n\n📞 Si le crédit n'apparaît pas sur 1xBet, attendez 2 min puis vérifiez.\n` +
+            `Si le problème persiste, notre équipe est alertée.`
+          );
           await sendTelegram(adminToken, adminId2,
             `🆘 <b>Crédit envoyé mais client réclame</b> — 👤 ${firstName}\nOrdre <b>#${ordreId}</b>\nForcer : <code>recharge ${ordreId}</code>`);
           return;
         }
 
-        // Autres statuts (Rejeté, Correction, En attente…)
-        await send(statutOrdreMsg(ordreId, o));
-        if (o.status === "Rejeté" || o.status === "Correction") {
+        // ── Rejeté → explication + actions ──
+        if (o.status === "Rejeté") {
+          await send(
+            statutOrdreMsg(ordreId, o) +
+            `\n\n<b>Que faire ?</b>\n` +
+            `• Vérifiez que votre Transfer ID est correct\n` +
+            `• Soumettez un <b>nouvel ordre</b> sur kaffi-pay.com\n` +
+            `• En cas de doute, contactez le support`
+          );
           await sendTelegram(adminToken, adminId2,
-            `🆘 <b>Support</b> | 👤 ${firstName} | <b>#${ordreId}</b> (${o.status})`);
+            `🆘 <b>Support</b> | 👤 ${firstName} | <b>#${ordreId}</b> (Rejeté)\nRaison : ${o.flagRaison || "?"}`);
+          return;
         }
+
+        // ── Correction requise ──
+        if (o.status === "Correction") {
+          await send(
+            statutOrdreMsg(ordreId, o) +
+            `\n\n<b>Comment corriger :</b>\n` +
+            `1️⃣ Allez sur kaffi-pay.com\n` +
+            `2️⃣ Retrouvez votre ordre #${ordreId}\n` +
+            `3️⃣ Cliquez sur <b>✏️ Corriger mon ordre</b>\n` +
+            `4️⃣ Soumettez les informations corrigées`
+          );
+          await sendTelegram(adminToken, adminId2,
+            `🆘 <b>Support</b> | 👤 ${firstName} | <b>#${ordreId}</b> (Correction)`);
+          return;
+        }
+
+        // ── Autres statuts (En attente, Argent Reçu…) ──
+        await send(statutOrdreMsg(ordreId, o));
         return;
       }
 
-      // Aucun ordre ID trouvé
-      await send("Pour voir le statut de votre ordre, envoyez votre <b>numéro d'ordre</b>.\n\nExemple : <code>#06073</code>");
+      // ── Aucun ordre ID trouvé — fallback ──
+      await send(
+        `Pour vérifier votre ordre, envoyez votre <b>numéro d'ordre</b>.\n\n` +
+        `Exemple : <code>#06073</code>\n\n` +
+        `Tapez <b>aide</b> pour voir toutes les options disponibles.`
+      );
 
     } catch (e) {
       console.error("supportClient crash:", e.message, e.stack);
