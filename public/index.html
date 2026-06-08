@@ -20,7 +20,6 @@
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getFirestore, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCILUjQPp_wO-IJrp6WwckMRDN5ISbcexU",
@@ -33,20 +32,15 @@ const firebaseConfig = {
   measurementId: "G-ZM25GET36B"
 };
 
-let app, db, storage;
+let app, db;
 try {
   app = initializeApp(firebaseConfig);
   db = getFirestore(app);
-  storage = getStorage(app);
 } catch(e) {
 }
 
 // ── Expose to global scope ──
 window.db = db;
-window.fsStorage = storage;
-window.fsStorageRef = storageRef;
-window.fsUploadBytes = uploadBytes;
-window.fsGetDownloadURL = getDownloadURL;
 window.fsCollection = collection;
 window.fsDoc = doc;
 window.fsAddDoc = addDoc;
@@ -191,13 +185,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 .submit-btn{width:100%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#07101e;border:none;border-radius:999px;padding:13px;font-family:'DM Sans',sans-serif;font-size:.94rem;font-weight:700;cursor:pointer;transition:all .25s;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;box-shadow:0 4px 18px rgba(255,215,0,.2);}
 .submit-btn:hover{transform:translateY(-2px);}
 .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
-.proof-zone{width:100%;min-height:120px;border:2px dashed rgba(255,215,0,.25);border-radius:14px;background:rgba(255,215,0,.03);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;cursor:pointer;transition:all .2s;overflow:hidden;position:relative;}
-.proof-zone:hover,.proof-zone.has-img{border-color:rgba(255,215,0,.5);background:rgba(255,215,0,.05);}
-.proof-placeholder{display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--muted);pointer-events:none;}
-.proof-placeholder span{font-size:.72rem;}
-.proof-icon{font-size:1.8rem;}
-#proof-preview{width:100%;max-height:220px;object-fit:contain;border-radius:12px;display:none;}
-.proof-remove{position:absolute;top:8px;right:8px;background:rgba(255,64,96,.8);border:none;border-radius:50%;width:26px;height:26px;color:#fff;font-size:.75rem;cursor:pointer;display:none;align-items:center;justify-content:center;}
 .spinner{width:14px;height:14px;border:2px solid rgba(10,18,32,.3);border-top-color:#07101e;border-radius:50%;animation:spin .7s linear infinite;display:none;}
 .support-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:14px;padding:11px;border-radius:999px;border:1px solid rgba(37,211,102,.25);background:rgba(37,211,102,.05);color:#25d366;font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:600;text-decoration:none;transition:all .2s;}
 .support-btn:hover{background:rgba(37,211,102,.1);}
@@ -464,27 +451,24 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         </div>
       </div>
       <div class="field">
-        <label>📸 Preuve de paiement Waafi</label>
-        <div class="proof-zone" id="proof-zone" onclick="document.getElementById('depot-proof').click()">
-          <div class="proof-placeholder" id="proof-placeholder">
-            <div class="proof-icon">📷</div>
-            <span>Appuyer pour ajouter une capture d'écran</span>
-            <span style="font-size:.62rem;opacity:.6;">JPG, PNG · max 5 MB</span>
-          </div>
-          <img id="proof-preview" alt="Preuve">
-          <button class="proof-remove" id="proof-remove" onclick="removeProof(event)">✕</button>
+        <label>🔑 Waafi Transfer ID</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="tel" id="depot-hash" placeholder="Ex: 77422311" inputmode="numeric" maxlength="15" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+          <button onclick="pasteField('depot-hash')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
         </div>
-        <input type="file" id="depot-proof" accept="image/*" style="display:none" onchange="previewProof(this)">
-        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Capture de la confirmation Waafi · obligatoire</div>
+      </div>
+
+      <div class="field">
+        <label>📞 Votre numéro Waafi expéditeur</label>
+        <input type="tel" id="depot-numero-waafi" placeholder="Ex: 77275572" maxlength="8" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">8 chiffres · commence par 77</div>
       </div>
 
       <div class="field">
         <label>💬 Votre numéro WhatsApp</label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <div style="position:relative;flex:1;">
-            <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
-            <input type="tel" id="depot-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
-          </div>
+        <div style="position:relative;">
+          <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
+          <input type="tel" id="depot-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         </div>
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
       </div>
@@ -539,6 +523,15 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
           <span class="currency-sym">DJF</span>
           <input type="number" id="retrait-montant" placeholder="Ex: 500" min="250" inputmode="numeric">
         </div>
+      </div>
+
+      <div class="field">
+        <label>💬 Votre numéro WhatsApp</label>
+        <div style="position:relative;">
+          <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
+          <input type="tel" id="retrait-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+        </div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
       </div>
 
       <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn">
@@ -1205,32 +1198,29 @@ function genererOrderId(){
 async function submitDepot(){
   const m=document.getElementById('depot-montant').value;
   const id=document.getElementById('depot-id').value.trim();
-  const proofFile=document.getElementById('depot-proof').files[0];
-  const whatsapp=document.getElementById('depot-whatsapp')? document.getElementById('depot-whatsapp').value.trim() : '';
+  const h=document.getElementById('depot-hash').value.trim();
+  const telDepot=document.getElementById('depot-numero-waafi').value.trim();
+  const whatsapp=document.getElementById('depot-whatsapp').value.trim();
   if(!m||Number(m)<50){showToast('⚠️ Minimum 50 DJF','error');return;}
   if(!id){showToast('⚠️ ID 1xBet requis','error');return;}
-  if(!proofFile){showToast('⚠️ Preuve de paiement requise','error');return;}
+  if(!h||!/^\d{6,15}$/.test(h)){showToast('⚠️ Waafi Transfer ID invalide','error');return;}
+  if(!telDepot||telDepot.length!==8){showToast('⚠️ Numéro expéditeur requis (8 chiffres)','error');return;}
   if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
   setLoading('depot',true);
   try{
     const orderId=await genererOrderId();
-    // Upload preuve vers Firebase Storage
-    showToast('📤 Envoi de la preuve…','info');
-    const ext=proofFile.name.split('.').pop()||'jpg';
-    const ref=window.fsStorageRef(window.fsStorage,'proofs/'+orderId+'_'+Date.now()+'.'+ext);
-    await window.fsUploadBytes(ref,proofFile);
-    const proofUrl=await window.fsGetDownloadURL(ref);
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
       orderId:orderId,
       userId1xBet:id,
+      waafitranfertID:h,
       montant:Number(m),
       amount:Number(m).toLocaleString()+' DJF',
       date:dateStr,
       methodePayment:'Waafi',
-      proofUrl:proofUrl,
-      whatsapp: whatsapp ? '+253'+whatsapp : '',
+      numeroPayment:telDepot||'—',
+      whatsapp:'+253'+whatsapp,
       type:'Dépôt',
       status:'En attente',
       createdAt:now,
@@ -1239,8 +1229,9 @@ async function submitDepot(){
     };
     document.getElementById('depot-montant').value='';
     document.getElementById('depot-id').value='';
-    removeProof({stopPropagation:function(){}});
-    if(document.getElementById('depot-whatsapp')) document.getElementById('depot-whatsapp').value='';
+    document.getElementById('depot-hash').value='';
+    document.getElementById('depot-numero-waafi').value='';
+    document.getElementById('depot-whatsapp').value='';
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx);
     if(!window.db){
@@ -1263,9 +1254,11 @@ async function submitRetrait(){
   const c=document.getElementById('retrait-code').value.trim();
   const t=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
+  const whatsapp=document.getElementById('retrait-whatsapp').value.trim();
   if(!c||c.length<2){showToast('⚠️ Code retrait requis','error');return;}
   if(!t||t.length!==8||!t.startsWith('77')){showToast('⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)','error');return;}
   if(!m||Number(m)<250){showToast('⚠️ Minimum 250 DJF','error');return;}
+  if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
   setLoading('retrait',true);
   try{
     const orderId=await genererOrderId();
@@ -1278,6 +1271,7 @@ async function submitRetrait(){
       montant:Number(m),
       amount:Number(m).toLocaleString()+' DJF',
       methodeRecepteur:'Waafi',
+      whatsapp:'+253'+whatsapp,
       date:dateStr,
       type:'Retrait',
       status:'En attente',
@@ -1288,6 +1282,7 @@ async function submitRetrait(){
     document.getElementById('retrait-code').value='';
     document.getElementById('retrait-tel').value='';
     document.getElementById('retrait-montant').value='';
+    document.getElementById('retrait-whatsapp').value='';
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx);
     if(!window.db){
@@ -1507,7 +1502,8 @@ function openOrderDetail(ref){
     {l:'N° Commande', v:tx.orderId||tx.ref||'—', c:tx.orderId||tx.ref||''},
     {l:'Montant', v:tx.amount||Number(tx.montant).toLocaleString()+' DJF', c:''},
     {l:'ID 1xBet', v:tx.userId1xBet||tx.id1x||'—', c:tx.userId1xBet||tx.id1x||''},
-    {l:'Preuve', v:tx.proofUrl?'📷 Voir la preuve':'—', c:'', link:tx.proofUrl||''},
+    {l:'Transfer ID', v:tx.waafitranfertID||tx.hash||'—', c:tx.waafitranfertID||tx.hash||''},
+    {l:'N° Expéditeur', v:tx.numeroPayment||'—', c:tx.numeroPayment||''},
     {l:'WhatsApp', v:tx.whatsapp||'—', c:tx.whatsapp||''},
     {l:'Statut', v:tx.status||'En attente', c:''}
   ]:[
@@ -1924,35 +1920,6 @@ function fallbackCopy(num, btn, orig){
   document.body.removeChild(ta);
 }
 
-function previewProof(input){
-  if(!input.files||!input.files[0])return;
-  var file=input.files[0];
-  if(file.size>5*1024*1024){showToast('⚠️ Image trop lourde (max 5 MB)','error');input.value='';return;}
-  var reader=new FileReader();
-  reader.onload=function(e){
-    var prev=document.getElementById('proof-preview');
-    var ph=document.getElementById('proof-placeholder');
-    var rm=document.getElementById('proof-remove');
-    var zone=document.getElementById('proof-zone');
-    prev.src=e.target.result;prev.style.display='block';
-    ph.style.display='none';rm.style.display='flex';
-    zone.classList.add('has-img');
-  };
-  reader.readAsDataURL(file);
-}
-
-function removeProof(e){
-  e.stopPropagation();
-  var prev=document.getElementById('proof-preview');
-  var ph=document.getElementById('proof-placeholder');
-  var rm=document.getElementById('proof-remove');
-  var zone=document.getElementById('proof-zone');
-  var inp=document.getElementById('depot-proof');
-  prev.src='';prev.style.display='none';
-  ph.style.display='flex';rm.style.display='none';
-  zone.classList.remove('has-img');
-  inp.value='';
-}
 
 function pasteField(id){
   var input=document.getElementById(id);if(!input)return;
