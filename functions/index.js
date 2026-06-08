@@ -32,6 +32,8 @@ const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
 const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
+const ULTRAMSG_INSTANCE = defineSecret("ULTRAMSG_INSTANCE_ID");
+const ULTRAMSG_TOKEN    = defineSecret("ULTRAMSG_TOKEN");
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 1 — STATE MACHINE
@@ -455,6 +457,24 @@ async function sendTelegramToBot(token, chatId, text) {
   } catch { return false; }
 }
 
+async function sendWhatsApp(phone, message) {
+  const instanceId = ULTRAMSG_INSTANCE.value();
+  const token      = ULTRAMSG_TOKEN.value();
+  if (!instanceId || !token || !phone) return;
+  const to = phone.startsWith("+") ? phone : "+" + phone;
+  try {
+    const resp = await fetch(`https://api.ultramsg.com/${instanceId}/messages/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, to, body: message }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) console.warn("UltraMsg error:", resp.status, await resp.text());
+  } catch (e) {
+    console.warn("WhatsApp send failed:", e.message);
+  }
+}
+
 function extractTransferId(text) {
   // Waafi SMS variations: "Transfer Id : 123456", "TransferId:123456", "TID 123456", "Ref: 123456"
   const m = text.match(/Transfer[-\s]?Id\s*[:\s]+\s*(\d+)/i)
@@ -495,7 +515,7 @@ function extractNumClient(text, own = "77275572") {
 exports.onNouvelOrdre = onDocumentCreated(
   {
     document: "orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_SECRET],
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_SECRET, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -509,6 +529,26 @@ exports.onNouvelOrdre = onDocumentCreated(
     const adminId    = TELEGRAM_ADMIN_ID.value();
 
     logAudit("nouvel_ordre", { ordreId, type: tx.type, montant: tx.montant, phone });
+
+    // ── WhatsApp — accusé de réception immédiat ──
+    if (tx.whatsapp) {
+      const montantStr = Number(tx.montant || 0).toLocaleString();
+      const receiptMsg = isDepot
+        ? `🧾 *Kaffi-Pay — Ordre reçu ✅*\n\n` +
+          `Votre ordre *#${ordreId}* a bien été soumis.\n\n` +
+          `📥 Dépôt 1xBet\n` +
+          `Montant : ${montantStr} DJF\n` +
+          `ID 1xBet : ${tx.userId1xBet || tx.id1x || "—"}\n\n` +
+          `⏳ Vérification en cours — vous serez notifié ici.\n` +
+          `📲 Suivi : kaffi-pay.com`
+        : `🧾 *Kaffi-Pay — Ordre reçu ✅*\n\n` +
+          `Votre demande de retrait *#${ordreId}* a bien été soumise.\n\n` +
+          `📤 Retrait\n` +
+          `Montant : ${montantStr} DJF\n\n` +
+          `⏳ Traitement en cours — vous serez notifié ici.\n` +
+          `📲 Suivi : kaffi-pay.com`;
+      await sendWhatsApp(tx.whatsapp, receiptMsg);
+    }
 
     // ── FRAUDE 1 : Transfer ID déjà utilisé pour un autre ordre ─
     // Vérifie 3 sources : ordre confirmé, notif matchée, notif traitée.
@@ -741,7 +781,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
   {
     document: "orders/{docId}",
     region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL],
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -775,6 +815,28 @@ exports.onOrdreUpdated = onDocumentUpdated(
       msg = `✏️ <b>Correction demandée</b>\n#${ordreId}\n${after.correctionMsg || ""}`;
 
     if (msg) await sendTelegram(token, adminId, msg);
+
+    // ── WhatsApp — notification statut au client ──
+    if (after.whatsapp) {
+      let waMsg = "";
+      if (after.status === "Confirmé") {
+        waMsg = `✅ *Kaffi-Pay — Ordre confirmé*\n\n` +
+                `Votre ${after.type === "Dépôt" ? "dépôt" : "retrait"} *#${ordreId}* est confirmé.\n` +
+                `Montant : ${montant} DJF\n\n` +
+                `⚡ ${after.type === "Dépôt" ? "Crédit 1xBet en cours..." : "Paiement Waafi en cours..."}`;
+      } else if (after.status === "Rejeté") {
+        waMsg = `❌ *Kaffi-Pay — Ordre rejeté*\n\n` +
+                `Votre ordre *#${ordreId}* a été rejeté.\n` +
+                `Raison : ${after.flagRaison || "Paiement non reçu"}\n\n` +
+                `Soumettez un nouvel ordre sur kaffi-pay.com`;
+      } else if (after.status === "Correction") {
+        waMsg = `✏️ *Kaffi-Pay — Correction requise*\n\n` +
+                `Votre ordre *#${ordreId}* nécessite une correction.\n\n` +
+                `${after.correctionMsg || "Vérifiez vos informations."}\n\n` +
+                `Allez sur kaffi-pay.com pour corriger votre ordre.`;
+      }
+      if (waMsg) await sendWhatsApp(after.whatsapp, waMsg);
+    }
 
     // ── MacroDroid — uniquement quand → "Confirmé" ──
     // callMacrodroidLocked attend le verrou 20s (max 55s) avant d'appeler.
@@ -812,7 +874,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
 //  status: pending → processing → done | failed
 // ══════════════════════════════════════════════════════════════════
 exports.macroJob = onRequest(
-  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -849,11 +911,30 @@ exports.macroJob = onRequest(
         await sendTelegram(token, adminId,
           `✅ <b>Recharge confirmée par MacroDroid</b>\n` +
           `#${ordreId} | <code>${oData.userId1xBet || oData.id1x || "?"}</code> | ${Number(oData.montant || 0).toLocaleString()} DJF`);
+        if (oData.whatsapp) {
+          await sendWhatsApp(oData.whatsapp,
+            `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
+            `Votre compte 1xBet *${oData.userId1xBet || oData.id1x || "?"}* a été crédité avec succès !\n` +
+            `Ordre : #${ordreId}\n` +
+            `Montant : ${Number(oData.montant || 0).toLocaleString()} DJF\n\n` +
+            `Merci d'avoir utilisé Kaffi-Pay 🙏\n` +
+            `📲 kaffi-pay.com`
+          );
+        }
       } else {
         await sendTelegram(token, adminId,
           `❌ <b>Recharge échouée (MacroDroid)</b>\n` +
           `#${ordreId} | <code>${oData.userId1xBet || oData.id1x || "?"}</code>\n` +
           `Utilise <code>recharge ${ordreId}</code> pour réessayer.`);
+        if (oData.whatsapp) {
+          await sendWhatsApp(oData.whatsapp,
+            `⚠️ *Kaffi-Pay — Problème de crédit*\n\n` +
+            `Une erreur est survenue lors du crédit de votre compte 1xBet.\n` +
+            `Ordre : #${ordreId}\n\n` +
+            `Notre équipe intervient sous peu.\n` +
+            `Assistance : @kaffipay_support_bot`
+          );
+        }
       }
 
       res.json({ ok: true });
@@ -1078,7 +1159,7 @@ exports.healthCheck = onRequest(
 // Flux simple : client donne numéro d'ordre → Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
 exports.supportClient = onRequest(
-  { region: REGION, secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL], timeoutSeconds: 60 },
+  { region: REGION, secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
 
