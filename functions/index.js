@@ -215,8 +215,10 @@ function scorerCorrespondance(ordreData, notifData) {
     );
   }
 
-  // Critère 3 : Numéro expéditeur
-  if (!notifData.numClient || phone === notifData.numClient) {
+  // Critère 3 : Numéro expéditeur (compare les 8 derniers chiffres pour tolérer +253)
+  const normPhone  = phone.replace(/^\+?253/, "").replace(/\D/g, "");
+  const normNotif  = (notifData.numClient || "").replace(/^\+?253/, "").replace(/\D/g, "");
+  if (!normNotif || normPhone === normNotif) {
     score++;
   } else {
     mismatches.push(
@@ -814,6 +816,76 @@ exports.onOrdreUpdated = onDocumentUpdated(
     const adminId  = TELEGRAM_ADMIN_ID.value();
 
     logAudit("transition_statut", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
+
+    // ── Correction soumise par client : relancer le matching automatique ──
+    // Quand Correction → En attente avec correctedAt, c'est une correction client.
+    // onNouvelOrdre ne se déclenche pas sur update → on re-match ici.
+    if (before.status === "Correction" && after.status === "En attente"
+        && after.correctedAt && after.type === "Dépôt") {
+      const corrTransferId = (after.waafitranfertID || after.hash || "").trim();
+      const corrPhone      = (after.numeroPayment || "").trim();
+      const docId          = event.params.docId;
+
+      if (corrTransferId) {
+        const [byTID, dejaTraite] = await Promise.all([
+          db.collection("waafi_notifications").where("transferId", "==", corrTransferId).limit(1).get(),
+          db.collection("ordre_traite").where("transferId", "==", corrTransferId).limit(1).get(),
+        ]);
+
+        let waafiDoc = (!byTID.empty && dejaTraite.empty) ? byTID.docs[0] : null;
+
+        // Fallback : par numéro + montant si TID non parsé
+        if (!waafiDoc && corrPhone) {
+          const montantOrdre = Number(after.montant || 0);
+          const tolerance    = Math.max(5, montantOrdre * 0.05);
+          const byPhone = await db.collection("waafi_notifications")
+            .where("numClient", "==", corrPhone).limit(10).get();
+          for (const d of byPhone.docs) {
+            const n = d.data();
+            if (!n.montant || Math.abs(montantOrdre - n.montant) > tolerance) continue;
+            const deja = n.transferId
+              ? (await db.collection("ordre_traite").where("transferId", "==", n.transferId).limit(1).get()).empty
+              : true;
+            if (deja) { waafiDoc = d; break; }
+          }
+        }
+
+        if (waafiDoc) {
+          const ordreSnap2 = await db.collection("orders").doc(docId).get();
+          const { score, mismatches, decision } = scorerCorrespondance(after, waafiDoc.data());
+
+          if (decision === "confirmer") {
+            await confirmerDepot(ordreSnap2, waafiDoc, token, adminId);
+            return;
+          }
+          if (decision === "correction") {
+            await db.collection("orders").doc(docId).update({
+              status: "Correction",
+              correctionMsg: `Correspondance partielle (${score}/3) — corrigez et resoumettez.\n${mismatches.join(" | ")}`,
+              correctionDetails: mismatches,
+              correctionScore: score,
+              correctionAt: FieldValue.serverTimestamp(),
+            });
+            await sendTelegram(token, adminId,
+              `✏️ <b>Correction persistante (${score}/3)</b>\nOrdre <code>#${ordreId}</code>\n${mismatches.map(m=>`• ${m}`).join("\n")}\nForcer : <code>confirmer ${ordreId}</code>`);
+            return;
+          }
+          // score ≤ 1
+          await db.collection("orders").doc(docId).update({
+            status: "Rejeté",
+            flagRaison: `Données incorrectes après correction (${score}/3) — ${mismatches.join(", ")}`,
+            flaggedAt: FieldValue.serverTimestamp(),
+          });
+          await sendTelegram(token, adminId,
+            `❌ <b>Rejeté après correction (${score}/3)</b>\nOrdre <code>#${ordreId}</code>\n${mismatches.map(m=>`• ${m}`).join("\n")}`);
+          return;
+        }
+      }
+      // Pas de notification trouvée même après correction
+      await sendTelegram(token, adminId,
+        `⚠️ <b>Correction soumise — aucune notif Waafi trouvée</b>\nOrdre <code>#${ordreId}</code> | TID: <code>${corrTransferId}</code>\nVérifier manuellement.`);
+      return;
+    }
 
     let msg = "";
     if (after.status === "Confirmé")
