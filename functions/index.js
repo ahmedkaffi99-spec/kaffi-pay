@@ -1025,6 +1025,54 @@ exports.ordresBloques = onSchedule(
     );
 
     await alertRef.set({ ts: FieldValue.serverTimestamp(), count: vieux.length });
+
+    // ── PARTIE 3 : Ordres "Confirmé" sans crédit Macrodroid → relance ──
+    // Si un ordre est Confirmé mais n'est pas dans ordre_traite ET
+    // webhookStatus != "ok", c'est que Macrodroid n'a jamais été appelé
+    // (ou a échoué). On re-déclenche avec la règle des 20 secondes.
+    const snapConfirme = await db.collection("orders")
+      .where("status", "==", "Confirmé")
+      .get().catch(() => ({ docs: [] }));
+
+    const webhookBase = (MACRO_WEBHOOK_URL && MACRO_WEBHOOK_URL.value) ? MACRO_WEBHOOK_URL.value() : "";
+
+    for (const ordreDoc of snapConfirme.docs) {
+      const o       = ordreDoc.data();
+      const ordreId = o.orderId || ordreDoc.id;
+      const id1xbet = o.userId1xBet || o.id1x || "";
+      const wbOk    = o.webhookStatus === "ok" || o.webhookStatus === "ok_confirmed" || o.webhookStatus === "ok_retry_rt";
+
+      if (wbOk) continue;
+      if (!id1xbet || !webhookBase) continue;
+
+      // Vérifie dans ordre_traite si déjà traité
+      const tid         = o.waafitranfertID || o.hash || "";
+      const dejaTraite  = tid
+        ? await db.collection("ordre_traite").where("transferId", "==", tid).limit(1).get()
+        : { empty: true };
+
+      if (!dejaTraite.empty) {
+        // Traité dans ordre_traite mais webhookStatus pas à jour → corriger
+        await ordreDoc.ref.update({ webhookStatus: "ok_recovery" });
+        continue;
+      }
+
+      // Pas traité → relance Macrodroid
+      try {
+        await callMacrodroidLocked(webhookBase, ordreId, Number(o.montant || 0), id1xbet);
+        await ordreDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), recoveryBy: "scheduler" });
+        await sendTelegram(token, adminId,
+          `🔄 <b>Recovery Macrodroid</b> — Ordre <code>#${ordreId}</code> relancé automatiquement\n` +
+          `ID 1xBet: <code>${id1xbet}</code> | ${Number(o.montant||0).toLocaleString()} DJF`
+        );
+        logAudit("macrodroid_recovery_scheduler", { ordreId, id1xbet });
+      } catch (err) {
+        await ordreDoc.ref.update({ webhookStatus: "echec", webhookErr: err.message });
+        await sendTelegram(token, adminId,
+          `⚠️ <b>Recovery échoué</b> — #${ordreId}\n<code>${err.message}</code>`
+        );
+      }
+    }
   }
 );
 
