@@ -395,7 +395,10 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="logo-slogan">Échange 1xBet ↔ Waafi · Djibouti</div>
       </div>
     </div>
-    <div class="secure-badge">🔒 Sécurisé</div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
+      <div class="secure-badge">🔒 Sécurisé</div>
+      <button id="pwa-install-btn" onclick="triggerInstall()" style="display:none;background:linear-gradient(135deg,#f5d020,#f5a623);border:none;border-radius:999px;padding:5px 12px;font-size:0.62rem;font-weight:700;color:#07101e;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;box-shadow:0 2px 10px rgba(245,166,35,0.4);">⬇ Installer l'app</button>
+    </div>
   </div>
 
   <section class="hero">
@@ -770,8 +773,8 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 </div>
 </div>
 
-<!-- PWA INSTALL FAB — bouton permanent, jamais effaçable, planté comme un arbre -->
-<div id="pwa-install-fab" style="display:none;position:fixed;top:18px;right:18px;z-index:9999;flex-direction:column;align-items:flex-end;gap:8px;">
+<!-- PWA INSTALL FAB — caché, remplacé par le bouton dans le header -->
+<div id="pwa-install-fab" style="display:none;">
   <!-- Étiquette flottante -->
   <div style="background:rgba(7,16,30,0.92);backdrop-filter:blur(12px);border:1px solid rgba(245,210,32,0.35);border-radius:12px;padding:7px 13px;display:flex;align-items:center;gap:8px;box-shadow:0 4px 20px rgba(0,0,0,0.5);">
     <img src="icon-192.png" alt="Kaffi-Pay" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1.5px solid rgba(245,210,32,0.6);">
@@ -2864,13 +2867,13 @@ var _pwaStandalone = window.matchMedia('(display-mode: standalone)').matches
 
 function _pwaFabShow(){
   if(_pwaStandalone) return;
-  var fab = document.getElementById('pwa-install-fab');
-  if(fab) fab.style.display = 'flex';
+  var btn = document.getElementById('pwa-install-btn');
+  if(btn) btn.style.display = 'block';
 }
 
 function _pwaFabHide(){
-  var fab = document.getElementById('pwa-install-fab');
-  if(fab) fab.style.display = 'none';
+  var btn = document.getElementById('pwa-install-btn');
+  if(btn) btn.style.display = 'none';
 }
 
 // Affiche dès le chargement si pas encore installé
