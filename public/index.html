@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-<title>KaffiPay</title>
+<title>Kaffi-Pay</title>
 <meta name="theme-color" content="#07101e">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="KaffiPay">
-<meta name="description" content="KaffiPay — Plateforme d'échange 1xBet & Waafi">
+<meta name="apple-mobile-web-app-title" content="Kaffi-Pay">
+<meta name="description" content="Kaffi-Pay — Plateforme d'échange 1xBet & Waafi">
 <link rel="manifest" href="manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
@@ -391,7 +391,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
   <section class="hero">
     <div class="hero-desc">
-      Bienvenue sur <strong style="color:var(--text)">KaffiPay</strong> — une plateforme d'échange conçue pour la rapidité et l'automatique. Échangez vos fonds en toute confiance.
+      Bienvenue sur <strong style="color:var(--text)">Kaffi-Pay</strong> — une plateforme d'échange conçue pour la rapidité et l'automatique. Échangez vos fonds en toute confiance.
     </div>
     <div class="promo-box">
       <div>
@@ -767,7 +767,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   <div style="background:rgba(7,16,30,0.92);backdrop-filter:blur(12px);border:1px solid rgba(245,210,32,0.35);border-radius:12px;padding:7px 13px;display:flex;align-items:center;gap:8px;box-shadow:0 4px 20px rgba(0,0,0,0.5);">
     <img src="icon-192.png" alt="Kaffi Pay" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1.5px solid rgba(245,210,32,0.6);">
     <div>
-      <div style="font-size:0.75rem;font-weight:700;color:#f5e27a;font-family:'DM Sans',sans-serif;white-space:nowrap;">Installer KaffiPay</div>
+      <div style="font-size:0.75rem;font-weight:700;color:#f5e27a;font-family:'DM Sans',sans-serif;white-space:nowrap;">Installer Kaffi-Pay</div>
       <div style="font-size:0.6rem;color:rgba(255,255,255,0.4);font-family:'DM Sans',sans-serif;white-space:nowrap;">Ajouter à l'écran d'accueil</div>
     </div>
   </div>
@@ -1760,7 +1760,7 @@ function exportPDF(){
   if(!t.length){showToast('⚠️ Aucune donnée','error');return;}
   const pending=t.filter(x=>x.status==='En attente').length;
   const confirmed=t.filter(x=>x.status==='Confirmé').length;
-  let h=`<html><head><title>KaffiPay — Rapport</title>
+  let h=`<html><head><title>Kaffi-Pay — Rapport</title>
   <style>body{font-family:sans-serif;padding:20px;color:#111;}h1{color:#07101e;border-bottom:3px solid #FFD700;padding-bottom:8px;}
   .summary{display:flex;gap:16px;margin:12px 0 20px;}.summary div{padding:10px 16px;border-radius:8px;font-size:13px;}
   .s-pend{background:#fff8e1;border:1px solid #ffcc02;}.s-conf{background:#e8f5e9;border:1px solid #4caf50;}.s-tot{background:#e3f2fd;border:1px solid #2196f3;}
@@ -1769,7 +1769,7 @@ function exportPDF(){
   .d{color:green;font-weight:600;}.r{color:#c2185b;font-weight:600;}
   .pending{color:orange;}.confirmed{color:green;font-weight:600;}.rejected{color:red;}</style>
   </head><body>
-  <h1>KaffiPay — Rapport des Ordres</h1>
+  <h1>Kaffi-Pay — Rapport des Ordres</h1>
   <p style="color:#666;font-size:13px">Généré le ${new Date().toLocaleString('fr-FR')}</p>
   <div class="summary">
     <div class="s-tot">📊 Total : <strong>${t.length}</strong></div>
