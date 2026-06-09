@@ -551,23 +551,29 @@ exports.onNouvelOrdre = onDocumentCreated(
 
     logAudit("nouvel_ordre", { ordreId, type: tx.type, montant: tx.montant, phone });
 
-    // ── WhatsApp — accusé de réception immédiat ──
+    // ── WhatsApp 1/3 — accusé de réception immédiat ──
     if (tx.whatsapp) {
       const montantStr = Number(tx.montant || 0).toLocaleString();
       const receiptMsg = isDepot
-        ? `🧾 *Kaffi-Pay — Ordre reçu ✅*\n\n` +
+        ? `🧾 *Kaffi-Pay — Ordre reçu* ✅\n\n` +
           `Votre ordre *#${ordreId}* a bien été soumis.\n\n` +
-          `📥 Dépôt 1xBet\n` +
-          `Montant : ${montantStr} DJF\n` +
-          `ID 1xBet : ${tx.userId1xBet || tx.id1x || "—"}\n\n` +
-          `⏳ Vérification en cours — vous serez notifié ici.\n` +
-          `📲 Suivi : kaffi-pay.com`
-        : `🧾 *Kaffi-Pay — Ordre reçu ✅*\n\n` +
+          `📥 *Dépôt 1xBet*\n` +
+          `Montant : *${montantStr} DJF*\n` +
+          `ID 1xBet : ${tx.userId1xBet || tx.id1x || "—"}\n` +
+          `Waafi Transfer ID : ${tx.waafitranfertID || tx.hash || "—"}\n` +
+          `N° expéditeur : ${tx.numeroPayment || "—"}\n\n` +
+          `Statut : ⏳ *En attente*\n\n` +
+          `Vous recevrez une notification dès que votre paiement sera validé.\n` +
+          `📲 Suivi : kaffi-pay.com/#suivi-${ordreId}`
+        : `🧾 *Kaffi-Pay — Ordre reçu* ✅\n\n` +
           `Votre demande de retrait *#${ordreId}* a bien été soumise.\n\n` +
-          `📤 Retrait\n` +
-          `Montant : ${montantStr} DJF\n\n` +
-          `⏳ Traitement en cours — vous serez notifié ici.\n` +
-          `📲 Suivi : kaffi-pay.com`;
+          `📤 *Retrait 1xBet*\n` +
+          `Montant : *${montantStr} DJF*\n` +
+          `Code retrait : ${tx.withdrawalCode || tx.code || "—"}\n` +
+          `Numéro Waafi : ${tx.waafiNumber || tx.tel || "—"}\n\n` +
+          `Statut : ⏳ *En attente*\n\n` +
+          `Vous recevrez une notification dès validation.\n` +
+          `📲 Suivi : kaffi-pay.com/#suivi-${ordreId}`;
       await sendWhatsApp(tx.whatsapp, receiptMsg);
     }
 
@@ -819,16 +825,20 @@ exports.onOrdreUpdated = onDocumentUpdated(
     if (after.whatsapp) {
       let waMsg = "";
       if (after.status === "Argent Reçu") {
-        waMsg = `💳 *Kaffi-Pay — Paiement reçu*\n\n` +
-                `Votre paiement de *${montant} DJF* a bien été reçu.\n` +
-                `Crédit de votre compte ${after.type === "Dépôt" ? "1xBet" : "Waafi"} en cours...`;
+        waMsg = `💳 *Kaffi-Pay — Paiement reçu* ✅\n\n` +
+                `Votre paiement *#${ordreId}* de *${montant} DJF* a bien été reçu et validé.\n\n` +
+                `Statut : 💳 *Paiement reçu*\n\n` +
+                `⏳ Crédit de votre compte ${after.type === "Dépôt" ? "1xBet" : "Waafi"} en cours...`;
       } else if (after.status === "Confirmé") {
-        waMsg = `🎉 *Kaffi-Pay — Compte crédité !*\n\n` +
-                `Votre ${after.type === "Dépôt" ? "dépôt" : "retrait"} *#${ordreId}* est confirmé.\n` +
-                `Montant : ${montant} DJF\n\n` +
-                `✅ ${after.type === "Dépôt"
-                  ? "Votre compte 1xBet a été crédité. Vous pouvez maintenant jouer ! 🎮"
-                  : "Votre argent a été envoyé sur votre Waafi."}`;
+        waMsg = after.type === "Dépôt"
+          ? `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
+            `Votre dépôt *#${ordreId}* de *${montant} DJF* a été confirmé.\n\n` +
+            `Statut : ✅ *Crédité avec succès*\n\n` +
+            `Votre compte 1xBet a été crédité. Vous pouvez maintenant jouer ! 🎮`
+          : `🎉 *Kaffi-Pay — Retrait effectué !*\n\n` +
+            `Votre retrait *#${ordreId}* de *${montant} DJF* a été confirmé.\n\n` +
+            `Statut : ✅ *Retrait effectué*\n\n` +
+            `Votre argent a été envoyé sur votre numéro Waafi.`;
       } else if (after.status === "Rejeté") {
         waMsg = `❌ *Kaffi-Pay — Ordre rejeté*\n\n` +
                 `Votre ordre *#${ordreId}* a été rejeté.\n` +
