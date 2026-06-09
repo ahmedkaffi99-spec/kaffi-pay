@@ -10,6 +10,15 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Kaffi-Pay">
 <meta name="description" content="Kaffi-Pay — Plateforme d'échange 1xBet & Waafi">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Kaffi-Pay">
+<meta property="og:description" content="Kaffi-Pay — Plateforme d'échange 1xBet & Waafi. Dépôt et retrait rapide, sécurisé.">
+<meta property="og:image" content="https://kaffi-pay.web.app/icon-512.png">
+<meta property="og:url" content="https://kaffi-pay.web.app/">
+<meta property="og:site_name" content="Kaffi-Pay">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Organization","name":"Kaffi-Pay","url":"https://kaffi-pay.web.app/","logo":{"@type":"ImageObject","url":"https://kaffi-pay.web.app/icon-512.png","width":512,"height":512},"description":"Plateforme d'échange 1xBet & Waafi — Dépôt et retrait rapide, sécurisé."}
+</script>
 <link rel="manifest" href="manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
@@ -363,12 +372,12 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="login-logo-name">Kaffi-<span>Pay</span></div>
       </div>
 
-      <div id="sec-fields" style="display:none;">
+      <div id="sec-fields" style="display:none;" data-nosnippet>
         <div class="login-field"><label>Identifiant</label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username"></div>
         <div class="login-field"><label>Mot de passe</label><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
       </div>
 
-      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;">🔓 Connexion</button>
+      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;" data-nosnippet>🔓 Connexion</button>
       <div class="login-error" id="login-error"></div>
       <div class="login-attempts" id="login-attempts"></div>
     </div>
