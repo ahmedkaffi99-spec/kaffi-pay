@@ -1758,6 +1758,7 @@ function showSuivi(ref, txData){
       if(statusChanged || webhookChanged){
         currentSuiviTx = Object.assign({}, currentSuiviTx, {
           status:        fresh.status,
+          flagRaison:    fresh.flagRaison    || currentSuiviTx.flagRaison    || '',
           webhookStatus: fresh.webhookStatus || currentSuiviTx.webhookStatus || ''
         });
         renderSuivi();
@@ -1837,9 +1838,11 @@ function renderSuivi(){
     card.style.borderColor = 'rgba(255,64,96,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
     icon.textContent = '❌';
-    stxt.textContent = 'Rejeté — Paiement non reçu';
+    stxt.textContent = 'Rejeté — ' + (tx.flagRaison || 'Paiement non reçu');
     stxt.style.color = 'var(--error)';
-    sdesc.textContent= 'Votre paiement Waafi n\'a pas été reçu. Vérifiez votre Transfer ID et contactez le support.';
+    sdesc.textContent= tx.flagRaison
+      ? tx.flagRaison + '. Soumettez un nouvel ordre si le problème est résolu.'
+      : 'Votre paiement Waafi n\'a pas été reçu. Vérifiez votre Transfer ID et contactez le support.';
     prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
     if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   } else if(status === 'Annulé'){
@@ -1919,7 +1922,7 @@ function renderSuivi(){
   var s2act  = isArgentRecu;
   var s2fail = isRejete;
   var s2title= isRejete ? 'Rejeté' : 'Validé';
-  var s2desc = isRejete ? 'Paiement non reçu' : 'Paiement reçu';
+  var s2desc = isRejete ? (tx.flagRaison || 'Paiement non reçu') : 'Paiement reçu';
 
   var s3done  = isConfirmed && wbOk;
   var s3act   = isConfirmed && wbPend;

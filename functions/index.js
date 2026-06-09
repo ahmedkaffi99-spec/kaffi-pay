@@ -273,7 +273,7 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
     if (traitSnap.exists) return false;
 
     tx.update(ordreDoc.ref, {
-      status: "Confirmé",
+      status: "Argent Reçu",
       confirmedBy: "auto_match_waafi",
       montantRecu: montantNotif,
       expediteurRecu: numReel,
@@ -296,21 +296,21 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
 
   if (!claimed) return false;
 
-  logAudit("depot_confirme_match", { ordreId, transferId: notif.transferId, montant: montantNotif });
+  logAudit("depot_argent_recu_match", { ordreId, transferId: notif.transferId, montant: montantNotif });
 
   await sendTelegram(token, adminId,
-    `✅ <b>Dépôt confirmé automatiquement</b>${corrections.length ? " ✏️" : ""}\n\n` +
+    `💳 <b>Paiement Waafi validé</b>${corrections.length ? " ✏️" : ""}\n\n` +
     `Ordre: <b>#${ordreId}</b> | <b>${Number(montantNotif).toLocaleString()} DJF</b>\n` +
     `Transfer-ID: <code>${notif.transferId || "?"}</code> | N°: <code>${numReel}</code>` +
     (ordre.whatsapp ? `\nWhatsApp: <code>${ordre.whatsapp}</code>` : "") +
-    (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "")
+    (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "") +
+    `\n\n<i>⏳ MacroDroid va créditer le compte 1xBet...</i>`
   );
 
-  // MacroDroid est déclenché par onOrdreUpdated dès que status → "Confirmé"
   const id1xbet = ordre.userId1xBet || ordre.id1x || "";
   if (!id1xbet) {
     await sendTelegram(token, adminId,
-      `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\n${Number(montantNotif).toLocaleString()} DJF confirmé.`
+      `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\n${Number(montantNotif).toLocaleString()} DJF en attente de crédit.`
     );
   }
 
@@ -802,27 +802,33 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     logAudit("transition_statut", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
 
+    // ── Telegram admin ──
     let msg = "";
-    if (after.status === "Confirmé")
+    if (after.status === "Argent Reçu")
+      msg = `💳 <b>Paiement Waafi reçu</b>\n#${ordreId} — ${montant} DJF\nCrédit 1xBet en cours…`;
+    else if (after.status === "Confirmé")
       msg = `✅ <b>${type} confirmé</b>\n#${ordreId} — ${montant} DJF\n` +
             (after.confirmedBy === "admin_telegram" ? "👤 Via bot admin"
               : after.confirmedBy?.startsWith("auto") ? "🤖 Automatique" : "👤 Manuel");
     else if (after.status === "Rejeté")
       msg = `❌ <b>${type} rejeté</b>\n#${ordreId} — ${after.flagRaison || "Raison inconnue"}`;
-    else if (after.status === "Argent Reçu")
-      msg = `💳 <b>Paiement Waafi reçu</b>\n#${ordreId} — ${montant} DJF\nCrédit 1xBet en cours…`;
-
 
     if (msg) await sendTelegram(token, adminId, msg);
 
-    // ── WhatsApp — notification statut au client ──
+    // ── WhatsApp client ──
     if (after.whatsapp) {
       let waMsg = "";
-      if (after.status === "Confirmé") {
-        waMsg = `✅ *Kaffi-Pay — Ordre confirmé*\n\n` +
+      if (after.status === "Argent Reçu") {
+        waMsg = `💳 *Kaffi-Pay — Paiement reçu*\n\n` +
+                `Votre paiement de *${montant} DJF* a bien été reçu.\n` +
+                `Crédit de votre compte ${after.type === "Dépôt" ? "1xBet" : "Waafi"} en cours...`;
+      } else if (after.status === "Confirmé") {
+        waMsg = `🎉 *Kaffi-Pay — Compte crédité !*\n\n` +
                 `Votre ${after.type === "Dépôt" ? "dépôt" : "retrait"} *#${ordreId}* est confirmé.\n` +
                 `Montant : ${montant} DJF\n\n` +
-                `⚡ ${after.type === "Dépôt" ? "Crédit 1xBet en cours..." : "Paiement Waafi en cours..."}`;
+                `✅ ${after.type === "Dépôt"
+                  ? "Votre compte 1xBet a été crédité. Vous pouvez maintenant jouer ! 🎮"
+                  : "Votre argent a été envoyé sur votre Waafi."}`;
       } else if (after.status === "Rejeté") {
         waMsg = `❌ *Kaffi-Pay — Ordre rejeté*\n\n` +
                 `Votre ordre *#${ordreId}* a été rejeté.\n` +
@@ -832,9 +838,46 @@ exports.onOrdreUpdated = onDocumentUpdated(
       if (waMsg) await sendWhatsApp(after.whatsapp, waMsg);
     }
 
-    // ── MacroDroid — uniquement quand → "Confirmé" ──
-    // callMacrodroidLocked attend le verrou 20s (max 55s) avant d'appeler.
+    // ── MacroDroid — auto-match : "Argent Reçu" → Macrodroid → "Confirmé" ──
+    // confirmerDepot() place le statut à "Argent Reçu" (confirmedBy: "auto_match_waafi").
+    // C'est ici, et seulement ici, que MacroDroid est déclenché pour le flux auto.
+    if (after.status === "Argent Reçu" && after.confirmedBy?.startsWith("auto")) {
+      const id1xbet    = after.userId1xBet || after.id1x || "";
+      const montantVal = Number(after.montant || 0);
+      const webhookBase = MACRO_WEBHOOK_URL.value() || "";
+
+      if (!id1xbet) {
+        await sendTelegram(token, adminId,
+          `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\nCrédit impossible, intervention manuelle requise.`);
+        return;
+      }
+      if (!webhookBase) return;
+
+      try {
+        await callMacrodroidLocked(webhookBase, ordreId, montantVal, id1xbet);
+        await event.data.after.ref.update({
+          status: "Confirmé",
+          webhookStatus: "ok",
+          webhookAt: FieldValue.serverTimestamp(),
+        });
+        logAudit("macrodroid_ok", { ordreId, id1xbet, source: "auto_argent_recu" });
+      } catch (e) {
+        await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
+        await sendTelegram(token, adminId,
+          `⚠️ <b>MacroDroid échoué</b> — #${ordreId}\n<code>${e.message}</code>\n` +
+          `<i>Le scheduler relancera automatiquement dans 5 min.</i>`);
+        logAudit("macrodroid_echec", { ordreId, err: e.message });
+      }
+      return;
+    }
+
+    // ── MacroDroid — confirmation manuelle admin ──
+    // Admin confirme (En attente → Confirmé ou Argent Reçu → Confirmé).
+    // On déclenche Macrodroid seulement si pas encore fait.
     if (after.status !== "Confirmé") return;
+
+    const wbAlreadyOk = after.webhookStatus === "ok" || after.webhookStatus === "ok_retry_rt";
+    if (wbAlreadyOk) return; // Auto-flow a déjà traité ce dépôt
 
     const id1xbet    = after.userId1xBet || after.id1x || "";
     const montantVal = Number(after.montant || 0);
@@ -1026,17 +1069,31 @@ exports.ordresBloques = onSchedule(
 
     await alertRef.set({ ts: FieldValue.serverTimestamp(), count: vieux.length });
 
-    // ── PARTIE 3 : Ordres "Confirmé" sans crédit Macrodroid → relance ──
-    // Si un ordre est Confirmé mais n'est pas dans ordre_traite ET
-    // webhookStatus != "ok", c'est que Macrodroid n'a jamais été appelé
-    // (ou a échoué). On re-déclenche avec la règle des 20 secondes.
-    const snapConfirme = await db.collection("orders")
-      .where("status", "==", "Confirmé")
-      .get().catch(() => ({ docs: [] }));
-
+    // ── PARTIE 3 : Recovery Macrodroid ────────────────────────────────
+    // Cas A : "Argent Reçu" (auto_match_waafi) + webhookStatus != ok
+    //   → MacroDroid n'a pas encore crédité (ou a échoué). Re-déclenche
+    //   et passe directement à "Confirmé" si succès.
+    // Cas B : "Confirmé" + webhookStatus != ok
+    //   → Confirmation admin manuelle sans MacroDroid (ou MacroDroid échoué).
+    //   Re-déclenche sans changer le statut.
     const webhookBase = (MACRO_WEBHOOK_URL && MACRO_WEBHOOK_URL.value) ? MACRO_WEBHOOK_URL.value() : "";
 
-    for (const ordreDoc of snapConfirme.docs) {
+    const [snapArgentRecu, snapConfirme] = await Promise.all([
+      db.collection("orders")
+        .where("status", "==", "Argent Reçu")
+        .where("confirmedBy", "==", "auto_match_waafi")
+        .get().catch(() => ({ docs: [] })),
+      db.collection("orders")
+        .where("status", "==", "Confirmé")
+        .get().catch(() => ({ docs: [] })),
+    ]);
+
+    const candidats = [
+      ...snapArgentRecu.docs.map(d => ({ doc: d, setConfirme: true })),
+      ...snapConfirme.docs.map(d => ({ doc: d, setConfirme: false })),
+    ];
+
+    for (const { doc: ordreDoc, setConfirme } of candidats) {
       const o       = ordreDoc.data();
       const ordreId = o.orderId || ordreDoc.id;
       const id1xbet = o.userId1xBet || o.id1x || "";
@@ -1045,27 +1102,28 @@ exports.ordresBloques = onSchedule(
       if (wbOk) continue;
       if (!id1xbet || !webhookBase) continue;
 
-      // Vérifie dans ordre_traite si déjà traité
-      const tid         = o.waafitranfertID || o.hash || "";
-      const dejaTraite  = tid
+      // Vérifie dans ordre_traite (anti-doublon)
+      const tid        = o.waafitranfertID || o.hash || "";
+      const dejaTraite = tid
         ? await db.collection("ordre_traite").where("transferId", "==", tid).limit(1).get()
         : { empty: true };
 
       if (!dejaTraite.empty) {
-        // Traité dans ordre_traite mais webhookStatus pas à jour → corriger
+        // Déjà dans ordre_traite mais champ pas à jour
         await ordreDoc.ref.update({ webhookStatus: "ok_recovery" });
         continue;
       }
 
-      // Pas traité → relance Macrodroid
       try {
         await callMacrodroidLocked(webhookBase, ordreId, Number(o.montant || 0), id1xbet);
-        await ordreDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), recoveryBy: "scheduler" });
+        const updateData = { webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), recoveryBy: "scheduler" };
+        if (setConfirme) updateData.status = "Confirmé"; // Argent Reçu → Confirmé
+        await ordreDoc.ref.update(updateData);
         await sendTelegram(token, adminId,
-          `🔄 <b>Recovery Macrodroid</b> — Ordre <code>#${ordreId}</code> relancé automatiquement\n` +
+          `🔄 <b>Recovery MacroDroid</b> — #<code>${ordreId}</code> relancé\n` +
           `ID 1xBet: <code>${id1xbet}</code> | ${Number(o.montant||0).toLocaleString()} DJF`
         );
-        logAudit("macrodroid_recovery_scheduler", { ordreId, id1xbet });
+        logAudit("macrodroid_recovery_scheduler", { ordreId, id1xbet, setConfirme });
       } catch (err) {
         await ordreDoc.ref.update({ webhookStatus: "echec", webhookErr: err.message });
         await sendTelegram(token, adminId,
