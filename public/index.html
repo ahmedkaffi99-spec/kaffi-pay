@@ -909,6 +909,11 @@ function checkURLAdmin(){
     showAdminLogin();
     document.getElementById('screen-login').style.opacity='1';
     try{ window.history.replaceState(null,'',window.location.pathname.replace('/admin','/') || '/'); }catch(e){}
+  } else if(hash.startsWith('#suivi-')){
+    // Restaurer la page suivi après refresh / pull-to-refresh
+    window._pendingSuiviRef = decodeURIComponent(hash.replace('#suivi-',''));
+    suiviRef = window._pendingSuiviRef;
+    showScreen('suivi');
   } else {
     showScreen('client');
   }
@@ -923,6 +928,12 @@ window.addEventListener('DOMContentLoaded', function(){
     if(window.db && !window._listenTxsStarted){
       window._listenTxsStarted = true;
       listenTxs();
+      // Restaurer la page suivi si refresh depuis cette page
+      if(window._pendingSuiviRef){
+        var _ref = window._pendingSuiviRef;
+        window._pendingSuiviRef = null;
+        showSuivi(_ref);
+      }
     }
   }
   window.addEventListener('firebase-ready', startFirebaseListeners);
@@ -1670,8 +1681,14 @@ function saveAdminPage(page){
 }
 
 window.addEventListener('popstate', function(){
-  if(!currentUser) return;
   var hash = window.location.hash;
+  if(!currentUser){
+    if(hash.startsWith('#suivi-') && window.db){
+      var _ref = decodeURIComponent(hash.replace('#suivi-',''));
+      showSuivi(_ref);
+    }
+    return;
+  }
   if(hash.startsWith('#admin-')){
     var page = hash.replace('#admin-','');
     var valid = ['dashboard','orders','reserves','agents','notifs'];
@@ -1827,21 +1844,26 @@ function showSuivi(ref, txData){
   suiviUnsubscribe = window.fsOnSnapshot(q, function(snap){
     if(snap.empty) return;
     var fresh = snap.docs[0].data();
-    if(!currentSuiviTx) return;
-    var statusChanged  = fresh.status !== currentSuiviTx.status;
-    var webhookChanged = (fresh.webhookStatus||'') !== (currentSuiviTx.webhookStatus||'');
-    if(statusChanged || webhookChanged){
-      currentSuiviTx = Object.assign({}, currentSuiviTx, {
-        status:        fresh.status,
-        correctionMsg: fresh.correctionMsg || '',
-        webhookStatus: fresh.webhookStatus || currentSuiviTx.webhookStatus || ''
-      });
+    if(!currentSuiviTx){
+      // Cas restauration après refresh : charger les données depuis Firestore
+      currentSuiviTx = fresh;
       renderSuivi();
+    } else {
+      var statusChanged  = fresh.status !== currentSuiviTx.status;
+      var webhookChanged = (fresh.webhookStatus||'') !== (currentSuiviTx.webhookStatus||'');
+      if(statusChanged || webhookChanged){
+        currentSuiviTx = Object.assign({}, currentSuiviTx, {
+          status:        fresh.status,
+          correctionMsg: fresh.correctionMsg || '',
+          webhookStatus: fresh.webhookStatus || currentSuiviTx.webhookStatus || ''
+        });
+        renderSuivi();
+      }
     }
-    var wbS    = currentSuiviTx.webhookStatus || '';
+    var wbS    = fresh.webhookStatus || '';
     var wbDone = (wbS === 'ok' || wbS === 'ok_retry_rt' || wbS === 'echec');
-    var isFinal = (currentSuiviTx.status === 'Rejeté' || currentSuiviTx.status === 'Annulé')
-               || (currentSuiviTx.status === 'Confirmé' && wbDone);
+    var isFinal = (fresh.status === 'Rejeté' || fresh.status === 'Annulé')
+               || (fresh.status === 'Confirmé' && wbDone);
     if(isFinal && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   });
 }
