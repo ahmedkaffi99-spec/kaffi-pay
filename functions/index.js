@@ -1255,6 +1255,58 @@ exports.healthCheck = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════════
+// HTTP — WHATSAPP RECAP (appelé par le bouton "Recevoir les détails")
+// Envoie automatiquement via UltraMsg — pas de wa.me manuel.
+// ══════════════════════════════════════════════════════════════════
+exports.waRecap = onRequest(
+  { region: REGION, secrets: [ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
+  async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+
+    const ordreId = (req.query.ordreId || (req.body || {}).ordreId || "").trim();
+    if (!ordreId) { res.status(400).json({ ok: false, reason: "ordreId requis" }); return; }
+
+    const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get()
+      .catch(() => ({ empty: true }));
+    if (snap.empty) { res.status(404).json({ ok: false, reason: "Ordre introuvable" }); return; }
+
+    const o          = snap.docs[0].data();
+    const phone      = o.whatsapp || "";
+    if (!phone) { res.status(400).json({ ok: false, reason: "Aucun numéro WhatsApp" }); return; }
+
+    const montantStr = Number(o.montant || 0).toLocaleString();
+    const isDepot    = o.type === "Dépôt";
+    const statut     = o.status || "En attente";
+
+    const msg = isDepot
+      ? `🧾 *Kaffi-Pay — Récapitulatif Dépôt*\n\n` +
+        `N° Ordre : *#${ordreId}*\n` +
+        `Montant : ${montantStr} DJF\n` +
+        `ID 1xBet : ${o.userId1xBet || o.id1x || "—"}\n` +
+        `Waafi Transfer ID : ${o.waafitranfertID || o.hash || "—"}\n` +
+        `N° Expéditeur : ${o.numeroPayment || "—"}\n` +
+        `Statut : ${statut}\n\n` +
+        `📲 kaffi-pay.com/#suivi-${ordreId}`
+      : `🧾 *Kaffi-Pay — Récapitulatif Retrait*\n\n` +
+        `N° Ordre : *#${ordreId}*\n` +
+        `Montant : ${montantStr} DJF\n` +
+        `Code retrait : ${o.withdrawalCode || o.code || "—"}\n` +
+        `Numéro Waafi : ${o.waafiNumber || o.tel || "—"}\n` +
+        `Statut : ${statut}\n\n` +
+        `📲 kaffi-pay.com/#suivi-${ordreId}`;
+
+    const result = await sendWhatsApp(phone, msg);
+    if (result.ok) {
+      res.json({ ok: true });
+    } else {
+      res.status(500).json({ ok: false, reason: result.reason || result.body || "Échec UltraMsg" });
+    }
+  }
+);
+
+
+// ══════════════════════════════════════════════════════════════════
 // HTTP — SUPPORT CLIENT
 // Flux simple : client donne numéro d'ordre → Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════

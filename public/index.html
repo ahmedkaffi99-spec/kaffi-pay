@@ -760,10 +760,9 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   </div>
 
   <button id="suivi-cancel-btn" onclick="openCancelModal()" style="display:none;width:100%;margin-bottom:10px;padding:13px;border-radius:999px;border:1px solid rgba(255,64,96,0.3);background:rgba(255,64,96,0.06);color:var(--error);font-family:'DM Sans',sans-serif;font-size:0.9rem;font-weight:600;cursor:pointer;box-sizing:border-box;">🚫 Annuler cet ordre</button>
-  <a id="suivi-whatsapp-btn" href="#" target="_blank"
-    style="display:none;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.3);background:rgba(37,211,102,0.06);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;text-decoration:none;box-sizing:border-box;margin-bottom:8px;">
+  <button id="suivi-whatsapp-btn" onclick="sendRecapWhatsApp()" style="display:none;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.3);background:rgba(37,211,102,0.06);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;cursor:pointer;box-sizing:border-box;margin-bottom:8px;">
     📲 Recevoir les détails sur WhatsApp
-  </a>
+  </button>
   <a id="suivi-wa-btn" href="https://t.me/kaffipay_support_bot" target="_blank"
     style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(42,171,238,0.25);background:rgba(42,171,238,0.05);color:#29a8eb;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;text-decoration:none;box-sizing:border-box;margin-bottom:8px;">
     💬 Support Kaffi-Pay
@@ -1882,30 +1881,10 @@ function renderSuivi(){
       +'</div>';
   }).join('');
 
-  // ── WhatsApp share button ──
+  // ── WhatsApp recap button (envoi via API, pas wa.me) ──
   var waBtn = document.getElementById('suivi-whatsapp-btn');
-  if(waBtn && tx.whatsapp){
-    var waNum = tx.whatsapp.replace('+','');
-    var waMsg = isDepot
-      ? '🧾 *Kaffi-Pay — Récapitulatif Dépôt*\n\n'
-        +'N° Ordre : #'+(tx.orderId||tx.ref||'—')+'\n'
-        +'Montant : '+(tx.amount||Number(tx.montant).toLocaleString()+' DJF')+'\n'
-        +'ID 1xBet : '+(tx.userId1xBet||tx.id1x||'—')+'\n'
-        +'Transfer ID : '+(tx.waafitranfertID||tx.hash||'—')+'\n'
-        +'N° Expéditeur : '+(tx.numeroPayment||'—')+'\n'
-        +'Statut : '+(tx.status||'En attente')+'\n\n'
-        +'📲 kaffi-pay.com'
-      : '🧾 *Kaffi-Pay — Récapitulatif Retrait*\n\n'
-        +'N° Ordre : #'+(tx.orderId||tx.ref||'—')+'\n'
-        +'Montant : '+(tx.amount||Number(tx.montant).toLocaleString()+' DJF')+'\n'
-        +'Code retrait : '+(tx.withdrawalCode||tx.code||'—')+'\n'
-        +'Numéro Waafi : '+(tx.waafiNumber||tx.tel||'—')+'\n'
-        +'Statut : '+(tx.status||'En attente')+'\n\n'
-        +'📲 kaffi-pay.com';
-    waBtn.href = 'https://wa.me/'+waNum+'?text='+encodeURIComponent(waMsg);
-    waBtn.style.display = 'flex';
-  } else if(waBtn){
-    waBtn.style.display = 'none';
+  if(waBtn){
+    waBtn.style.display = tx.whatsapp ? 'flex' : 'none';
   }
 
   // ── TIMELINE 3 ÉTAPES ──
@@ -1997,6 +1976,27 @@ function copyOrderRef(){
     if(btn){btn.textContent='\u2705 Copié!';btn.style.color='var(--success)';setTimeout(function(){btn.textContent='\ud83d\udccb Copier';btn.style.color='var(--gold)';},2000);}
     showToast('\u2705 N° copié!','success');
   }).catch(function(){showToast('\ud83d\udccb Appuyez longuement','info');});
+}
+
+async function sendRecapWhatsApp(){
+  var btn = document.getElementById('suivi-whatsapp-btn');
+  var ordId = currentSuiviTx && (currentSuiviTx.orderId || currentSuiviTx.ref);
+  if(!ordId){ showToast('❌ Ordre introuvable','error'); return; }
+  var orig = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Envoi...'; }
+  try{
+    var resp = await fetch('/api/waRecap?ordreId='+encodeURIComponent(ordId));
+    var data = await resp.json().catch(function(){ return {}; });
+    if(resp.ok && data.ok){
+      showToast('✅ Message envoyé sur WhatsApp !','success');
+    } else {
+      showToast('❌ Échec envoi WhatsApp : '+(data.reason||'erreur'),'error');
+    }
+  } catch(e){
+    showToast('❌ Erreur réseau','error');
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = orig; }
+  }
 }
 
 function retourClient(){
