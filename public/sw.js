@@ -1,5 +1,5 @@
-// Kaffi-Pay — Service Worker v3.0
-const CACHE = 'kaffipay-v3';
+// Kaffi-Pay — Service Worker v4.0
+const CACHE = 'kaffipay-v4';
 
 self.addEventListener('install', function(e){
   e.waitUntil(
@@ -25,7 +25,7 @@ self.addEventListener('activate', function(e){
 self.addEventListener('fetch', function(e){
   if(e.request.method !== 'GET') return;
   // Firebase/API calls — réseau uniquement
-  if(e.request.url.includes('firestore') || 
+  if(e.request.url.includes('firestore') ||
      e.request.url.includes('firebase') ||
      e.request.url.includes('googleapis')) return;
   e.respondWith(
