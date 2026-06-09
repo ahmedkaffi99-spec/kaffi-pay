@@ -41,7 +41,7 @@ const ULTRAMSG_TOKEN    = defineSecret("ULTRAMSG_TOKEN");
 const TRANSITIONS_VALIDES = {
   "En attente":  ["Confirmé", "Rejeté", "Argent Reçu", "Correction", "Annulé"],
   "Argent Reçu": ["Confirmé", "Rejeté"],
-  "Correction":  ["Confirmé", "Rejeté", "En attente"],
+  "Correction":  ["Rejeté", "En attente"],   // ⛔ Confirmé interdit — client doit corriger d'abord
   "Confirmé":    [],
   "Rejeté":      [],
   "Annulé":      [],
@@ -1514,6 +1514,22 @@ exports.adminBot = onRequest(
         await doc.ref.update({ status: "Rejeté", flagRaison: raison, rejectedBy: "admin_telegram", flaggedAt: FieldValue.serverTimestamp() });
         logAudit("rejete_admin_telegram", { num, raison, adminId });
         await sendTelegram(token, adminId, `❌ Ordre <b>#${num}</b> rejeté.\nRaison : <i>${raison}</i>`);
+        return;
+      }
+
+      // remettre #ID — remet un ordre "Correction" en "En attente" pour re-vérification
+      const remettreMatch = text.match(/^remettre\s+#?(\d{5,8})\b/i);
+      if (remettreMatch) {
+        const num  = remettreMatch[1];
+        const snap = await db.collection("orders").where("orderId", "==", num).limit(1).get();
+        if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        const doc  = snap.docs[0]; const data = doc.data();
+        if (!transitionValide(data.status, "En attente")) {
+          await sendTelegram(token, adminId, `⛔ Impossible de remettre en attente un ordre en statut <b>${data.status}</b>.`); return;
+        }
+        await doc.ref.update({ status: "En attente", remisEnAttenteBy: "admin_telegram", remisEnAttenteAt: FieldValue.serverTimestamp() });
+        logAudit("remis_en_attente_admin", { num, adminId, ancienStatut: data.status });
+        await sendTelegram(token, adminId, `🔄 Ordre <b>#${num}</b> remis en attente.\nTu peux maintenant le confirmer après vérification.`);
         return;
       }
 
