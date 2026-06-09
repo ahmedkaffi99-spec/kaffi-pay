@@ -636,7 +636,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="filter-chip" onclick="filterTx('Retrait',this)">📤 Retraits</div>
       <div class="filter-chip" onclick="filterTx('Confirmé',this)">✅ Confirmés</div>
       <div class="filter-chip" onclick="filterTx('Rejeté',this)">❌ Rejetés</div>
-      <div class="filter-chip" onclick="filterTx('Correction',this)">✏️ Correction</div>
     </div>
     <div class="search-wrap">
       <span class="search-icon">🔍</span>
@@ -760,7 +759,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div id="suivi-timeline"></div>
   </div>
 
-  <button id="suivi-corr-btn" onclick="goCorrection()" style="display:none;width:100%;margin-bottom:10px;padding:13px;border-radius:999px;border:none;background:linear-gradient(135deg,var(--warning),#ffcc00);color:#07101e;font-family:'DM Sans',sans-serif;font-size:0.9rem;font-weight:700;cursor:pointer;box-sizing:border-box;">✏️ Corriger mon ordre</button>
   <button id="suivi-cancel-btn" onclick="openCancelModal()" style="display:none;width:100%;margin-bottom:10px;padding:13px;border-radius:999px;border:1px solid rgba(255,64,96,0.3);background:rgba(255,64,96,0.06);color:var(--error);font-family:'DM Sans',sans-serif;font-size:0.9rem;font-weight:600;cursor:pointer;box-sizing:border-box;">🚫 Annuler cet ordre</button>
   <a id="suivi-whatsapp-btn" href="#" target="_blank"
     style="display:none;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.3);background:rgba(37,211,102,0.06);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;text-decoration:none;box-sizing:border-box;margin-bottom:8px;">
@@ -812,26 +810,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   </div>
 </div>
 
-<!-- MODAL CORRECTION -->
-<div class="modal-overlay" id="correction-modal">
-  <div class="modal">
-    <div class="modal-icon">✏️</div>
-    <div class="modal-title">Demande de correction</div>
-    <div class="modal-desc" style="margin-bottom:12px;">Indiquez au client ce qu'il doit corriger</div>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
-      <button class="corr-preset" onclick="setCorr('Votre ID 1xBet est incorrect. Veuillez le vérifier et resoumettre.')">❌ ID 1xBet incorrect</button>
-      <button class="corr-preset" onclick="setCorr('Votre Waafi Transfer ID est invalide. Vérifiez le numéro de transaction.')">❌ Waafi Transfer ID invalide</button>
-      <button class="corr-preset" onclick="setCorr('Le montant envoyé ne correspond pas. Veuillez vérifier.')">❌ Montant incorrect</button>
-      <button class="corr-preset" onclick="setCorr('Votre numéro Waafi est incorrect. Veuillez le corriger.')">❌ Numéro Waafi incorrect</button>
-      <button class="corr-preset" onclick="setCorr('Votre code de retrait est invalide ou expiré.')">❌ Code retrait invalide</button>
-    </div>
-    <textarea id="corr-msg" placeholder="Ou saisir un message personnalisé..." style="width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:0.82rem;padding:10px 12px;outline:none;resize:none;height:70px;box-sizing:border-box;margin-bottom:12px;"></textarea>
-    <div style="display:flex;gap:8px;">
-      <button onclick="closeCorrModal()" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,0.1);border-radius:999px;padding:10px;font-family:'DM Sans',sans-serif;font-size:0.82rem;color:var(--muted);cursor:pointer;">Annuler</button>
-      <button onclick="sendCorrection()" style="flex:2;background:linear-gradient(135deg,var(--warning),#ffcc00);color:#07101e;border:none;border-radius:999px;padding:10px;font-family:'DM Sans',sans-serif;font-size:0.82rem;font-weight:700;cursor:pointer;">📨 Envoyer</button>
-    </div>
-  </div>
-</div>
 
 <!-- ══ MODAL DÉTAIL ORDRE ADMIN ══ -->
 <div class="modal-overlay" id="order-detail-modal">
@@ -843,7 +821,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div id="odm-ref" style="font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:900;color:var(--gold);letter-spacing:3px;margin-bottom:4px;"></div>
     <div id="odm-date" style="font-size:0.65rem;color:var(--muted);margin-bottom:16px;"></div>
     <div id="odm-rows" style="display:flex;flex-direction:column;gap:0;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);margin-bottom:14px;"></div>
-    <div id="odm-corr-note" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:10px;font-size:0.72rem;color:var(--warning);background:rgba(255,170,0,0.07);border:1px solid rgba(255,170,0,0.15);"></div>
+
     <div id="odm-actions" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
   </div>
 </div>
@@ -1261,42 +1239,7 @@ async function submitDepot(){
   if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
   setLoading('depot',true);
   try{
-    // ── Mode correction : mise à jour de l'ordre existant ──
-    if(_correctionOrderRef){
-      var corrRef = _correctionOrderRef;
-      var corrFid = _correctionFid;
-      var updateData = {
-        userId1xBet: id,
-        waafitranfertID: h,
-        montant: Number(m),
-        amount: Number(m).toLocaleString()+' DJF',
-        numeroPayment: telDepot||'—',
-        whatsapp: '+253'+whatsapp,
-        status: 'En attente',
-        correctedAt: new Date(),
-        correctedBy: 'client',
-        correctionMsg: null
-      };
-      if(!window.db){ showToast('❌ Firebase indisponible','error'); return; }
-      // Trouve le doc Firestore par _fid ou par orderId
-      if(corrFid){
-        await window.fsUpdateDoc(window.fsDoc(window.db,'orders',corrFid), updateData);
-      } else {
-        var snap2 = await window.fsGetDocs(window.fsQuery(window.fsCollection(window.db,'orders'), window.fsWhere('orderId','==',corrRef)));
-        if(!snap2.empty) await window.fsUpdateDoc(snap2.docs[0].ref, updateData);
-      }
-      document.getElementById('depot-montant').value='';
-      document.getElementById('depot-id').value='';
-      document.getElementById('depot-hash').value='';
-      document.getElementById('depot-numero-waafi').value='';
-      document.getElementById('depot-whatsapp').value='';
-      _clearCorrectionMode();
-      suiviRef=corrRef;
-      showSuivi(corrRef, Object.assign({}, currentSuiviTx||{}, updateData, {orderId:corrRef,ref:corrRef}));
-      showToast('✅ Correction soumise — en attente de vérification','success');
-      return;
-    }
-    // ── Nouvel ordre normal ──
+    // ── Nouvel ordre ──
     const orderId=await genererOrderId();
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
@@ -1350,39 +1293,7 @@ async function submitRetrait(){
   if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
   setLoading('retrait',true);
   try{
-    // ── Mode correction : mise à jour de l'ordre existant ──
-    if(_correctionOrderRef){
-      var corrRef2 = _correctionOrderRef;
-      var corrFid2 = _correctionFid;
-      var updateData2 = {
-        withdrawalCode: c,
-        waafiNumber: t,
-        montant: Number(m),
-        amount: Number(m).toLocaleString()+' DJF',
-        whatsapp: '+253'+whatsapp,
-        status: 'En attente',
-        correctedAt: new Date(),
-        correctedBy: 'client',
-        correctionMsg: null
-      };
-      if(!window.db){ showToast('❌ Firebase indisponible','error'); return; }
-      if(corrFid2){
-        await window.fsUpdateDoc(window.fsDoc(window.db,'orders',corrFid2), updateData2);
-      } else {
-        var snap3 = await window.fsGetDocs(window.fsQuery(window.fsCollection(window.db,'orders'), window.fsWhere('orderId','==',corrRef2)));
-        if(!snap3.empty) await window.fsUpdateDoc(snap3.docs[0].ref, updateData2);
-      }
-      document.getElementById('retrait-code').value='';
-      document.getElementById('retrait-tel').value='';
-      document.getElementById('retrait-montant').value='';
-      document.getElementById('retrait-whatsapp').value='';
-      _clearCorrectionMode();
-      suiviRef=corrRef2;
-      showSuivi(corrRef2, Object.assign({}, currentSuiviTx||{}, updateData2, {orderId:corrRef2,ref:corrRef2}));
-      showToast('✅ Correction soumise — en attente de vérification','success');
-      return;
-    }
-    // ── Nouvel ordre normal ──
+    // ── Nouvel ordre ──
     const orderId=await genererOrderId();
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
@@ -1562,11 +1473,10 @@ function renderAllTx(f,s){
 
 function txHTML(t,showActions){
   const d=t.type==='Dépôt';
-  const sc=t.status==='Confirmé'?'confirmed':t.status==='Rejeté'?'rejected':t.status==='Correction'?'pending':'pending';
+  const sc=t.status==='Confirmé'?'confirmed':t.status==='Rejeté'?'rejected':'pending';
   const details=d
     ?`<span>ID 1xBet: ${t.userId1xBet||t.id1x||'—'}</span><span>Transfer ID: ${t.waafitranfertID||t.hash||'—'}</span>`
     :`<span>Code: ${(t.withdrawalCode||t.code||'—').substring(0,16)}</span><span>Waafi: ${t.waafiNumber||t.tel||'—'}</span>`;
-  const corrNote=t.correctionMsg?`<div style="margin-top:5px;padding:6px 9px;border-radius:8px;font-size:0.65rem;color:var(--warning);background:rgba(255,170,0,0.07);border:1px solid rgba(255,170,0,0.15);">💬 Correction demandée : ${t.correctionMsg}</div>`:'';
   const actions = '';
   return `<div class="tx-item" onclick="openOrderDetail('${t.ref}')" style="cursor:pointer;">
     <div class="tx-top">
@@ -1580,11 +1490,10 @@ function txHTML(t,showActions){
       </div>
     </div>
     <div class="tx-bottom">
-      <span class="tx-status ${sc}">${t.status==='Correction'?'⚠️ Correction':t.status||'En attente'}</span>
+      <span class="tx-status ${sc}">${t.status||'En attente'}</span>
       ${actions}
     </div>
     <div class="tx-detail">${details}</div>
-    ${corrNote}
   </div>`;
 }
 
@@ -1641,11 +1550,6 @@ function openOrderDetail(ref){
     var val=r.link?('<a href="'+r.link+'" target="_blank" style="color:var(--gold);text-decoration:none;">'+r.v+'</a>'):('<span class="odm-val">'+r.v+'</span>');
     return '<div class="odm-row"><span class="odm-label">'+r.l+'</span><div class="odm-val-wrap">'+val+copyBtn+'</div></div>';
   }).join('');
-
-  // Correction note
-  var corrDiv=document.getElementById('odm-corr-note');
-  if(tx.correctionMsg){ corrDiv.style.display='block'; corrDiv.textContent='💬 '+tx.correctionMsg; }
-  else { corrDiv.style.display='none'; }
 
   // Actions
   var actDiv=document.getElementById('odm-actions');
@@ -1824,9 +1728,6 @@ let suiviRef=null, suiviInterval=null, suiviUnsubscribe=null;
 
 var currentSuiviTx = null;
 
-// ── Mode correction : client corrige un ordre existant ──
-var _correctionOrderRef = null;  // orderId de l'ordre à corriger
-var _correctionFid      = null;  // Firestore doc ID
 
 function showSuivi(ref, txData){
   suiviRef = ref;
@@ -1857,7 +1758,6 @@ function showSuivi(ref, txData){
       if(statusChanged || webhookChanged){
         currentSuiviTx = Object.assign({}, currentSuiviTx, {
           status:        fresh.status,
-          correctionMsg: fresh.correctionMsg || '',
           webhookStatus: fresh.webhookStatus || currentSuiviTx.webhookStatus || ''
         });
         renderSuivi();
@@ -1887,9 +1787,7 @@ function renderSuivi(){
   const stxt = document.getElementById('suivi-status-text');
   const sdesc= document.getElementById('suivi-status-desc');
   const prog = document.getElementById('suivi-progress');
-  var corrBtnEl   = document.getElementById('suivi-corr-btn');
   var cancelBtnEl = document.getElementById('suivi-cancel-btn');
-  if(corrBtnEl)   corrBtnEl.style.display   = 'none';
   if(cancelBtnEl) cancelBtnEl.style.display = 'none';
 
   // ── CARTE STATUT ──
@@ -1902,15 +1800,6 @@ function renderSuivi(){
     sdesc.textContent= 'Votre ordre est en cours de traitement. Vous serez crédité très rapidement.';
     prog.style.width = '20%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
     if(cancelBtnEl) cancelBtnEl.style.display = 'block';
-  } else if(status === 'Correction'){
-    card.style.borderColor = 'rgba(255,170,0,0.2)';
-    card.style.background  = 'linear-gradient(160deg,rgba(255,170,0,0.04),rgba(7,16,30,0.8))';
-    icon.textContent = '⏳';
-    stxt.textContent = 'En attente';
-    stxt.style.color = 'var(--warning)';
-    sdesc.textContent= tx.correctionMsg || 'Veuillez vérifier les informations de votre ordre.';
-    prog.style.width = '20%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
-    if(corrBtnEl) corrBtnEl.style.display = 'flex';
   } else if(status === 'Argent Reçu'){
     card.style.borderColor = 'rgba(0,212,160,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(0,212,160,0.05),rgba(7,16,30,0.8))';
@@ -2020,7 +1909,7 @@ function renderSuivi(){
   var isConfirmed  = status === 'Confirmé';
   var isRejete     = status === 'Rejeté';
   var isArgentRecu = status === 'Argent Reçu';
-  var isPending    = status === 'En attente' || status === 'Correction';
+  var isPending    = status === 'En attente';
   var isAnnule     = status === 'Annulé';
 
   var s1done = !isPending && !isAnnule;
@@ -2134,122 +2023,6 @@ async function confirmerAnnulation(){
   }
 }
 
-function goCorrection(){
-  if(!suiviRef) return;
-  var tx = getTxs().find(function(t){ return t.ref===suiviRef; }) || currentSuiviTx;
-  if(!tx) return;
-
-  _correctionOrderRef = tx.orderId || tx.ref || suiviRef;
-  _correctionFid      = tx._fid || null;
-
-  // Identifier les champs en erreur depuis correctionDetails ou correctionMsg
-  var wrongFields = { transferId:false, montant:false, numero:false };
-  var details = tx.correctionDetails || [];
-  var msg = (tx.correctionMsg || '').toLowerCase();
-  details.forEach(function(m){
-    var ml = (m||'').toLowerCase();
-    if(ml.includes('transfer')) wrongFields.transferId = true;
-    if(ml.includes('montant'))  wrongFields.montant = true;
-    if(ml.includes('xpéditeur')||ml.includes('n°')||ml.includes('numclient')) wrongFields.numero = true;
-  });
-  if(!details.length){
-    if(msg.includes('transfer')) wrongFields.transferId = true;
-    if(msg.includes('montant'))  wrongFields.montant = true;
-    if(msg.includes('xpéditeur')||msg.includes('n°')) wrongFields.numero = true;
-  }
-
-  // Valeurs actuelles de l'ordre
-  var montant    = tx.montant || '';
-  var transferId = tx.waafitranfertID || tx.hash || '';
-  var numero     = (tx.numeroPayment||'').replace(/^\+?253/,'');
-  var isDepot    = tx.type === 'Dépôt';
-
-  var styleField = function(wrong){
-    return 'width:100%;box-sizing:border-box;padding:13px 14px;border-radius:12px;border:1.5px solid '+(wrong?'rgba(255,64,96,0.7)':'rgba(255,255,255,0.1)')+';background:rgba(255,255,255,0.04);color:#fff;font-size:0.95rem;font-family:\'DM Sans\',sans-serif;outline:none;margin-top:6px;';
-  };
-  var styleLabel = function(wrong, text){
-    return '<div style="font-size:0.63rem;font-weight:700;letter-spacing:0.08em;color:'+(wrong?'#ff4060':'rgba(255,255,255,0.45)')+';margin-top:14px;">'+text+(wrong?' ⚠️ À CORRIGER':'')+'</div>';
-  };
-
-  var popup = document.createElement('div');
-  popup.id = 'correction-popup';
-  popup.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.8);display:flex;align-items:flex-end;justify-content:center;padding:0;';
-  popup.innerHTML =
-    '<div style="background:#0f1d2e;border:1px solid rgba(255,170,0,0.3);border-radius:24px 24px 0 0;padding:26px 20px 36px;width:100%;max-width:480px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
-    +'<div style="width:36px;height:4px;background:rgba(255,255,255,0.12);border-radius:99px;margin:0 auto 18px;"></div>'
-    +'<div style="font-family:\'Playfair Display\',serif;font-size:1.05rem;font-weight:700;color:#ffaa00;margin-bottom:3px;">✏️ Corriger l\'ordre</div>'
-    +'<div style="font-size:0.7rem;color:rgba(255,255,255,0.4);margin-bottom:4px;">#'+(_correctionOrderRef||'')+'</div>'
-    +(tx.correctionMsg ? '<div style="font-size:0.72rem;color:rgba(255,170,0,0.85);background:rgba(255,170,0,0.08);border-radius:8px;padding:8px 10px;margin:10px 0;">'+tx.correctionMsg.replace(/\n/g,'<br>')+'</div>' : '')
-    + styleLabel(wrongFields.montant,'💰 MONTANT (DJF)')
-    +'<input id="corr-montant" type="number" value="'+montant+'" style="'+styleField(wrongFields.montant)+'">'
-    + styleLabel(wrongFields.transferId,'🔑 WAAFI TRANSFER ID')
-    +'<input id="corr-transferid" type="text" inputmode="numeric" value="'+transferId+'" style="'+styleField(wrongFields.transferId)+'">'
-    + styleLabel(wrongFields.numero,'📞 NUMÉRO EXPÉDITEUR WAAFI')
-    +'<input id="corr-numero" type="tel" inputmode="numeric" value="'+numero+'" style="'+styleField(wrongFields.numero)+'">'
-    +'<div style="font-size:0.62rem;color:rgba(255,255,255,0.3);margin-top:4px;">8 chiffres · commence par 77</div>'
-    +'<button onclick="soumettreCorrection('+isDepot+')" style="margin-top:20px;width:100%;padding:14px;border-radius:999px;border:none;background:linear-gradient(135deg,#f5d020,#f5a623);color:#07101e;font-family:\'DM Sans\',sans-serif;font-size:0.92rem;font-weight:700;cursor:pointer;">✅ Confirmer la correction</button>'
-    +'<button onclick="document.getElementById(\'correction-popup\').remove()" style="margin-top:10px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.45);font-family:\'DM Sans\',sans-serif;font-size:0.85rem;cursor:pointer;">← Retour</button>'
-    +'</div>';
-  document.body.appendChild(popup);
-  popup.addEventListener('click', function(e){ if(e.target===popup) popup.remove(); });
-}
-
-async function soumettreCorrection(isDepot){
-  var m  = document.getElementById('corr-montant').value;
-  var h  = document.getElementById('corr-transferid').value.trim();
-  var tel= document.getElementById('corr-numero').value.trim();
-  if(!m||Number(m)<50){ showToast('⚠️ Minimum 50 DJF','error'); return; }
-  if(!h||!/^\d{6,15}$/.test(h)){ showToast('⚠️ Waafi Transfer ID invalide','error'); return; }
-  if(!tel||tel.length!==8){ showToast('⚠️ Numéro expéditeur 8 chiffres','error'); return; }
-  if(!_correctionOrderRef){ showToast('❌ Erreur — ordre introuvable','error'); return; }
-  var corrRef = _correctionOrderRef;
-  var corrFid = _correctionFid;
-  var updateData = {
-    montant: Number(m),
-    amount: Number(m).toLocaleString()+' DJF',
-    waafitranfertID: h,
-    hash: h,
-    numeroPayment: tel,
-    status: 'En attente',
-    correctedAt: new Date(),
-    correctedBy: 'client',
-    correctionMsg: null,
-    correctionDetails: []
-  };
-  try{
-    if(!window.db){ showToast('❌ Firebase indisponible','error'); return; }
-    if(corrFid){
-      await window.fsUpdateDoc(window.fsDoc(window.db,'orders',corrFid), updateData);
-    } else {
-      var snap = await window.fsGetDocs(window.fsQuery(window.fsCollection(window.db,'orders'), window.fsWhere('orderId','==',corrRef)));
-      if(!snap.empty) await window.fsUpdateDoc(snap.docs[0].ref, updateData);
-    }
-    var popup = document.getElementById('correction-popup');
-    if(popup) popup.remove();
-    _correctionOrderRef = null;
-    _correctionFid = null;
-    // Mettre à jour l'affichage suivi
-    if(currentSuiviTx) currentSuiviTx = Object.assign({}, currentSuiviTx, updateData, {orderId:corrRef,ref:corrRef});
-    suiviRef = corrRef;
-    showSuivi(corrRef, currentSuiviTx);
-    showToast('✅ Correction envoyée — vérification en cours','success');
-  } catch(e){
-    showToast('❌ Erreur : '+e.message,'error');
-  }
-}
-
-function _clearCorrectionMode(){
-  _correctionOrderRef = null;
-  _correctionFid      = null;
-  ['depot','retrait'].forEach(function(tab){
-    var b = document.getElementById('correction-banner-'+tab);
-    if(b) b.remove();
-  });
-  var db2 = document.getElementById('depot-btn');
-  var rb  = document.getElementById('retrait-btn');
-  if(db2) db2.textContent = '📤 Soumettre le dépôt';
-  if(rb)  rb.textContent  = '📤 Soumettre le retrait';
-}
 
 function copyDetailVal(btn){
   var val=btn.getAttribute('data-copy');
@@ -2277,44 +2050,6 @@ function copySuiviRef(){
   }
 }
 
-// ═══════════════════════════════════════════════════
-// CORRECTION
-// ═══════════════════════════════════════════════════
-let correctionRef = null;
-
-function openCorrection(ref){
-  correctionRef = ref;
-  document.getElementById('corr-msg').value = '';
-  document.getElementById('correction-modal').classList.add('show');
-}
-
-function closeCorrModal(){
-  document.getElementById('correction-modal').classList.remove('show');
-  correctionRef = null;
-}
-
-function setCorr(msg){
-  document.getElementById('corr-msg').value = msg;
-}
-
-function sendCorrection(){
-  const msg = document.getElementById('corr-msg').value.trim();
-  if(!msg){ showToast('⚠️ Saisissez un message','error'); return; }
-  const txs = getTxs();
-  const idx = txs.findIndex(t=>t.ref===correctionRef);
-  var cidx=_txsCache.findIndex(function(t){return t.ref===correctionRef;});
-  if(cidx>=0){
-    _txsCache[cidx].status='Correction';
-    _txsCache[cidx].correctionMsg=msg;
-    updateTxFirebase(correctionRef,{status:'Correction',correctionMsg:msg}).catch(function(){});
-    renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:'');
-    renderRecentTx();
-    updateStats();
-    pushNotif('correction', 'Message : "'+msg+'"', correctionRef, null);
-    showToast('✏️ Correction envoyée au client','warning');
-  }
-  closeCorrModal();
-}
 
 // ═══════════════════════════════════════════════════
 // MODAL & TOAST
@@ -2415,7 +2150,6 @@ var NOTIF_TYPES = {
   retrait_traite:{ icon:'💸', color:'#e91e8c',         label:'Retrait traité'        },
   retrait_confirme:{ icon:'✅', color:'var(--success)',label:'Retrait confirmé'      },
   ordre_rejete:  { icon:'❌', color:'var(--error)',    label:'Ordre rejeté'          },
-  correction:    { icon:'✏️', color:'var(--warning)',  label:'Correction envoyée'    },
   nouvel_ordre:  { icon:'🔔', color:'var(--gold)',     label:'Nouvel ordre'          },
   sms_recu:      { icon:'📩', color:'#5b9cff',         label:'SMS Waafi reçu'        },
   sms_non_match: { icon:'⚠️', color:'var(--warning)', label:'SMS non matché'        },
@@ -2882,7 +2616,6 @@ try {
   if(typeof boutonPaiementRetrait!=="undefined") window.boutonPaiementRetrait=boutonPaiementRetrait;
   if(typeof checkURLAdmin!=="undefined") window.checkURLAdmin=checkURLAdmin;
   if(typeof clientLogoTap!=="undefined") window.clientLogoTap=clientLogoTap;
-  if(typeof closeCorrModal!=="undefined") window.closeCorrModal=closeCorrModal;
   if(typeof closeModal!=="undefined") window.closeModal=closeModal;
   if(typeof copyOrderRef!=="undefined") window.copyOrderRef=copyOrderRef;
   if(typeof copyPromo!=="undefined") window.copyPromo=copyPromo;
@@ -2893,16 +2626,13 @@ try {
   if(typeof exportCSV!=="undefined") window.exportCSV=exportCSV;
   if(typeof exportPDF!=="undefined") window.exportPDF=exportPDF;
   if(typeof filterTx!=="undefined") window.filterTx=filterTx;
-  if(typeof goCorrection!=="undefined") window.goCorrection=goCorrection;
   if(typeof goOrders!=="undefined") window.goOrders=goOrders;
   if(typeof openOrderDetail!=="undefined") window.openOrderDetail=openOrderDetail;
   if(typeof pasteField!=="undefined") window.pasteField=pasteField;
   if(typeof renderSuivi!=="undefined") window.renderSuivi=renderSuivi;
   if(typeof saveReserve!=="undefined") window.saveReserve=saveReserve;
   if(typeof searchTx!=="undefined") window.searchTx=searchTx;
-  if(typeof sendCorrection!=="undefined") window.sendCorrection=sendCorrection;
   if(typeof setAdminPage!=="undefined") window.setAdminPage=setAdminPage;
-  if(typeof setCorr!=="undefined") window.setCorr=setCorr;
   if(typeof showPage!=="undefined") window.showPage=showPage;
   if(typeof showScreen!=="undefined") window.showScreen=showScreen;
   if(typeof startFirebaseListeners!=="undefined") window.startFirebaseListeners=startFirebaseListeners;

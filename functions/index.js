@@ -39,9 +39,8 @@ const ULTRAMSG_TOKEN    = defineSecret("ULTRAMSG_TOKEN");
 // SECTION 1 — STATE MACHINE
 // ══════════════════════════════════════════════════════════════════
 const TRANSITIONS_VALIDES = {
-  "En attente":  ["Confirmé", "Rejeté", "Argent Reçu", "Correction", "Annulé"],
+  "En attente":  ["Confirmé", "Rejeté", "Argent Reçu", "Annulé"],
   "Argent Reçu": ["Confirmé", "Rejeté"],
-  "Correction":  ["Rejeté", "En attente"],   // ⛔ Confirmé interdit — client doit corriger d'abord
   "Confirmé":    [],
   "Rejeté":      [],
   "Annulé":      [],
@@ -181,8 +180,7 @@ async function callMacrodroidLocked(webhookBase, ordreId, montant, id1xbet) {
 //
 //  Règles :
 //  3/3 → confirmer automatiquement
-//  2/3 → statut "Correction" — client doit resoumettre
-//  0-1 → rejeter
+//  <3  → rejeter avec raison spécifique par champ
 //
 //  Un critère est "MISMATCH" seulement si la valeur existe dans
 //  la notification ET ne correspond pas à l'ordre.
@@ -226,8 +224,18 @@ function scorerCorrespondance(ordreData, notifData) {
     );
   }
 
-  const decision = score >= 3 ? "confirmer" : score === 2 ? "correction" : "rejeter";
+  const decision = score >= 3 ? "confirmer" : "rejeter";
   return { score, mismatches, decision };
+}
+
+function mismatchToRaison(mismatches) {
+  for (const m of mismatches) {
+    const ml = (m || "").toLowerCase();
+    if (ml.includes("transfer")) return "Paiement non reçu";
+    if (ml.includes("montant"))  return "Montant incorrect";
+    if (ml.includes("xpéditeur") || ml.includes("n°")) return "Numéro expéditeur incorrect";
+  }
+  return "Informations incorrectes";
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -339,8 +347,6 @@ function statutOrdreMsg(ordreId, o) {
     statut = "⏳ <b>En attente</b> — traitement en cours.";
   else if (o.status === "Argent Reçu")
     statut = "💳 <b>Paiement reçu</b> — confirmation en cours.";
-  else if (o.status === "Correction")
-    statut = `✏️ <b>Correction requise</b>\n${o.correctionMsg || "Vérifiez votre Transfer ID et resoumettez."}`;
   else if (o.status === "Rejeté")
     statut = `❌ <b>Rejeté</b> — ${o.flagRaison || "Paiement non reçu."}`;
   else if (o.status === "Annulé")
@@ -701,39 +707,18 @@ exports.onNouvelOrdre = onDocumentCreated(
           return;
         }
 
-        if (decision === "correction") {
-          // 2/3 — données partiellement incorrectes → correction + resoumettre
-          const msgDetails = mismatches.map((m) => `• ${m}`).join("\n");
-          await db.collection("orders").doc(docId).update({
-            status: "Correction",
-            correctionMsg: `Correspondance partielle (${score}/3) — corrigez les informations et resoumettez.\n${mismatches.join(" | ")}`,
-            correctionDetails: mismatches,
-            correctionScore: score,
-            correctionAt: FieldValue.serverTimestamp(),
-          });
-          await sendTelegram(token, adminId,
-            `✏️ <b>Correspondance partielle (${score}/3) — Correction requise</b>\n\n` +
-            `Ordre <code>#${ordreId}</code> | ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
-            `${msgDetails}\n\n` +
-            `<i>Le client doit corriger et resoumettre l'ordre.</i>\n` +
-            `Forcer si OK : <code>confirmer ${ordreId}</code>`
-          );
-          logAudit("depot_correction_partielle", { ordreId, score, mismatches });
-          return;
-        }
-
-        // score ≤ 1 — données trop éloignées → rejet même si notif trouvée
-        const msgDetails = mismatches.map((m) => `• ${m}`).join("\n");
+        // score < 3 — rejet avec raison spécifique par champ
+        const raison = mismatchToRaison(mismatches);
         await db.collection("orders").doc(docId).update({
           status: "Rejeté",
-          flagRaison: `Données incorrectes (${score}/3) — ${mismatches.join(", ")}`,
+          flagRaison: raison,
           flaggedAt: FieldValue.serverTimestamp(),
         });
         await sendTelegram(token, adminId,
-          `❌ <b>Dépôt rejeté — Correspondance insuffisante (${score}/3)</b>\n\n` +
-          `Ordre <code>#${ordreId}</code>\n${msgDetails}`
+          `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\n\n` +
+          `Ordre <code>#${ordreId}</code>\n${mismatches.map((m) => `• ${m}`).join("\n")}`
         );
-        logAudit("depot_rejete_mauvaise_correspondance", { ordreId, score, mismatches });
+        logAudit("depot_rejete_mauvaise_correspondance", { ordreId, score, mismatches, raison });
         return;
       }
 
@@ -817,76 +802,6 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     logAudit("transition_statut", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
 
-    // ── Correction soumise par client : relancer le matching automatique ──
-    // Quand Correction → En attente avec correctedAt, c'est une correction client.
-    // onNouvelOrdre ne se déclenche pas sur update → on re-match ici.
-    if (before.status === "Correction" && after.status === "En attente"
-        && after.correctedAt && after.type === "Dépôt") {
-      const corrTransferId = (after.waafitranfertID || after.hash || "").trim();
-      const corrPhone      = (after.numeroPayment || "").trim();
-      const docId          = event.params.docId;
-
-      if (corrTransferId) {
-        const [byTID, dejaTraite] = await Promise.all([
-          db.collection("waafi_notifications").where("transferId", "==", corrTransferId).limit(1).get(),
-          db.collection("ordre_traite").where("transferId", "==", corrTransferId).limit(1).get(),
-        ]);
-
-        let waafiDoc = (!byTID.empty && dejaTraite.empty) ? byTID.docs[0] : null;
-
-        // Fallback : par numéro + montant si TID non parsé
-        if (!waafiDoc && corrPhone) {
-          const montantOrdre = Number(after.montant || 0);
-          const tolerance    = Math.max(5, montantOrdre * 0.05);
-          const byPhone = await db.collection("waafi_notifications")
-            .where("numClient", "==", corrPhone).limit(10).get();
-          for (const d of byPhone.docs) {
-            const n = d.data();
-            if (!n.montant || Math.abs(montantOrdre - n.montant) > tolerance) continue;
-            const deja = n.transferId
-              ? (await db.collection("ordre_traite").where("transferId", "==", n.transferId).limit(1).get()).empty
-              : true;
-            if (deja) { waafiDoc = d; break; }
-          }
-        }
-
-        if (waafiDoc) {
-          const ordreSnap2 = await db.collection("orders").doc(docId).get();
-          const { score, mismatches, decision } = scorerCorrespondance(after, waafiDoc.data());
-
-          if (decision === "confirmer") {
-            await confirmerDepot(ordreSnap2, waafiDoc, token, adminId);
-            return;
-          }
-          if (decision === "correction") {
-            await db.collection("orders").doc(docId).update({
-              status: "Correction",
-              correctionMsg: `Correspondance partielle (${score}/3) — corrigez et resoumettez.\n${mismatches.join(" | ")}`,
-              correctionDetails: mismatches,
-              correctionScore: score,
-              correctionAt: FieldValue.serverTimestamp(),
-            });
-            await sendTelegram(token, adminId,
-              `✏️ <b>Correction persistante (${score}/3)</b>\nOrdre <code>#${ordreId}</code>\n${mismatches.map(m=>`• ${m}`).join("\n")}\nForcer : <code>confirmer ${ordreId}</code>`);
-            return;
-          }
-          // score ≤ 1
-          await db.collection("orders").doc(docId).update({
-            status: "Rejeté",
-            flagRaison: `Données incorrectes après correction (${score}/3) — ${mismatches.join(", ")}`,
-            flaggedAt: FieldValue.serverTimestamp(),
-          });
-          await sendTelegram(token, adminId,
-            `❌ <b>Rejeté après correction (${score}/3)</b>\nOrdre <code>#${ordreId}</code>\n${mismatches.map(m=>`• ${m}`).join("\n")}`);
-          return;
-        }
-      }
-      // Pas de notification trouvée même après correction
-      await sendTelegram(token, adminId,
-        `⚠️ <b>Correction soumise — aucune notif Waafi trouvée</b>\nOrdre <code>#${ordreId}</code> | TID: <code>${corrTransferId}</code>\nVérifier manuellement.`);
-      return;
-    }
-
     let msg = "";
     if (after.status === "Confirmé")
       msg = `✅ <b>${type} confirmé</b>\n#${ordreId} — ${montant} DJF\n` +
@@ -896,8 +811,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
       msg = `❌ <b>${type} rejeté</b>\n#${ordreId} — ${after.flagRaison || "Raison inconnue"}`;
     else if (after.status === "Argent Reçu")
       msg = `💳 <b>Paiement Waafi reçu</b>\n#${ordreId} — ${montant} DJF\nCrédit 1xBet en cours…`;
-    else if (after.status === "Correction")
-      msg = `✏️ <b>Correction demandée</b>\n#${ordreId}\n${after.correctionMsg || ""}`;
+
 
     if (msg) await sendTelegram(token, adminId, msg);
 
@@ -914,11 +828,6 @@ exports.onOrdreUpdated = onDocumentUpdated(
                 `Votre ordre *#${ordreId}* a été rejeté.\n` +
                 `Raison : ${after.flagRaison || "Paiement non reçu"}\n\n` +
                 `Soumettez un nouvel ordre sur kaffi-pay.com`;
-      } else if (after.status === "Correction") {
-        waMsg = `✏️ *Kaffi-Pay — Correction requise*\n\n` +
-                `Votre ordre *#${ordreId}* nécessite une correction.\n\n` +
-                `${after.correctionMsg || "Vérifiez vos informations."}\n\n` +
-                `Allez sur kaffi-pay.com pour corriger votre ordre.`;
       }
       if (waMsg) await sendWhatsApp(after.whatsapp, waMsg);
     }
@@ -1070,16 +979,16 @@ exports.ordresBloques = onSchedule(
       if (decision === "confirmer") {
         const ok = await confirmerDepot(ordreDoc, waafiDoc, token, adminId);
         if (ok) autoConfirmes++;
-      } else if (decision === "correction") {
+      } else {
         const { score, mismatches } = scorerCorrespondance(ordre, waafiDoc.data());
+        const raison = mismatchToRaison(mismatches);
         await ordreDoc.ref.update({
-          status: "Correction",
-          correctionMsg: `Correspondance partielle (${score}/3) — corrigez et resoumettez.\n${mismatches.join(" | ")}`,
-          correctionDetails: mismatches, correctionScore: score,
-          correctionAt: FieldValue.serverTimestamp(),
+          status: "Rejeté",
+          flagRaison: raison,
+          flaggedAt: FieldValue.serverTimestamp(),
         });
         await sendTelegram(token, adminId,
-          `✏️ <b>Correction auto (${score}/3)</b>\nOrdre <code>#${ordre.orderId || ordreDoc.id}</code>\n` +
+          `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordre.orderId || ordreDoc.id}</code>\n` +
           mismatches.map((m) => `• ${m}`).join("\n")
         );
       }
@@ -1189,25 +1098,15 @@ exports.smsWebhook = onRequest(
 
     if (decision === "confirmer") {
       await confirmerDepot(ordreDoc, waafiSnap, token, adminId);
-    } else if (decision === "correction") {
-      await ordreDoc.ref.update({
-        status: "Correction",
-        correctionMsg: `Correspondance partielle (${score}/3) — corrigez et resoumettez.\n${mismatches.join(" | ")}`,
-        correctionDetails: mismatches, correctionScore: score,
-        correctionAt: FieldValue.serverTimestamp(),
-      });
-      await sendTelegram(token, adminId,
-        `✏️ <b>Correction requise (${score}/3)</b>\n\nOrdre <code>#${ordreRef2}</code>\n` +
-        mismatches.map((m) => `• ${m}`).join("\n") + `\n\n<i>Le client doit corriger et resoumettre.</i>`
-      );
     } else {
+      const raison = mismatchToRaison(mismatches);
       await ordreDoc.ref.update({
         status: "Rejeté",
-        flagRaison: `Données incorrectes (${score}/3) — ${mismatches.join(", ")}`,
+        flagRaison: raison,
         flaggedAt: FieldValue.serverTimestamp(),
       });
       await sendTelegram(token, adminId,
-        `❌ <b>Correspondance insuffisante (${score}/3)</b>\nOrdre <code>#${ordreRef2}</code>\n` +
+        `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreRef2}</code>\n` +
         mismatches.map((m) => `• ${m}`).join("\n")
       );
     }
@@ -1495,21 +1394,6 @@ exports.supportClient = onRequest(
           return;
         }
 
-        // ── Correction requise ──
-        if (o.status === "Correction") {
-          await send(
-            statutOrdreMsg(ordreId, o) +
-            `\n\n<b>Comment corriger :</b>\n` +
-            `1️⃣ Allez sur kaffi-pay.com\n` +
-            `2️⃣ Retrouvez votre ordre #${ordreId}\n` +
-            `3️⃣ Cliquez sur <b>✏️ Corriger mon ordre</b>\n` +
-            `4️⃣ Soumettez les informations corrigées`
-          );
-          await sendTelegram(adminToken, adminId2,
-            `🆘 <b>Support</b> | 👤 ${firstName} | <b>#${ordreId}</b> (Correction)`);
-          return;
-        }
-
         // ── Autres statuts (En attente, Argent Reçu…) ──
         await send(statutOrdreMsg(ordreId, o));
         return;
@@ -1589,7 +1473,7 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // remettre #ID — remet un ordre "Correction" en "En attente" pour re-vérification
+      // remettre #ID — remet un ordre en "En attente" pour re-vérification manuelle
       const remettreMatch = text.match(/^remettre\s+#?(\d{5,8})\b/i);
       if (remettreMatch) {
         const num  = remettreMatch[1];
