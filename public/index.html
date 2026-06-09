@@ -1238,6 +1238,42 @@ async function submitDepot(){
   if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
   setLoading('depot',true);
   try{
+    // ── Mode correction : mise à jour de l'ordre existant ──
+    if(_correctionOrderRef){
+      var corrRef = _correctionOrderRef;
+      var corrFid = _correctionFid;
+      var updateData = {
+        userId1xBet: id,
+        waafitranfertID: h,
+        montant: Number(m),
+        amount: Number(m).toLocaleString()+' DJF',
+        numeroPayment: telDepot||'—',
+        whatsapp: '+253'+whatsapp,
+        status: 'En attente',
+        correctedAt: new Date(),
+        correctedBy: 'client',
+        correctionMsg: null
+      };
+      if(!window.db){ showToast('❌ Firebase indisponible','error'); return; }
+      // Trouve le doc Firestore par _fid ou par orderId
+      if(corrFid){
+        await window.fsUpdateDoc(window.fsDoc(window.db,'orders',corrFid), updateData);
+      } else {
+        var snap2 = await window.fsGetDocs(window.fsQuery(window.fsCollection(window.db,'orders'), window.fsWhere('orderId','==',corrRef)));
+        if(!snap2.empty) await window.fsUpdateDoc(snap2.docs[0].ref, updateData);
+      }
+      document.getElementById('depot-montant').value='';
+      document.getElementById('depot-id').value='';
+      document.getElementById('depot-hash').value='';
+      document.getElementById('depot-numero-waafi').value='';
+      document.getElementById('depot-whatsapp').value='';
+      _clearCorrectionMode();
+      suiviRef=corrRef;
+      showSuivi(corrRef, Object.assign({}, currentSuiviTx||{}, updateData, {orderId:corrRef,ref:corrRef}));
+      showToast('✅ Correction soumise — en attente de vérification','success');
+      return;
+    }
+    // ── Nouvel ordre normal ──
     const orderId=await genererOrderId();
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
@@ -1291,6 +1327,39 @@ async function submitRetrait(){
   if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
   setLoading('retrait',true);
   try{
+    // ── Mode correction : mise à jour de l'ordre existant ──
+    if(_correctionOrderRef){
+      var corrRef2 = _correctionOrderRef;
+      var corrFid2 = _correctionFid;
+      var updateData2 = {
+        withdrawalCode: c,
+        waafiNumber: t,
+        montant: Number(m),
+        amount: Number(m).toLocaleString()+' DJF',
+        whatsapp: '+253'+whatsapp,
+        status: 'En attente',
+        correctedAt: new Date(),
+        correctedBy: 'client',
+        correctionMsg: null
+      };
+      if(!window.db){ showToast('❌ Firebase indisponible','error'); return; }
+      if(corrFid2){
+        await window.fsUpdateDoc(window.fsDoc(window.db,'orders',corrFid2), updateData2);
+      } else {
+        var snap3 = await window.fsGetDocs(window.fsQuery(window.fsCollection(window.db,'orders'), window.fsWhere('orderId','==',corrRef2)));
+        if(!snap3.empty) await window.fsUpdateDoc(snap3.docs[0].ref, updateData2);
+      }
+      document.getElementById('retrait-code').value='';
+      document.getElementById('retrait-tel').value='';
+      document.getElementById('retrait-montant').value='';
+      document.getElementById('retrait-whatsapp').value='';
+      _clearCorrectionMode();
+      suiviRef=corrRef2;
+      showSuivi(corrRef2, Object.assign({}, currentSuiviTx||{}, updateData2, {orderId:corrRef2,ref:corrRef2}));
+      showToast('✅ Correction soumise — en attente de vérification','success');
+      return;
+    }
+    // ── Nouvel ordre normal ──
     const orderId=await genererOrderId();
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
@@ -1726,6 +1795,10 @@ let suiviRef=null, suiviInterval=null, suiviUnsubscribe=null;
 
 var currentSuiviTx = null;
 
+// ── Mode correction : client corrige un ordre existant ──
+var _correctionOrderRef = null;  // orderId de l'ordre à corriger
+var _correctionFid      = null;  // Firestore doc ID
+
 function showSuivi(ref, txData){
   suiviRef = ref;
   if(txData) currentSuiviTx = txData;
@@ -2029,21 +2102,65 @@ async function confirmerAnnulation(){
 
 function goCorrection(){
   if(!suiviRef) return;
-  var tx = getTxs().find(function(t){ return t.ref===suiviRef; });
+  var tx = getTxs().find(function(t){ return t.ref===suiviRef; }) || currentSuiviTx;
   if(!tx) return;
+  // Mémorise l'ordre à corriger
+  _correctionOrderRef = tx.orderId || tx.ref || suiviRef;
+  _correctionFid      = tx._fid || null;
   if(tx.type==='Dépôt'){
     showScreen('client');
     switchTab('depot');
-    if(tx.id1x) document.getElementById('depot-id').value = tx.id1x;
-    if(tx.hash) document.getElementById('depot-hash').value = tx.hash;
-    showToast('✏️ Corrigez les informations et resoumettez','warning');
+    // Pré-remplir tous les champs avec les valeurs existantes
+    document.getElementById('depot-id').value           = tx.userId1xBet || tx.id1x || '';
+    document.getElementById('depot-hash').value         = tx.waafitranfertID || tx.hash || '';
+    document.getElementById('depot-montant').value      = tx.montant || '';
+    var numWaafi = (tx.numeroPayment||'').replace(/^\+?253/,'');
+    document.getElementById('depot-numero-waafi').value = numWaafi;
+    var wa = (tx.whatsapp||'').replace(/^\+?253/,'');
+    document.getElementById('depot-whatsapp').value     = wa;
+    // Bannière correction
+    _showCorrectionBanner('depot', tx.correctionMsg);
+    document.getElementById('depot-btn').textContent = '✏️ Soumettre la correction';
+    showToast('✏️ Corrigez les informations incorrectes et resoumettez','warning');
   } else {
     showScreen('client');
     switchTab('retrait');
-    if(tx.tel) document.getElementById('retrait-tel').value = tx.tel;
-    if(tx.montant) document.getElementById('retrait-montant').value = tx.montant;
-    showToast('✏️ Corrigez les informations et resoumettez','warning');
+    document.getElementById('retrait-code').value    = tx.withdrawalCode || tx.code || '';
+    document.getElementById('retrait-tel').value     = tx.waafiNumber || tx.tel || '';
+    document.getElementById('retrait-montant').value = tx.montant || '';
+    var wa2 = (tx.whatsapp||'').replace(/^\+?253/,'');
+    document.getElementById('retrait-whatsapp').value = wa2;
+    _showCorrectionBanner('retrait', tx.correctionMsg);
+    document.getElementById('retrait-btn').textContent = '✏️ Soumettre la correction';
+    showToast('✏️ Corrigez les informations incorrectes et resoumettez','warning');
   }
+}
+
+function _showCorrectionBanner(tab, msg){
+  var bannerId = 'correction-banner-'+tab;
+  var existing = document.getElementById(bannerId);
+  if(existing) existing.remove();
+  var banner = document.createElement('div');
+  banner.id = bannerId;
+  banner.style.cssText = 'background:rgba(255,170,0,0.12);border:1px solid rgba(255,170,0,0.4);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-family:\'DM Sans\',sans-serif;';
+  banner.innerHTML = '<div style="font-size:0.8rem;font-weight:700;color:#ffaa00;margin-bottom:4px;">✏️ Mode correction</div>'
+    + '<div style="font-size:0.72rem;color:rgba(255,255,255,0.7);">'+(msg||'Corrigez les informations incorrectes.')+'</div>'
+    + '<div style="font-size:0.65rem;color:rgba(255,255,255,0.4);margin-top:4px;">Votre ordre #'+(_correctionOrderRef||'')+" sera mis à jour — pas de nouvel ordre créé.</div>";
+  var content = document.getElementById('content-'+tab);
+  if(content) content.insertBefore(banner, content.firstChild);
+}
+
+function _clearCorrectionMode(){
+  _correctionOrderRef = null;
+  _correctionFid      = null;
+  ['depot','retrait'].forEach(function(tab){
+    var b = document.getElementById('correction-banner-'+tab);
+    if(b) b.remove();
+  });
+  var db = document.getElementById('depot-btn');
+  var rb = document.getElementById('retrait-btn');
+  if(db) db.textContent = '📤 Soumettre le dépôt';
+  if(rb) rb.textContent = '📤 Soumettre le retrait';
 }
 
 function copyDetailVal(btn){
