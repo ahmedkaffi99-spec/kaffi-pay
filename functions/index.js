@@ -1,12 +1,19 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════════╗
- * ║  KAFFI PAY — CLOUD FUNCTIONS v6.1                                    ║
+ * ║  KAFFI PAY — CLOUD FUNCTIONS v7.0                                    ║
  * ║                                                                      ║
- * ║  FLOW :                                                              ║
+ * ║  FLOW DÉPÔT (automatique) :                                          ║
  * ║  1. User paie Waafi → SMS → smsWebhook → waafi_notifications         ║
- * ║  2. User soumet ordre avec Transfer ID                               ║
- * ║  3. onNouvelOrdre cherche la notif correspondante → confirme         ║
- * ║  4. Admin confirme via bot → MobCash API → crédit 1xBet            ║
+ * ║  2. User soumet ordre → onNouvelOrdre → match TID 3/3 critères       ║
+ * ║  3. Check ordre_traite (anti-fraude doublon) → "Paiement Reçu"       ║
+ * ║  4. onOrdreUpdated → MobCash API → "Crédité avec succès"            ║
+ * ║                                                                      ║
+ * ║  FLOW RETRAIT (admin) :                                               ║
+ * ║  1. User soumet retrait → admin vérifie → confirmer #ID              ║
+ * ║  2. → "Paiement Reçu" → MobCash Payout → "Crédité avec succès"     ║
+ * ║                                                                      ║
+ * ║  STATUTS : En attente → Paiement Reçu → Crédité avec succès         ║
+ * ║                       ↘ Paiement Non Reçu (rejet / fraude)           ║
  * ║                                                                      ║
  * ║  Fonctions (7) :                                                     ║
  * ║  [Triggers]  onNouvelOrdre · onOrdreUpdated                          ║
@@ -43,11 +50,11 @@ const MOBCASH_LOGIN      = defineSecret("MOBCASH_LOGIN");
 // SECTION 1 — STATE MACHINE
 // ══════════════════════════════════════════════════════════════════
 const TRANSITIONS_VALIDES = {
-  "En attente":  ["Confirmé", "Rejeté", "Argent Reçu", "Annulé"],
-  "Argent Reçu": ["Confirmé", "Rejeté"],
-  "Confirmé":    [],
-  "Rejeté":      [],
-  "Annulé":      [],
+  "En attente":           ["Paiement Reçu", "Paiement Non Reçu", "Annulé"],
+  "Paiement Reçu":        ["Crédité avec succès", "Paiement Non Reçu"],
+  "Crédité avec succès":  [],
+  "Paiement Non Reçu":    [],
+  "Annulé":               [],
 };
 
 function transitionValide(de, vers) {
@@ -129,7 +136,7 @@ async function detecterDoublon(phone, montant, type, excluId) {
   try {
     const snap = await db.collection("orders")
       .where("numeroPayment", "==", phone).where("type", "==", type)
-      .where("status", "in", ["En attente", "Confirmé"]).get();
+      .where("status", "in", ["En attente", "Crédité avec succès"]).get();
 
     for (const doc of snap.docs) {
       if (doc.id === excluId) continue;
@@ -305,7 +312,7 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
     if (traitSnap.exists) return false;
 
     tx.update(ordreDoc.ref, {
-      status: "Argent Reçu",
+      status: "Paiement Reçu",
       confirmedBy: "auto_match_waafi",
       montantRecu: montantNotif,
       expediteurRecu: numReel,
@@ -321,7 +328,7 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
       numClient: numReel,
       userId1xBet: ordre.userId1xBet || "",
       confirmedAt: FieldValue.serverTimestamp(),
-      status: "confirmé",
+      status: "en_cours",
     });
     return true;
   });
@@ -336,7 +343,7 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
     `Transfer-ID: <code>${notif.transferId || "?"}</code> | N°: <code>${numReel}</code>` +
     (ordre.whatsapp ? `\nWhatsApp: <code>${ordre.whatsapp}</code>` : "") +
     (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "") +
-    `\n\n<i>⏳ MacroDroid va créditer le compte 1xBet...</i>`
+    `\n\n<i>⏳ MobCash va créditer le compte 1xBet...</i>`
   );
 
   const id1xbet = ordre.userId1xBet || ordre.id1x || "";
@@ -369,18 +376,16 @@ function statutOrdreMsg(ordreId, o) {
   const wbFail  = o.webhookStatus === "echec";
 
   let statut = "";
-  if (o.status === "Confirmé" && wbOk)
+  if (o.status === "Crédité avec succès")
     statut = "✅ <b>Crédité avec succès</b> — votre compte 1xBet a été rechargé.";
-  else if (o.status === "Confirmé" && wbFail)
-    statut = "⚠️ <b>Confirmé mais crédit échoué</b> — notre équipe va intervenir.";
-  else if (o.status === "Confirmé")
-    statut = "✅ <b>Confirmé</b> — crédit 1xBet en cours...";
   else if (o.status === "En attente")
     statut = "⏳ <b>En attente</b> — traitement en cours.";
-  else if (o.status === "Argent Reçu")
-    statut = "💳 <b>Paiement reçu</b> — confirmation en cours.";
-  else if (o.status === "Rejeté")
-    statut = `❌ <b>Rejeté</b> — ${o.flagRaison || "Paiement non reçu."}`;
+  else if (o.status === "Paiement Reçu" && wbFail)
+    statut = "⚠️ <b>Paiement reçu — crédit échoué</b> — notre équipe va intervenir.";
+  else if (o.status === "Paiement Reçu")
+    statut = "💳 <b>Paiement reçu</b> — crédit MobCash en cours...";
+  else if (o.status === "Paiement Non Reçu")
+    statut = `❌ <b>Paiement non reçu</b> — ${o.flagRaison || "Paiement non reçu."}`;
   else if (o.status === "Annulé")
     statut = "🚫 <b>Annulé.</b>";
   else
@@ -407,10 +412,10 @@ function traiterAdminBot(text, orders, notifs) {
   const ordreNum = (text.match(/(?:#\s*)?(\d{6,8})\b/) || [])[1] || null;
 
   if (/^\/stats$/.test(t) || /\b(stats|statistiques|bilan|résumé)\b/.test(t)) {
-    const confirmes = orders.filter((o) => o.includes("| Confirmé"));
+    const confirmes = orders.filter((o) => o.includes("| Crédité avec succès"));
     const attente   = orders.filter((o) => o.includes("| En attente"));
-    const argRecu   = orders.filter((o) => o.includes("| Argent Reçu"));
-    const rejetes   = orders.filter((o) => o.includes("| Rejeté"));
+    const argRecu   = orders.filter((o) => o.includes("| Paiement Reçu"));
+    const rejetes   = orders.filter((o) => o.includes("| Paiement Non Reçu"));
     const fraudes   = orders.filter((o) => o.toLowerCase().includes("fraude"));
     const volume    = confirmes.reduce((s, o) => s + parseMontant(o), 0);
     const taux      = orders.length ? Math.round(confirmes.length / orders.length * 100) : 0;
@@ -429,7 +434,7 @@ function traiterAdminBot(text, orders, notifs) {
   }
 
   if (/^\/ordres?$/.test(t) || t === "ordres" || /\b(attente|pending)\b/.test(t)) {
-    const aTraiter = orders.filter((o) => o.includes("| En attente") || o.includes("| Argent Reçu"));
+    const aTraiter = orders.filter((o) => o.includes("| En attente") || o.includes("| Paiement Reçu"));
     if (!aTraiter.length) return "✅ Aucun ordre en attente.";
     return `⏳ <b>En attente (${aTraiter.length})</b>\n\n${aTraiter.join("\n")}\n\n<i>Traitement automatique en cours — toutes les 5 min.</i>`;
   }
@@ -440,7 +445,7 @@ function traiterAdminBot(text, orders, notifs) {
   }
 
   if (/^\/rejet/.test(t) || t === "rejetés") {
-    const rejetes = orders.filter((o) => o.includes("| Rejeté"));
+    const rejetes = orders.filter((o) => o.includes("| Paiement Non Reçu"));
     return rejetes.length ? `❌ <b>Rejetés (${rejetes.length})</b>\n\n${rejetes.join("\n")}` : "✅ Aucun rejet récent.";
   }
 
@@ -616,7 +621,7 @@ exports.onNouvelOrdre = onDocumentCreated(
       const [confirmeSnap, ordreTraiteSnap] = await Promise.all([
         db.collection("orders")
           .where("waafitranfertID", "==", transferId)
-          .where("status", "==", "Confirmé").limit(1).get(),
+          .where("status", "==", "Crédité avec succès").limit(1).get(),
         db.collection("ordre_traite")
           .where("transferId", "==", transferId).limit(1).get(),
       ]);
@@ -634,7 +639,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         }
 
         await db.collection("orders").doc(docId).update({
-          status: "Rejeté",
+          status: "Paiement Non Reçu",
           flagRaison: `FRAUDE — Paiement Waafi TID ${transferId} déjà utilisé pour l'ordre #${ancienRef}`,
           flaggedAt: FieldValue.serverTimestamp(),
           fraudType: "tid_reutilise",
@@ -660,7 +665,7 @@ exports.onNouvelOrdre = onDocumentCreated(
       const rl = await verifierRateLimit(phone, tx.type);
       if (!rl.autorise) {
         await db.collection("orders").doc(docId).update({
-          status: "Rejeté",
+          status: "Paiement Non Reçu",
           flagRaison: `Rate limit — max ${MAX_PAR_HEURE} ordres/heure. Réessayez dans ${rl.resetDans} min.`,
           flaggedAt: FieldValue.serverTimestamp(),
         });
@@ -692,7 +697,7 @@ exports.onNouvelOrdre = onDocumentCreated(
     if (isDepot) {
       if (!transferId) {
         await db.collection("orders").doc(docId).update({
-          status: "Rejeté",
+          status: "Paiement Non Reçu",
           flagRaison: "Transfer ID manquant",
           flaggedAt: FieldValue.serverTimestamp(),
         });
@@ -748,7 +753,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         // score < 3 — rejet avec raison spécifique par champ
         const raison = mismatchToRaison(mismatches);
         await db.collection("orders").doc(docId).update({
-          status: "Rejeté",
+          status: "Paiement Non Reçu",
           flagRaison: raison,
           flaggedAt: FieldValue.serverTimestamp(),
         });
@@ -762,7 +767,7 @@ exports.onNouvelOrdre = onDocumentCreated(
 
       // Aucune notification trouvée → Transfer ID invalide/frauduleux
       await db.collection("orders").doc(docId).update({
-        status: "Rejeté",
+        status: "Paiement Non Reçu",
         flagRaison: `Paiement non reçu — Transfer ID ${transferId} introuvable dans notre système`,
         flaggedAt: FieldValue.serverTimestamp(),
       });
@@ -792,7 +797,7 @@ exports.onNouvelOrdre = onDocumentCreated(
 
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
       await db.collection("orders").doc(docId).update({
-        status: "Rejeté", flagRaison: "Fraude: " + fraud.raisons.join(", "),
+        status: "Paiement Non Reçu", flagRaison: "Fraude: " + fraud.raisons.join(", "),
       });
       await sendTelegram(token, adminId,
         `🚨 <b>Retrait rejeté — Fraude (score ${fraud.score_fraude}/100)</b>\n` +
@@ -843,78 +848,48 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     // ── Telegram admin ──
     let msg = "";
-    if (after.status === "Argent Reçu")
-      msg = `💳 <b>Paiement Waafi reçu</b>\n#${ordreId} — ${montant} DJF\nCrédit 1xBet en cours…`;
-    else if (after.status === "Confirmé")
-      msg = `✅ <b>${type} confirmé</b>\n#${ordreId} — ${montant} DJF\n` +
-            (after.confirmedBy === "admin_telegram" ? "👤 Via bot admin"
-              : after.confirmedBy?.startsWith("auto") ? "🤖 Automatique" : "👤 Manuel");
-    else if (after.status === "Rejeté")
-      msg = `❌ <b>${type} rejeté</b>\n#${ordreId} — ${after.flagRaison || "Raison inconnue"}`;
+    if (after.status === "Paiement Reçu")
+      msg = `💳 <b>Paiement reçu</b>\n#${ordreId} — ${montant} DJF\n⏳ Crédit MobCash en cours…`;
+    else if (after.status === "Crédité avec succès")
+      msg = `✅ <b>${type} — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`;
+    else if (after.status === "Paiement Non Reçu")
+      msg = `❌ <b>${type} — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
 
     if (msg) await sendTelegram(token, adminId, msg);
 
     // ── WhatsApp client ──
     if (after.whatsapp) {
       let waMsg = "";
-      if (after.status === "Argent Reçu") {
+      if (after.status === "Paiement Reçu") {
         waMsg = `💳 *Kaffi-Pay — Paiement reçu* ✅\n\n` +
-                `Votre paiement *#${ordreId}* de *${montant} DJF* a bien été reçu et validé.\n\n` +
+                `Votre paiement *#${ordreId}* de *${montant} DJF* a bien été reçu.\n\n` +
                 `Statut : 💳 *Paiement reçu*\n\n` +
                 `⏳ Crédit de votre compte ${after.type === "Dépôt" ? "1xBet" : "Waafi"} en cours...`;
-      } else if (after.status === "Confirmé") {
+      } else if (after.status === "Crédité avec succès") {
         waMsg = after.type === "Dépôt"
           ? `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
-            `Votre dépôt *#${ordreId}* de *${montant} DJF* a été confirmé.\n\n` +
-            `Statut : ✅ *Crédité avec succès*\n\n` +
-            `Votre compte 1xBet a été crédité. Vous pouvez maintenant jouer ! 🎮`
+            `Votre dépôt *#${ordreId}* de *${montant} DJF* a été traité avec succès.\n\n` +
+            `✅ *Crédité avec succès*\n\n` +
+            `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
           : `🎉 *Kaffi-Pay — Retrait effectué !*\n\n` +
-            `Votre retrait *#${ordreId}* de *${montant} DJF* a été confirmé.\n\n` +
-            `Statut : ✅ *Retrait effectué*\n\n` +
+            `Votre retrait *#${ordreId}* de *${montant} DJF* a été traité.\n\n` +
+            `✅ *Crédité avec succès*\n\n` +
             `Votre argent a été envoyé sur votre numéro Waafi.`;
-      } else if (after.status === "Rejeté") {
-        waMsg = `❌ *Kaffi-Pay — Ordre rejeté*\n\n` +
-                `Votre ordre *#${ordreId}* a été rejeté.\n` +
+      } else if (after.status === "Paiement Non Reçu") {
+        waMsg = `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+                `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
                 `Raison : ${after.flagRaison || "Paiement non reçu"}\n\n` +
                 `Soumettez un nouvel ordre sur kaffi-pay.com`;
       }
       if (waMsg) await sendWhatsApp(after.whatsapp, waMsg);
     }
 
-    // ── MobCash — auto-match : "Argent Reçu" → MobCash → "Confirmé" ──
-    if (after.status === "Argent Reçu" && after.confirmedBy?.startsWith("auto")) {
-      const id1xbet    = after.userId1xBet || after.id1x || "";
-      const montantVal = Number(after.montant || 0);
+    // ── MobCash — "Paiement Reçu" → API → "Crédité avec succès" ──
+    // Dépôt: déclenché automatiquement après match Waafi
+    // Retrait: déclenché après confirmation admin (confirmer #ID → "Paiement Reçu")
+    if (after.status !== "Paiement Reçu") return;
 
-      if (!id1xbet) {
-        await sendTelegram(token, adminId,
-          `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\nCrédit impossible, intervention manuelle requise.`);
-        return;
-      }
-
-      try {
-        await callMobcash("Dépôt", id1xbet, montantVal, null);
-        await event.data.after.ref.update({
-          status: "Confirmé",
-          webhookStatus: "ok",
-          webhookAt: FieldValue.serverTimestamp(),
-        });
-        logAudit("mobcash_ok", { ordreId, id1xbet, source: "auto_argent_recu" });
-      } catch (e) {
-        await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
-        await sendTelegram(token, adminId,
-          `⚠️ <b>MobCash échoué</b> — #${ordreId}\n<code>${e.message}</code>\n` +
-          `<i>Le scheduler relancera automatiquement dans 5 min.</i>`);
-        logAudit("mobcash_echec", { ordreId, err: e.message });
-      }
-      return;
-    }
-
-    // ── MobCash — confirmation manuelle admin ──
-    // Admin confirme (En attente → Confirmé ou Argent Reçu → Confirmé).
-    if (after.status !== "Confirmé") return;
-
-    const wbAlreadyOk = after.webhookStatus === "ok" || after.webhookStatus === "ok_retry_rt";
+    const wbAlreadyOk = after.webhookStatus === "ok";
     if (wbAlreadyOk) return;
 
     const id1xbet        = after.userId1xBet || after.id1x || "";
@@ -922,16 +897,32 @@ exports.onOrdreUpdated = onDocumentUpdated(
     const orderType      = after.type || "Dépôt";
     const withdrawalCode = after.withdrawalCode || "";
 
-    if (!id1xbet) return;
+    if (!id1xbet) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\nCrédit impossible, vérifiez l'ordre.`);
+      return;
+    }
 
     try {
       await callMobcash(orderType, id1xbet, montantVal, withdrawalCode);
-      await event.data.after.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
+      // Marquer le TID comme crédité dans ordre_traite (Dépôt seulement)
+      const tid = after.waafitranfertID || after.hash || "";
+      if (tid) {
+        db.collection("ordre_traite").doc(tid).update({
+          status: "credite", creditedAt: FieldValue.serverTimestamp(),
+        }).catch(() => {});
+      }
+      await event.data.after.ref.update({
+        status: "Crédité avec succès",
+        webhookStatus: "ok",
+        webhookAt: FieldValue.serverTimestamp(),
+      });
       logAudit("mobcash_ok", { ordreId, id1xbet, type: orderType });
     } catch (e) {
       await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
       await sendTelegram(token, adminId,
-        `⚠️ <b>MobCash échoué</b> — #${ordreId}\n<code>${e.message}</code>`);
+        `⚠️ <b>MobCash échoué</b> — #${ordreId}\n<code>${e.message}</code>\n` +
+        `<i>Le scheduler relancera automatiquement dans 5 min.</i>`);
       logAudit("mobcash_echec", { ordreId, err: e.message });
     }
   }
@@ -983,7 +974,7 @@ exports.ordresBloques = onSchedule(
         const { score, mismatches } = scorerCorrespondance(ordre, waafiDoc.data());
         const raison = mismatchToRaison(mismatches);
         await ordreDoc.ref.update({
-          status: "Rejeté",
+          status: "Paiement Non Reçu",
           flagRaison: raison,
           flaggedAt: FieldValue.serverTimestamp(),
         });
@@ -1027,43 +1018,33 @@ exports.ordresBloques = onSchedule(
     await alertRef.set({ ts: FieldValue.serverTimestamp(), count: vieux.length });
 
     // ── PARTIE 3 : Recovery MobCash ──────────────────────────────────
-    // Cas A : "Argent Reçu" (auto_match_waafi) + webhookStatus != ok
+    // Cas A : "Paiement Reçu" (auto_match_waafi) + webhookStatus != ok
     //   → MobCash n'a pas encore crédité (ou a échoué). Re-déclenche
-    //   et passe directement à "Confirmé" si succès.
-    // Cas B : "Confirmé" + webhookStatus != ok
-    //   → Confirmation admin manuelle sans crédit. Re-déclenche.
-    const [snapArgentRecu, snapConfirme] = await Promise.all([
-      db.collection("orders")
-        .where("status", "==", "Argent Reçu")
-        .where("confirmedBy", "==", "auto_match_waafi")
-        .get().catch(() => ({ docs: [] })),
-      db.collection("orders")
-        .where("status", "==", "Confirmé")
-        .get().catch(() => ({ docs: [] })),
-    ]);
+    //   et passe directement à "Crédité avec succès" si succès.
+    // Cas B : "Crédité avec succès" + webhookStatus != ok
+    //   → "Paiement Reçu" + webhookStatus != ok = MobCash pas encore crédité. Re-déclenche.
+    const snapPaiementRecu = await db.collection("orders")
+      .where("status", "==", "Paiement Reçu")
+      .get().catch(() => ({ docs: [] }));
 
-    const candidats = [
-      ...snapArgentRecu.docs.map(d => ({ doc: d, setConfirme: true })),
-      ...snapConfirme.docs.map(d => ({ doc: d, setConfirme: false })),
-    ];
-
-    for (const { doc: ordreDoc, setConfirme } of candidats) {
+    for (const ordreDoc of snapPaiementRecu.docs) {
       const o       = ordreDoc.data();
       const ordreId = o.orderId || ordreDoc.id;
       const id1xbet = o.userId1xBet || o.id1x || "";
-      const wbOk    = o.webhookStatus === "ok" || o.webhookStatus === "ok_confirmed" || o.webhookStatus === "ok_retry_rt";
+      const wbOk    = o.webhookStatus === "ok";
 
       if (wbOk) continue;
       if (!id1xbet) continue;
 
-      // Vérifie dans ordre_traite (anti-doublon)
+      // Vérifie dans ordre_traite (anti-doublon) — si déjà crédité, juste mettre à jour le statut
       const tid        = o.waafitranfertID || o.hash || "";
-      const dejaTraite = tid
-        ? await db.collection("ordre_traite").where("transferId", "==", tid).limit(1).get()
+      const dejaCredite = tid
+        ? await db.collection("ordre_traite")
+            .where("transferId", "==", tid).where("status", "==", "credite").limit(1).get()
         : { empty: true };
 
-      if (!dejaTraite.empty) {
-        await ordreDoc.ref.update({ webhookStatus: "ok_recovery" });
+      if (!dejaCredite.empty) {
+        await ordreDoc.ref.update({ status: "Crédité avec succès", webhookStatus: "ok_recovery" });
         continue;
       }
 
@@ -1071,14 +1052,22 @@ exports.ordresBloques = onSchedule(
         const orderType      = o.type || "Dépôt";
         const withdrawalCode = o.withdrawalCode || "";
         await callMobcash(orderType, id1xbet, Number(o.montant || 0), withdrawalCode);
-        const updateData = { webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), recoveryBy: "scheduler" };
-        if (setConfirme) updateData.status = "Confirmé";
-        await ordreDoc.ref.update(updateData);
+        if (tid) {
+          db.collection("ordre_traite").doc(tid).update({
+            status: "credite", creditedAt: FieldValue.serverTimestamp(),
+          }).catch(() => {});
+        }
+        await ordreDoc.ref.update({
+          status: "Crédité avec succès",
+          webhookStatus: "ok",
+          webhookAt: FieldValue.serverTimestamp(),
+          recoveryBy: "scheduler",
+        });
         await sendTelegram(token, adminId,
-          `🔄 <b>Recovery MobCash</b> — #<code>${ordreId}</code> relancé\n` +
+          `🔄 <b>Recovery MobCash</b> — #<code>${ordreId}</code> crédité\n` +
           `ID 1xBet: <code>${id1xbet}</code> | ${Number(o.montant||0).toLocaleString()} DJF`
         );
-        logAudit("mobcash_recovery_scheduler", { ordreId, id1xbet, setConfirme });
+        logAudit("mobcash_recovery_scheduler", { ordreId, id1xbet });
       } catch (err) {
         await ordreDoc.ref.update({ webhookStatus: "echec", webhookErr: err.message });
         await sendTelegram(token, adminId,
@@ -1162,7 +1151,7 @@ exports.smsWebhook = onRequest(
     } else {
       const raison = mismatchToRaison(mismatches);
       await ordreDoc.ref.update({
-        status: "Rejeté",
+        status: "Paiement Non Reçu",
         flagRaison: raison,
         flaggedAt: FieldValue.serverTimestamp(),
       });
@@ -1447,12 +1436,12 @@ exports.supportClient = onRequest(
         const adminToken = TELEGRAM_TOKEN.value();
         const adminId2   = TELEGRAM_ADMIN_ID.value();
 
-        // ── Confirmé mais non crédité → support bot relance MobCash ──
-        if (o.status === "Confirmé" && !wbOk) {
+        // ── Paiement reçu mais crédit échoué → support bot relance MobCash ──
+        if (o.status === "Paiement Reçu" && !wbOk) {
           const id1xbet = o.userId1xBet || o.id1x || "";
           if (!id1xbet) {
             await send(
-              `⚠️ Votre dépôt est confirmé mais votre <b>ID 1xBet est manquant</b>.\n` +
+              `⚠️ Votre paiement est reçu mais votre <b>ID 1xBet est manquant</b>.\n` +
               `Notre équipe va vous contacter sous peu.`
             );
             await sendTelegram(adminToken, adminId2,
@@ -1460,7 +1449,7 @@ exports.supportClient = onRequest(
             return;
           }
           await send(
-            `✅ <b>Ordre confirmé — Crédit en cours</b>\n\n` +
+            `💳 <b>Paiement reçu — Crédit en cours</b>\n\n` +
             `Ordre : <b>#${ordreId}</b> | ${Number(o.montant||0).toLocaleString()} DJF\n` +
             `ID 1xBet : <code>${id1xbet}</code>\n\n` +
             `⏱️ Votre compte sera crédité sous peu.`
@@ -1470,7 +1459,9 @@ exports.supportClient = onRequest(
           try {
             const orderType = o.type || "Dépôt";
             await callMobcash(orderType, id1xbet, o.montant || 0, o.withdrawalCode || "");
-            await oRef.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
+            const tid2 = o.waafitranfertID || o.hash || "";
+            if (tid2) db.collection("ordre_traite").doc(tid2).update({ status: "credite", creditedAt: FieldValue.serverTimestamp() }).catch(() => {});
+            await oRef.update({ status: "Crédité avec succès", webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
             logAudit("mobcash_ok_support", { ordreId, clientName: firstName });
           } catch (err) {
             await oRef.update({ webhookStatus: "echec", webhookErr: err.message });
@@ -1480,8 +1471,8 @@ exports.supportClient = onRequest(
           return;
         }
 
-        // ── Confirmé + crédité mais client réclame → alerte admin ──
-        if (o.status === "Confirmé" && wbOk) {
+        // ── Crédité mais client réclame → alerte admin ──
+        if (o.status === "Crédité avec succès") {
           await send(
             statutOrdreMsg(ordreId, o) +
             `\n\n📞 Si le crédit n'apparaît pas sur 1xBet, attendez 2 min puis vérifiez.\n` +
@@ -1493,7 +1484,7 @@ exports.supportClient = onRequest(
         }
 
         // ── Rejeté → explication + actions ──
-        if (o.status === "Rejeté") {
+        if (o.status === "Paiement Non Reçu") {
           await send(
             statutOrdreMsg(ordreId, o) +
             `\n\n<b>Que faire ?</b>\n` +
@@ -1555,17 +1546,18 @@ exports.adminBot = onRequest(
         const snap = await db.collection("orders").where("orderId", "==", num).limit(1).get();
         if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const doc  = snap.docs[0]; const data = doc.data();
-        if (data.status === "Confirmé") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> déjà confirmé.`); return; }
-        if (!transitionValide(data.status, "Confirmé")) {
+        if (data.status === "Crédité avec succès") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> déjà crédité.`); return; }
+        if (data.status === "Paiement Reçu") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> — MobCash en cours de traitement.`); return; }
+        if (!transitionValide(data.status, "Paiement Reçu")) {
           await sendTelegram(token, adminId, `⛔ Impossible de confirmer un ordre en statut <b>${data.status}</b>.`); return;
         }
 
-        // Confirmer → onOrdreUpdated déclenche MacroDroid automatiquement
-        await doc.ref.update({ status: "Confirmé", confirmedBy: "admin_telegram", confirmedAt: FieldValue.serverTimestamp() });
+        // Confirmer → onOrdreUpdated déclenche MobCash automatiquement
+        await doc.ref.update({ status: "Paiement Reçu", confirmedBy: "admin_telegram", confirmedAt: FieldValue.serverTimestamp() });
         logAudit("confirme_admin_telegram", { num, adminId, ancienStatut: data.status });
         const montantVal = Number(data.montant || data.amount || 0);
         await sendTelegram(token, adminId,
-          `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 MacroDroid en cours de déclenchement...`);
+          `✅ Ordre <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 MobCash en cours de déclenchement...`);
         return;
       }
 
@@ -1577,13 +1569,13 @@ exports.adminBot = onRequest(
         const snap   = await db.collection("orders").where("orderId", "==", num).limit(1).get();
         if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const doc  = snap.docs[0]; const data = doc.data();
-        if (data.status === "Rejeté") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> déjà rejeté.`); return; }
-        if (!transitionValide(data.status, "Rejeté")) {
+        if (data.status === "Paiement Non Reçu") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> déjà rejeté.`); return; }
+        if (!transitionValide(data.status, "Paiement Non Reçu")) {
           await sendTelegram(token, adminId, `⛔ Impossible de rejeter un ordre en statut <b>${data.status}</b>.`); return;
         }
-        await doc.ref.update({ status: "Rejeté", flagRaison: raison, rejectedBy: "admin_telegram", flaggedAt: FieldValue.serverTimestamp() });
+        await doc.ref.update({ status: "Paiement Non Reçu", flagRaison: raison, rejectedBy: "admin_telegram", flaggedAt: FieldValue.serverTimestamp() });
         logAudit("rejete_admin_telegram", { num, raison, adminId });
-        await sendTelegram(token, adminId, `❌ Ordre <b>#${num}</b> rejeté.\nRaison : <i>${raison}</i>`);
+        await sendTelegram(token, adminId, `❌ Ordre <b>#${num}</b> — Paiement Non Reçu.\nRaison : <i>${raison}</i>`);
         return;
       }
 
@@ -1769,7 +1761,7 @@ exports.adminBot = onRequest(
         if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const oDoc  = snap.docs[0];
         const oData = oDoc.data();
-        if (oData.status !== "Confirmé") {
+        if (oData.status !== "Crédité avec succès") {
           await sendTelegram(token, adminId, `⛔ Ordre <b>#${num}</b> n'est pas Confirmé (statut: <b>${oData.status}</b>).`); return;
         }
         const id1xbet        = oData.userId1xBet || oData.id1x || oData.idBet || "";
