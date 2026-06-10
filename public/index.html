@@ -885,8 +885,13 @@ function checkURLAdmin(){
   var akParam = params.get('_ak');
   if(akParam){
     localStorage.setItem('kp_admin_key', akParam);
-    try{ window.history.replaceState(null,'',window.location.pathname); }catch(e){}
+    localStorage.setItem('kp_gate', 'ok');
+    var gateEl = document.getElementById('gate-overlay');
+    if(gateEl) gateEl.style.display='none';
+    try{ window.history.replaceState(null,'','/'); }catch(e){}
     showToast('🔑 Clé admin activée','success');
+    showScreen('client');
+    return;
   }
   // Supporte /admin, ?admin, #admin, et fichier local admin.html
   var isAdmin = path.endsWith('/admin') ||
