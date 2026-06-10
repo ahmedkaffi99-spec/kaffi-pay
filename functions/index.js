@@ -228,14 +228,13 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
 // ══════════════════════════════════════════════════════════════════
 function scorerCorrespondance(ordreData, notifData) {
   const montantOrdre = Number(ordreData.montant || 0);
-  const tolerance    = Math.max(5, montantOrdre * 0.05);
   const transferId   = (ordreData.waafitranfertID || ordreData.hash || "").trim();
   const phone        = (ordreData.numeroPayment || ordreData.waafiNumber || "").trim();
 
   let score = 0;
   const mismatches = [];
 
-  // Critère 1 : Transfer ID
+  // Critère 1 : Transfer ID (clé primaire — doit correspondre exactement)
   if (!notifData.transferId || transferId === notifData.transferId) {
     score++;
   } else {
@@ -244,8 +243,8 @@ function scorerCorrespondance(ordreData, notifData) {
     );
   }
 
-  // Critère 2 : Montant ±5%
-  if (!notifData.montant || Math.abs(montantOrdre - notifData.montant) <= tolerance) {
+  // Critère 2 : Montant exact (tolérance 1 DJF pour les arrondis flottants uniquement)
+  if (!notifData.montant || Math.abs(montantOrdre - notifData.montant) <= 1) {
     score++;
   } else {
     mismatches.push(
@@ -253,7 +252,7 @@ function scorerCorrespondance(ordreData, notifData) {
     );
   }
 
-  // Critère 3 : Numéro expéditeur (compare les 8 derniers chiffres pour tolérer +253)
+  // Critère 3 : Numéro expéditeur (compare sans préfixe +253)
   const normPhone  = phone.replace(/^\+?253/, "").replace(/\D/g, "");
   const normNotif  = (notifData.numClient || "").replace(/^\+?253/, "").replace(/\D/g, "");
   if (!normNotif || normPhone === normNotif) {
@@ -289,21 +288,13 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
   const notif        = waafiDoc.data();
   const ordreId      = ordre.orderId || ordreDoc.id;
   const montantOrdre = Number(ordre.montant || 0);
-  const montantNotif = notif.montant  || montantOrdre;
+  const montantNotif = notif.montant || montantOrdre;
   const numReel      = notif.numClient || ordre.numeroPayment || "";
 
-  // scorerCorrespondance a déjà validé la correspondance 3/3 avant d'appeler cette fonction.
-  // On enregistre uniquement les corrections mineures (dans la tolérance).
-  const corrections = [];
-  if (notif.montant && Math.abs(montantOrdre - notif.montant) > 1)
-    corrections.push(`Montant corrigé: ${montantOrdre} → ${notif.montant} DJF`);
-  if (notif.numClient && ordre.numeroPayment && notif.numClient !== ordre.numeroPayment)
-    corrections.push(`N° corrigé: ${ordre.numeroPayment} → ${notif.numClient}`);
-
-  // Confirmation atomique (runTransaction évite les doubles confirmations)
-  // ⚠️  waafi_notifications garde son status d'arrivée — on ne le touche plus.
-  // Le match est enregistré dans la collection "ordre_traite".
-  const traitRef = db.collection("ordre_traite").doc(notif.transferId || ordreId);
+  // Transaction atomique : évite les doubles confirmations
+  // Crée ordre_traite (anti-doublon TID) + ordre_confirme (archive de confirmation)
+  const traitRef   = db.collection("ordre_traite").doc(notif.transferId || ordreId);
+  const confirmeRef = db.collection("ordre_confirme").doc(ordreId);
   const claimed = await db.runTransaction(async (tx) => {
     const [ordreSnap, traitSnap] = await Promise.all([
       tx.get(ordreDoc.ref),
@@ -317,8 +308,6 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
       confirmedBy: "auto_match_waafi",
       montantRecu: montantNotif,
       expediteurRecu: numReel,
-      correctionApplied: corrections.length > 0,
-      corrections,
       confirmedAt: FieldValue.serverTimestamp(),
     });
     tx.set(traitRef, {
@@ -329,21 +318,35 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
       numClient: numReel,
       userId1xBet: ordre.userId1xBet || "",
       confirmedAt: FieldValue.serverTimestamp(),
-      status: "en_cours",
+      status: "confirme",
+    });
+    tx.set(confirmeRef, {
+      ordreId,
+      type: ordre.type || "Dépôt",
+      montant: montantNotif,
+      montantOrdre,
+      numClient: numReel,
+      transferId: notif.transferId || "",
+      waafiNotifId: waafiDoc.id,
+      userId1xBet: ordre.userId1xBet || ordre.id1x || "",
+      whatsapp: ordre.whatsapp || "",
+      confirmedBy: "auto_match_waafi",
+      confirmedAt: FieldValue.serverTimestamp(),
+      status: "confirme",
     });
     return true;
   });
 
   if (!claimed) return false;
 
-  logAudit("depot_argent_recu_match", { ordreId, transferId: notif.transferId, montant: montantNotif });
+  logAudit("depot_paiement_confirme", { ordreId, transferId: notif.transferId, montant: montantNotif });
 
+  // Telegram admin — paiement confirmé, MobCash va créditer
   await sendTelegram(token, adminId,
-    `💳 <b>Paiement Waafi validé</b>${corrections.length ? " ✏️" : ""}\n\n` +
+    `💳 <b>Ordre paiement confirmé — Paiement Waafi validé</b>\n\n` +
     `Ordre: <b>#${ordreId}</b> | <b>${Number(montantNotif).toLocaleString()} DJF</b>\n` +
     `Transfer-ID: <code>${notif.transferId || "?"}</code> | N°: <code>${numReel}</code>` +
     (ordre.whatsapp ? `\nWhatsApp: <code>${ordre.whatsapp}</code>` : "") +
-    (corrections.length ? `\n✏️ <i>${corrections.join(" | ")}</i>` : "") +
     `\n\n<i>⏳ MobCash va créditer le compte 1xBet...</i>`
   );
 
@@ -351,6 +354,17 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
   if (!id1xbet) {
     await sendTelegram(token, adminId,
       `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\n${Number(montantNotif).toLocaleString()} DJF en attente de crédit.`
+    );
+  }
+
+  // WhatsApp 2/3 — paiement reçu, crédit en cours
+  if (ordre.whatsapp) {
+    await sendWhatsApp(ordre.whatsapp,
+      `💳 *Kaffi-Pay — Paiement reçu* ✅\n\n` +
+      `Votre paiement *#${ordreId}* de *${Number(montantNotif).toLocaleString()} DJF* a bien été reçu.\n\n` +
+      `Statut : 💳 *Paiement reçu*\n\n` +
+      `⏳ Crédit de votre compte 1xBet en cours...\n` +
+      `📲 kaffi-pay.com/#suivi-${ordreId}`
     );
   }
 
@@ -687,22 +701,6 @@ exports.onNouvelOrdre = onDocumentCreated(
       }
     }
 
-    // ── RATE LIMIT ───────────────────────────────────────────────
-    if (phone) {
-      const rl = await verifierRateLimit(phone, tx.type);
-      if (!rl.autorise) {
-        await db.collection("orders").doc(docId).update({
-          status: "Paiement Non Reçu",
-          flagRaison: `Rate limit — max ${MAX_PAR_HEURE} ordres/heure. Réessayez dans ${rl.resetDans} min.`,
-          flaggedAt: FieldValue.serverTimestamp(),
-        });
-        await sendTelegram(token, adminId,
-          `⚠️ <b>Rate limit</b>\nN°: <code>${phone}</code> | ${tx.type}\nOrdre <code>#${ordreId}</code> rejeté.`
-        );
-        return;
-      }
-    }
-
     // ── DOUBLON ──────────────────────────────────────────────────
     const doublon = await detecterDoublon(phone, Number(tx.montant), tx.type, docId);
     if (doublon) {
@@ -951,15 +949,11 @@ exports.onOrdreUpdated = onDocumentUpdated(
     logAudit("transition_statut", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
 
     // Retrait avec webhookStatus "ok" : notifications déjà envoyées par onNouvelOrdre.
-    // On skip pour éviter les doublons (WhatsApp + Telegram).
-    const retraitDejaNotifie = after.status === "Paiement Reçu" && after.webhookStatus === "ok";
-
-    if (!retraitDejaNotifie) {
-      // ── Telegram admin ──
+    // Notifications "Paiement Reçu" — gérées dans confirmerDepot (dépôt) et onNouvelOrdre (retrait).
+    // Ici on gère uniquement les états finaux : Crédité avec succès + Paiement Non Reçu.
+    if (after.status === "Crédité avec succès" || after.status === "Paiement Non Reçu") {
       let msg = "";
-      if (after.status === "Paiement Reçu")
-        msg = `💳 <b>Paiement reçu</b>\n#${ordreId} — ${montant} DJF\n⏳ Crédit MobCash en cours…`;
-      else if (after.status === "Crédité avec succès")
+      if (after.status === "Crédité avec succès")
         msg = `✅ <b>${type} — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`;
       else if (after.status === "Paiement Non Reçu")
         msg = `❌ <b>${type} — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
@@ -969,12 +963,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
       // ── WhatsApp client ──
       if (after.whatsapp) {
         let waMsg = "";
-        if (after.status === "Paiement Reçu") {
-          waMsg = `💳 *Kaffi-Pay — Paiement reçu* ✅\n\n` +
-                  `Votre paiement *#${ordreId}* de *${montant} DJF* a bien été reçu.\n\n` +
-                  `Statut : 💳 *Paiement reçu*\n\n` +
-                  `⏳ Crédit de votre compte ${after.type === "Dépôt" ? "1xBet" : "Waafi"} en cours...`;
-        } else if (after.status === "Crédité avec succès") {
+        if (after.status === "Crédité avec succès") {
           waMsg = after.type === "Dépôt"
             ? `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
               `Votre dépôt *#${ordreId}* de *${montant} DJF* a été traité avec succès.\n\n` +
@@ -1047,7 +1036,8 @@ exports.onOrdreUpdated = onDocumentUpdated(
 // ══════════════════════════════════════════════════════════════════
 exports.ordresBloques = onSchedule(
   { schedule: "every 5 minutes", region: REGION, timeoutSeconds: 120,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN] },
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+              MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN] },
   async () => {
     const token   = TELEGRAM_TOKEN.value();
     const adminId = TELEGRAM_ADMIN_ID.value();
@@ -1195,7 +1185,7 @@ exports.ordresBloques = onSchedule(
 // confirme directement (ordre soumis avant l'arrivée du SMS).
 // ══════════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
-  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
