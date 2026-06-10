@@ -1076,12 +1076,14 @@ async function saveTxFirebase(tx, _retries){
   }
 }
 
+function getAdminKey(){ return localStorage.getItem('kp_admin_key')||''; }
+
 async function updateTxFirebase(ref, data){
   try{
     if(!window.db){ return; }
     var tx = _txsCache.find(function(t){ return t.ref===ref||t.orderId===ref; });
     if(tx && tx._fid){
-      await window.fsUpdateDoc(window.fsDoc(window.db,'orders',tx._fid), data);
+      await window.fsUpdateDoc(window.fsDoc(window.db,'orders',tx._fid), Object.assign({},data,{_ak:getAdminKey()}));
     }
   } catch(e){ showToast('❌ Erreur mise à jour','error'); }
 }
@@ -1139,7 +1141,7 @@ function getAgents(){ return _agentsCache; }
 function saveAgents(a){
   _agentsCache = a;
   if(window.db && window.fsSetDoc && window.fsDoc){
-    window.fsSetDoc(window.fsDoc(window.db,'config','agents'),{list:a,updatedAt:new Date()}).catch(function(){});
+    window.fsSetDoc(window.fsDoc(window.db,'config','agents'),{list:a,updatedAt:new Date(),_ak:getAdminKey()}).catch(function(){});
   }
 }
 function loadAgentsFromFirestore(){
@@ -1152,7 +1154,7 @@ function getReserves(){ return _reservesCache; }
 function saveReservesData(r){
   _reservesCache=r;
   if(window.db && window.fsSetDoc && window.fsDoc){
-    window.fsSetDoc(window.fsDoc(window.db,'config','reserves'),{data:r,updatedAt:new Date()}).catch(function(){});
+    window.fsSetDoc(window.fsDoc(window.db,'config','reserves'),{data:r,updatedAt:new Date(),_ak:getAdminKey()}).catch(function(){});
   }
 }
 function loadReservesFromFirestore(){
@@ -2415,7 +2417,7 @@ async function traiterSmsWaafi(texte, smsId){
   );
 
   if(!transferId && !montant){
-    try{ await window.fsUpdateDoc(window.fsDoc(window.db,'waafi_notifications',smsId),{status:'ignoré_format',processedAt:new Date()}); }catch(e){}
+    try{ await window.fsUpdateDoc(window.fsDoc(window.db,'waafi_notifications',smsId),{status:'ignoré_format',processedAt:new Date(),_ak:getAdminKey()}); }catch(e){}
     return;
   }
 
@@ -2437,7 +2439,7 @@ async function traiterSmsWaafi(texte, smsId){
       (transferId ? ' Transfer-ID : ' + transferId + '.'                            : ''),
       null, montant
     );
-    try{ await window.fsUpdateDoc(window.fsDoc(window.db,'waafi_notifications',smsId),{status:'non_matché',processedAt:new Date()}); }catch(e){}
+    try{ await window.fsUpdateDoc(window.fsDoc(window.db,'waafi_notifications',smsId),{status:'non_matché',processedAt:new Date(),_ak:getAdminKey()}); }catch(e){}
     return;
   }
 
@@ -2465,7 +2467,7 @@ async function traiterSmsWaafi(texte, smsId){
     ref, mt
   );
   showToast('💳 Paiement reçu — confirmation dans 10s…', 'success');
-  try{ await window.fsUpdateDoc(window.fsDoc(window.db,'waafi_notifications',smsId),{status:'matché',ordreRef:ref,processedAt:new Date()}); }catch(e){}
+  try{ await window.fsUpdateDoc(window.fsDoc(window.db,'waafi_notifications',smsId),{status:'matché',ordreRef:ref,processedAt:new Date(),_ak:getAdminKey()}); }catch(e){}
 
   // ── ÉTAPE 2 : 10s → Confirmé ──
   setTimeout(async function(){

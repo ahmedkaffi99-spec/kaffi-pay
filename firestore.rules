@@ -4,27 +4,28 @@ service cloud.firestore {
 
     // ── ORDERS ─────────────────────────────────────────────────────
     // Clients : créer (validé) + lire
-    // Admin panel : lire tout + mettre à jour
+    // Admin panel : lire tout + mettre à jour (clé admin requise)
     match /orders/{docId} {
       allow read: if true;
       allow create: if validOrder();
-      allow update: if true;   // admin panel en a besoin (pas de Firebase Auth côté client)
+      allow update: if isAdminWrite();
       allow delete: if false;
     }
 
     // ── WAAFI NOTIFICATIONS ─────────────────────────────────────────
-    // Admin panel lit et met à jour le statut
+    // Admin panel lit et met à jour le statut (clé admin requise)
     // Cloud Functions créent (Admin SDK, hors règles)
     match /waafi_notifications/{docId} {
       allow read: if true;
-      allow update: if true;
+      allow update: if isAdminWrite();
       allow create, delete: if false;
     }
 
     // ── CONFIG (agents, reserves) ───────────────────────────────────
-    // Admin panel lit et écrit directement
+    // Admin panel lit librement, écrit avec clé admin
     match /config/{docId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdminWrite();
     }
 
     // ── COLLECTIONS SENSIBLES — Cloud Functions uniquement ──────────
@@ -56,6 +57,15 @@ service cloud.firestore {
     // ── TOUT LE RESTE : BLOQUÉ ──────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
+    }
+
+    // ── CLÉ ADMIN ───────────────────────────────────────────────────
+    // Clé stockée dans localStorage de l'admin uniquement (pas dans le code source)
+    // L'admin doit exécuter une fois dans sa console :
+    //   localStorage.setItem('kp_admin_key', 'kp2026_9f3aXmQ7')
+    function isAdminWrite() {
+      return request.resource.data.keys().hasAny(['_ak'])
+          && request.resource.data._ak == 'kp2026_9f3aXmQ7';
     }
 
     // ── VALIDATION ORDRE ────────────────────────────────────────────

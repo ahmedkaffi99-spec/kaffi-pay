@@ -1163,7 +1163,7 @@ exports.smsWebhook = onRequest(
     const secret = body.secret || "";
 
     const expectedSecret = MACRO_SECRET.value() || "KaffiPay2026";
-    if (secret && secret !== expectedSecret) { res.status(403).json({ error: "Secret invalide" }); return; }
+    if (!secret || secret !== expectedSecret) { res.status(403).json({ error: "Secret invalide" }); return; }
     if (!notif) { res.status(400).json({ error: "Champ 'notification' requis" }); return; }
 
     const transferId = extractTransferId(notif);
