@@ -2662,91 +2662,142 @@ try {
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
 } catch(e) {}
 
-// ── PWA Install FAB — planté comme un arbre, jamais effaçable ──
+// ── PWA Install — feuille automatique (comme Facebook/WhatsApp) ──
 var _pwaPrompt = null;
+var _pwaSheetShown = false;
 var _pwaStandalone = window.matchMedia('(display-mode: standalone)').matches
                   || window.navigator.standalone === true;
 
-function _pwaFabShow(){
+function _pwaHideBtn(){
+  var btn = document.getElementById('pwa-install-btn');
+  if(btn) btn.style.display='none';
+}
+function _pwaShowBtn(){
   if(_pwaStandalone) return;
   var btn = document.getElementById('pwa-install-btn');
-  if(btn) btn.style.display = 'block';
+  if(btn) btn.style.display='block';
 }
 
-function _pwaFabHide(){
-  var btn = document.getElementById('pwa-install-btn');
-  if(btn) btn.style.display = 'none';
+function _showInstallSheet(){
+  if(_pwaSheetShown || _pwaStandalone) return;
+  var existing = document.getElementById('pwa-install-sheet');
+  if(existing) return;
+  _pwaSheetShown = true;
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  var sheet = document.createElement('div');
+  sheet.id = 'pwa-install-sheet';
+  sheet.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999;'
+    + 'background:#0f1d2e;border-top:2px solid rgba(255,215,0,0.3);'
+    + 'border-radius:20px 20px 0 0;padding:0;'
+    + 'box-shadow:0 -12px 40px rgba(0,0,0,0.7);'
+    + 'transform:translateY(100%);transition:transform .35s cubic-bezier(.22,.68,0,1.2);';
+  sheet.innerHTML =
+    '<div style="padding:10px 0 0;text-align:center;">'
+    +  '<div style="width:36px;height:4px;background:rgba(255,255,255,0.2);border-radius:99px;margin:0 auto 16px;"></div>'
+    +'</div>'
+    +'<div style="display:flex;align-items:center;gap:14px;padding:0 24px 18px;">'
+    +  '<img src="icon-192.png" style="width:56px;height:56px;border-radius:14px;flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,0.5);">'
+    +  '<div style="flex:1;">'
+    +    '<div style="font-size:1.05rem;font-weight:700;color:#fff;margin-bottom:2px;">Kaffi-Pay</div>'
+    +    '<div style="font-size:0.78rem;color:rgba(255,255,255,0.45);">kaffi-pay.com · Gratuit</div>'
+    +  '</div>'
+    +'</div>'
+    +'<div style="padding:0 24px 8px;font-size:0.82rem;color:rgba(255,255,255,0.55);line-height:1.5;">'
+    +  'Installez l\'application pour accéder rapidement à Kaffi-Pay depuis votre écran d\'accueil, même sans connexion.'
+    +'</div>'
+    +(isIOS
+      ? '<div style="padding:12px 24px 0;font-size:0.85rem;color:rgba(255,255,255,0.8);line-height:1.8;">'
+        +'<div>1️⃣ Appuyez sur <b style="color:#FFD700;">Partager ↑</b></div>'
+        +'<div>2️⃣ Puis <b style="color:#FFD700;">"Sur l\'écran d\'accueil"</b></div>'
+        +'<div>3️⃣ Appuyez sur <b style="color:#FFD700;">Ajouter</b></div>'
+        +'</div>'
+      : '')
+    +'<div style="padding:16px 24px 32px;display:flex;flex-direction:column;gap:10px;">'
+    +  (_pwaPrompt
+      ? '<button id="pwa-sheet-install-btn" onclick="_doInstall()" style="width:100%;padding:16px;border-radius:14px;border:none;background:linear-gradient(135deg,#f5d020,#f5a623);color:#07101e;font-size:1rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">⬇ Installer Kaffi-Pay</button>'
+      : (isIOS ? '' : '<button onclick="_doInstallManual()" style="width:100%;padding:16px;border-radius:14px;border:none;background:linear-gradient(135deg,#f5d020,#f5a623);color:#07101e;font-size:1rem;font-weight:700;cursor:pointer;">Voir comment installer</button>'))
+    +  '<button onclick="_closeSheet()" style="width:100%;padding:14px;border-radius:14px;border:1px solid rgba(255,255,255,0.12);background:transparent;color:rgba(255,255,255,0.45);font-size:0.9rem;cursor:pointer;">Pas maintenant</button>'
+    +'</div>';
+  document.body.appendChild(sheet);
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      sheet.style.transform = 'translateY(0)';
+    });
+  });
 }
 
-// Affiche dès le chargement si pas encore installé
-window.addEventListener('load', function(){ _pwaFabShow(); });
+function _closeSheet(){
+  var s = document.getElementById('pwa-install-sheet');
+  if(!s) return;
+  s.style.transform = 'translateY(100%)';
+  setTimeout(function(){ if(s.parentNode) s.parentNode.removeChild(s); }, 400);
+}
 
-// Stocke le prompt natif quand disponible (Android Chrome)
+function _doInstall(){
+  if(!_pwaPrompt) return;
+  _closeSheet();
+  _pwaPrompt.prompt();
+  _pwaPrompt.userChoice.then(function(r){
+    _pwaPrompt = null;
+    if(r.outcome === 'accepted'){
+      _pwaHideBtn();
+      setTimeout(function(){
+        var conf = document.createElement('div');
+        conf.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.88);display:flex;align-items:center;justify-content:center;';
+        conf.innerHTML='<div style="background:#0f1d2e;border:2px solid #FFD700;border-radius:22px;padding:36px 28px;text-align:center;max-width:320px;margin:20px;">'
+          +'<div style="font-size:3.5rem;margin-bottom:10px;">✅</div>'
+          +'<div style="color:#FFD700;font-size:1.2rem;font-weight:700;margin-bottom:10px;">Kaffi-Pay installé !</div>'
+          +'<div style="color:rgba(255,255,255,0.65);font-size:0.88rem;line-height:1.7;">'
+          +'L\'icône a été ajoutée sur votre écran d\'accueil.<br>Glissez à gauche pour la trouver.'
+          +'</div>'
+          +'<button onclick="this.closest(\'div[style]\').remove()" style="margin-top:22px;width:100%;padding:14px;border-radius:999px;background:linear-gradient(135deg,#f5d020,#f5a623);border:none;color:#07101e;font-weight:700;font-size:1rem;cursor:pointer;">OK 👍</button>'
+          +'</div>';
+        document.body.appendChild(conf);
+      }, 800);
+    }
+  });
+}
+
+function _doInstallManual(){
+  _closeSheet();
+  var modal = document.createElement('div');
+  modal.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;';
+  modal.innerHTML='<div style="background:#0f1d2e;border:1px solid rgba(255,215,0,0.25);border-radius:20px 20px 0 0;padding:24px 24px 36px;width:100%;max-width:480px;">'
+    +'<div style="font-size:0.95rem;font-weight:700;color:#fff;margin-bottom:16px;">Comment installer :</div>'
+    +'<div style="font-size:0.9rem;color:rgba(255,255,255,0.8);line-height:1.9;">'
+    +'<div>1️⃣ Appuyez sur <b style="color:#FFD700;">⋮</b> en haut à droite de Chrome</div>'
+    +'<div>2️⃣ Appuyez <b style="color:#FFD700;">"Installer l\'application"</b></div>'
+    +'<div>3️⃣ Confirmez → icône sur écran d\'accueil ✅</div>'
+    +'</div>'
+    +'<button onclick="this.closest(\'div[style]\').remove()" style="margin-top:20px;width:100%;padding:14px;border-radius:999px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.5);font-size:0.9rem;cursor:pointer;">Fermer</button>'
+    +'</div>';
+  document.body.appendChild(modal);
+  modal.addEventListener('click', function(ev){ if(ev.target===modal) modal.remove(); });
+}
+
+// Capture le prompt natif Chrome et affiche la feuille après 3s
 window.addEventListener('beforeinstallprompt', function(e){
   e.preventDefault();
   _pwaPrompt = e;
-  _pwaFabShow();
+  _pwaShowBtn();
+  // Afficher la feuille auto après 3s (comme Facebook)
+  if(!_pwaStandalone){
+    setTimeout(_showInstallSheet, 3000);
+  }
 });
 
-// Cache uniquement quand l'app est réellement installée
 window.addEventListener('appinstalled', function(){
   _pwaStandalone = true;
-  _pwaFabHide();
+  _pwaHideBtn();
   _pwaPrompt = null;
+  _closeSheet();
 });
 
+// Bouton header → ouvre la feuille
 function triggerInstall(){
-  if(_pwaPrompt){
-    _pwaPrompt.prompt();
-    _pwaPrompt.userChoice.then(function(r){
-      _pwaPrompt = null;
-      if(r.outcome === 'accepted'){
-        _pwaFabHide();
-        // Montrer confirmation visible
-        var conf = document.createElement('div');
-        conf.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;';
-        conf.innerHTML='<div style="background:#0f1d2e;border:2px solid #FFD700;border-radius:20px;padding:36px 28px;text-align:center;max-width:320px;margin:20px;">'
-          +'<div style="font-size:3rem;margin-bottom:12px;">✅</div>'
-          +'<div style="color:#FFD700;font-size:1.2rem;font-weight:700;margin-bottom:8px;">Kaffi-Pay installé !</div>'
-          +'<div style="color:rgba(255,255,255,0.7);font-size:0.9rem;line-height:1.6;">L\'icône a été ajoutée sur votre écran d\'accueil.<br><br>Faites <b style="color:#fff;">glisser vers la gauche</b> sur votre écran d\'accueil pour la trouver.</div>'
-          +'<button onclick="this.closest(\'div\').parentNode.remove()" style="margin-top:24px;width:100%;padding:14px;border-radius:999px;background:linear-gradient(135deg,#f5d020,#f5a623);border:none;color:#07101e;font-weight:700;font-size:1rem;cursor:pointer;">OK, compris !</button>'
-          +'</div>';
-        document.body.appendChild(conf);
-      }
-    });
-    return;
-  }
-  // Pas de prompt natif — détecter si déjà installé
-  if(_pwaStandalone){
-    showToast('✅ Kaffi-Pay est déjà installé','success');
-    return;
-  }
-  {
-    // Pas de prompt natif — afficher modal guide installation
-    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    var modal = document.createElement('div');
-    modal.id = 'pwa-install-modal';
-    modal.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:flex-end;justify-content:center;padding:0 0 0 0;';
-    modal.innerHTML = '<div style="background:#0f1d2e;border:1px solid rgba(245,210,32,0.3);border-radius:24px 24px 0 0;padding:28px 24px 36px;width:100%;max-width:480px;box-shadow:0 -8px 40px rgba(0,0,0,0.6);">'
-      + '<div style="width:40px;height:4px;background:rgba(255,255,255,0.15);border-radius:99px;margin:0 auto 20px;"></div>'
-      + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">'
-      + '<img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;">'
-      + '<div><div style="font-family:\'Playfair Display\',serif;font-size:1.1rem;font-weight:700;color:#f5e27a;">Installer Kaffi-Pay</div>'
-      + '<div style="font-size:0.75rem;color:rgba(255,255,255,0.4);">Ajouter à l\'écran d\'accueil</div></div></div>'
-      + (isIOS
-        ? '<div style="font-size:0.9rem;color:rgba(255,255,255,0.85);line-height:1.7;">'
-          + '<div style="margin-bottom:10px;">1️⃣ Appuyez sur <strong style="color:#f5e27a;">Partager ↑</strong> en bas de Safari</div>'
-          + '<div style="margin-bottom:10px;">2️⃣ Faites défiler et appuyez sur <strong style="color:#f5e27a;">"Sur l\'écran d\'accueil"</strong></div>'
-          + '<div>3️⃣ Appuyez sur <strong style="color:#f5e27a;">Ajouter</strong></div></div>'
-        : '<div style="font-size:0.9rem;color:rgba(255,255,255,0.85);line-height:1.7;">'
-          + '<div style="margin-bottom:10px;">1️⃣ Appuyez sur <strong style="color:#f5e27a;">⋮</strong> en haut à droite de Chrome</div>'
-          + '<div style="margin-bottom:10px;">2️⃣ Appuyez sur <strong style="color:#f5e27a;">"Installer l\'application"</strong><br><span style="font-size:0.75rem;color:rgba(255,255,255,0.4);">ou "Ajouter à l\'écran d\'accueil"</span></div>'
-          + '<div>3️⃣ Confirmez en appuyant sur <strong style="color:#f5e27a;">Installer</strong></div></div>')
-      + '<button onclick="document.getElementById(\'pwa-install-modal\').remove()" style="margin-top:24px;width:100%;padding:14px;border-radius:999px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:rgba(255,255,255,0.5);font-size:0.9rem;cursor:pointer;">Fermer</button>'
-      + '</div>';
-    document.body.appendChild(modal);
-    modal.addEventListener('click', function(e){ if(e.target===modal) modal.remove(); });
-  }
+  if(_pwaStandalone){ showToast('✅ Kaffi-Pay est déjà installé','success'); return; }
+  _pwaSheetShown = false;
+  _showInstallSheet();
 }
 
 // ── Service Worker PWA ──
