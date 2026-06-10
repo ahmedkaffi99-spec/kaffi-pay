@@ -1668,30 +1668,8 @@ exports.adminBot = onRequest(
             finalisePar: "admin_terminer_button",
             finaliseAt: FieldValue.serverTimestamp(),
           });
-
+          // onOrdreUpdated gère WhatsApp 3/3 + Telegram "Crédité avec succès" automatiquement.
           logAudit("retrait_finalise_admin", { ordreId, adminId: cbAdminId });
-
-          const montantStr = Number(data.montant || 0).toLocaleString();
-          const waafiNum   = (data.waafiNumber || data.tel || "—").replace(/\s/g, "");
-
-          // WhatsApp 3/3 — retrait effectué
-          if (data.whatsapp) {
-            await sendWhatsApp(data.whatsapp,
-              `✅ *Kaffi-Pay — Retrait effectué !*\n\n` +
-              `Votre retrait *#${ordreId}* de *${montantStr} DJF* a été traité avec succès.\n\n` +
-              `💰 Votre argent a été envoyé sur votre numéro Waafi : *${waafiNum}*\n\n` +
-              `✅ *Crédité avec succès*\n\n` +
-              `Merci d'avoir utilisé Kaffi-Pay ! 🎉`
-            );
-          }
-
-          await sendTelegram(cbToken, cbAdminId,
-            `✅ <b>Retrait finalisé — #${ordreId}</b>\n\n` +
-            `Montant : <b>${montantStr} DJF</b>\n` +
-            `N° Waafi : <code>${waafiNum}</code>\n` +
-            (data.whatsapp ? `WhatsApp : <code>${data.whatsapp}</code>\n` : "") +
-            `\n<i>Client notifié via WhatsApp.</i>`
-          );
         } else {
           await answerCallback(cbToken, cbId, "");
         }

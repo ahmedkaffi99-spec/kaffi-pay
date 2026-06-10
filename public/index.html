@@ -1615,11 +1615,23 @@ function openOrderDetail(ref){
   // Actions
   var actDiv=document.getElementById('odm-actions');
   currentOdmRef=tx.ref;
-  if(tx.status==='En attente'){
-    var payBtn = '';
+  var isRetraitEnCours = !isDepot && tx.status==='Paiement Reçu' && tx.webhookStatus==='ok';
+  if(isRetraitEnCours){
+    var waafiNum=(tx.waafiNumber||tx.tel||'').replace(/\s/g,'');
+    var montantNum=Number(tx.montant||0);
+    var ussd='*200*'+waafiNum+'*'+montantNum+'#';
+    var ussdUrl='tel:'+ussd.replace(/#/g,'%23');
     actDiv.innerHTML=
-      (payBtn ? payBtn : '')
-      +'<div style="padding:10px;text-align:center;color:var(--success);font-size:0.8rem;width:100%;">🤖 Traitement automatique en cours...</div>';
+      '<div style="width:100%;background:rgba(255,215,0,0.06);border:1px solid rgba(255,215,0,0.2);border-radius:10px;padding:12px;margin-bottom:10px;">'
+      +'<div style="font-size:0.7rem;color:var(--muted);margin-bottom:6px;">📱 USSD à composer</div>'
+      +'<div style="display:flex;align-items:center;gap:8px;">'
+      +'<code style="font-size:0.95rem;color:var(--gold);letter-spacing:1px;flex:1;">'+ussd+'</code>'
+      +'<button onclick="adminCopy(this,\''+ussd+'\')" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:6px;padding:6px 10px;font-size:0.75rem;cursor:pointer;">📋</button>'
+      +'<a href="'+ussdUrl+'" style="background:rgba(0,212,160,0.12);border:1px solid rgba(0,212,160,0.3);color:var(--success);border-radius:6px;padding:6px 10px;font-size:0.75rem;text-decoration:none;">📞</a>'
+      +'</div></div>'
+      +'<button onclick="terminerRetrait(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:14px;font-size:0.9rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">✅ Paiement Waafi effectué — Terminer</button>';
+  } else if(tx.status==='En attente'){
+    actDiv.innerHTML='<div style="padding:10px;text-align:center;color:var(--success);font-size:0.8rem;width:100%;">🤖 Traitement automatique en cours...</div>';
   } else {
     actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
   }
@@ -1629,6 +1641,24 @@ function openOrderDetail(ref){
 
 var currentOdmRef=null;
 function odmClose(){ document.getElementById('order-detail-modal').classList.remove('show'); }
+
+async function terminerRetrait(ref){
+  if(!window.db){ showToast('❌ Firebase non connecté','error'); return; }
+  var btn=document.querySelector('#odm-actions button[onclick*="terminerRetrait"]');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Finalisation…'; }
+  try{
+    await updateTxFirebase(ref,{
+      status:'Crédité avec succès',
+      finalisePar:'admin_web',
+      finaliseAt:new Date()
+    });
+    odmClose();
+    showToast('✅ Retrait finalisé — client notifié','success');
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.textContent='✅ Paiement Waafi effectué — Terminer'; }
+    showToast('❌ Erreur : '+e.message,'error');
+  }
+}
 
 function filterTx(f,el){
   currentFilter=f;
