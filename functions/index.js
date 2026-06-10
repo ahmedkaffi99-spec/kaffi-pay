@@ -6,7 +6,7 @@
  * ║  1. User paie Waafi → SMS → smsWebhook → waafi_notifications         ║
  * ║  2. User soumet ordre avec Transfer ID                               ║
  * ║  3. onNouvelOrdre cherche la notif correspondante → confirme         ║
- * ║  4. Admin confirme via bot → triggerMacrodroid immédiat              ║
+ * ║  4. Admin confirme via bot → MobCash API → crédit 1xBet            ║
  * ║                                                                      ║
  * ║  Fonctions (7) :                                                     ║
  * ║  [Triggers]  onNouvelOrdre · onOrdreUpdated                          ║
@@ -30,8 +30,7 @@ const REGION = "europe-west1";
 
 const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
-const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
-const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
+const MACRO_SECRET      = defineSecret("MACRODROID_SECRET"); // smsWebhook auth only
 const SUPPORT_BOT_TOKEN  = defineSecret("SUPPORT_BOT_TOKEN");
 const ULTRAMSG_INSTANCE  = defineSecret("ULTRAMSG_INSTANCE_ID");
 const ULTRAMSG_TOKEN     = defineSecret("ULTRAMSG_TOKEN");
@@ -144,40 +143,6 @@ async function detecterDoublon(phone, montant, type, excluId) {
   return null;
 }
 
-// ══════════════════════════════════════════════════════════════════
-// SECTION 5 — APPEL MACRODROID (direct, temps réel, sans circuit breaker)
-// ══════════════════════════════════════════════════════════════════
-
-// Appel direct MacroDroid — utilisé pour confirmations (auto + admin).
-// Pas de circuit breaker ici : on déclenche immédiatement à chaque confirmation.
-async function triggerMacrodroid(url, ordreId, montant, id1xbet) {
-  if (!url) throw new Error("MACRODROID_WEBHOOK_URL non configuré dans Firebase Secrets");
-  const webhookUrl = `${url}?id1xbet=${encodeURIComponent(id1xbet)}&montant=${encodeURIComponent(montant)}&ordreid=${encodeURIComponent(ordreId)}`;
-  const resp = await fetch(webhookUrl, { signal: AbortSignal.timeout(15000) });
-  if (!resp.ok) throw new Error(`MacroDroid HTTP ${resp.status}`);
-  return resp;
-}
-
-// Verrou global 20s — une seule instance appelle MacroDroid à la fois.
-// Attend en boucle (max ~55s) jusqu'à ce que le verrou soit libre.
-async function callMacrodroidLocked(webhookBase, ordreId, montant, id1xbet) {
-  const lockRef  = db.collection("system_locks").doc("macrodroid");
-  const deadline = Date.now() + 55000;
-  while (Date.now() < deadline) {
-    const acquired = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(lockRef);
-      const last = snap.exists ? (snap.data().at?.toMillis?.() || 0) : 0;
-      if (Date.now() - last >= 20000) {
-        tx.set(lockRef, { at: FieldValue.serverTimestamp() });
-        return true;
-      }
-      return false;
-    }).catch(() => false);
-    if (acquired) return triggerMacrodroid(webhookBase, ordreId, montant, id1xbet);
-    await new Promise(r => setTimeout(r, 5000));
-  }
-  throw new Error("MacroDroid occupé depuis > 55s");
-}
 
 
 // ══════════════════════════════════════════════════════════════════
@@ -974,89 +939,6 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
 
 // ══════════════════════════════════════════════════════════════════
-// HTTP — MACRO JOB QUEUE (polling par MacroDroid)
-//
-//  MacroDroid configure un timer toutes les 60s :
-//  1. GET /macroJob?secret=xxx              → retourne le prochain job
-//  2. Traiter la recharge 1xBet
-//  3. GET /macroJob?secret=xxx&done=JOBID  → valider le job
-//
-//  Chaque job Firestore : { ordreId, id1xbet, montant, status }
-//  status: pending → processing → done | failed
-// ══════════════════════════════════════════════════════════════════
-exports.macroJob = onRequest(
-  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
-  async (req, res) => {
-    res.set("Access-Control-Allow-Origin", "*");
-    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
-
-    const secret   = req.query.secret || (req.body || {}).secret || "";
-    const expected = MACRO_SECRET.value() || "KaffiPay2026";
-    if (!secret || secret !== expected) { res.status(403).json({ error: "Unauthorized" }); return; }
-
-    const token   = TELEGRAM_TOKEN.value();
-    const adminId = TELEGRAM_ADMIN_ID.value();
-
-    // ── ACK : MacroDroid confirme le résultat d'une recharge ─────
-    // MacroDroid appelle : ?secret=xxx&done={lv=ordreid}&status=ok  (ou failed)
-    const ordreId = req.query.done || (req.body || {}).done || "";
-    if (ordreId) {
-      const isOk = (req.query.status || (req.body || {}).status || "ok") !== "failed";
-
-      const ordSnap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get();
-      if (ordSnap.empty) { res.json({ ok: false, error: "Ordre introuvable" }); return; }
-
-      const oDoc  = ordSnap.docs[0];
-      const oData = oDoc.data();
-
-      await oDoc.ref.update({
-        webhookStatus:    isOk ? "ok_confirmed" : "echec_confirmed",
-        webhookConfirmedAt: FieldValue.serverTimestamp(),
-      });
-
-      logAudit(isOk ? "macrodroid_confirmed_ok" : "macrodroid_confirmed_failed", {
-        ordreId, id1xbet: oData.userId1xBet || oData.id1x || "?",
-      });
-
-      if (isOk) {
-        await sendTelegram(token, adminId,
-          `✅ <b>Recharge confirmée par MacroDroid</b>\n` +
-          `#${ordreId} | <code>${oData.userId1xBet || oData.id1x || "?"}</code> | ${Number(oData.montant || 0).toLocaleString()} DJF`);
-        if (oData.whatsapp) {
-          await sendWhatsApp(oData.whatsapp,
-            `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
-            `Votre compte 1xBet *${oData.userId1xBet || oData.id1x || "?"}* a été crédité avec succès !\n` +
-            `Ordre : #${ordreId}\n` +
-            `Montant : ${Number(oData.montant || 0).toLocaleString()} DJF\n\n` +
-            `Merci d'avoir utilisé Kaffi-Pay 🙏\n` +
-            `📲 kaffi-pay.com`
-          );
-        }
-      } else {
-        await sendTelegram(token, adminId,
-          `❌ <b>Recharge échouée (MacroDroid)</b>\n` +
-          `#${ordreId} | <code>${oData.userId1xBet || oData.id1x || "?"}</code>\n` +
-          `Utilise <code>recharge ${ordreId}</code> pour réessayer.`);
-        if (oData.whatsapp) {
-          await sendWhatsApp(oData.whatsapp,
-            `⚠️ *Kaffi-Pay — Problème de crédit*\n\n` +
-            `Une erreur est survenue lors du crédit de votre compte 1xBet.\n` +
-            `Ordre : #${ordreId}\n\n` +
-            `Notre équipe intervient sous peu.\n` +
-            `Assistance : @kaffipay_support_bot`
-          );
-        }
-      }
-
-      res.json({ ok: true });
-      return;
-    }
-
-    res.json({ ok: true, info: "ACK endpoint — done=ordreId&status=ok|failed" });
-  }
-);
-
-// ══════════════════════════════════════════════════════════════════
 // SCHEDULED — AUTO-TRAITEMENT (toutes les 5 min)
 //
 //  1. Ordres "En attente" → cherche SMS correspondant → auto-confirme
@@ -1647,7 +1529,7 @@ exports.supportClient = onRequest(
 // HTTP — ADMIN BOT
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
-  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_WEBHOOK_URL, MACRO_SECRET,
+  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_SECRET,
                               ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
                               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
@@ -1832,24 +1714,6 @@ exports.adminBot = onRequest(
             `❌ <b>Échec envoi</b>\nHTTP status : <code>${result?.status || "N/A"}</code>\n` +
             `Raison : <code>${result?.reason || result?.body || "inconnu"}</code>`);
         }
-        return;
-      }
-
-      // macro jobs — file d'attente MacroDroid
-      if (t === "macro jobs" || t === "/macro_jobs") {
-        const [pendSnap, procSnap] = await Promise.all([
-          db.collection("macrodroid_jobs").where("status", "==", "pending").limit(10).get(),
-          db.collection("macrodroid_jobs").where("status", "==", "processing").limit(10).get(),
-        ]);
-        const docs = [...pendSnap.docs, ...procSnap.docs];
-        if (!docs.length) { await sendTelegram(token, adminId, "✅ File MacroDroid vide — aucun job en attente."); return; }
-        const lignes = docs.map(d => {
-          const j = d.data();
-          return `• #${j.ordreId} | ID:${j.id1xbet} | ${Number(j.montant||0).toLocaleString()}DJF | ${j.status}`;
-        });
-        await sendTelegram(token, adminId,
-          `📋 <b>File MacroDroid (${docs.length} job${docs.length>1?"s":""})</b>\n\n${lignes.join("\n")}\n\n` +
-          `<i>MacroDroid poll: GET /macroJob?secret=xxx</i>`);
         return;
       }
 
