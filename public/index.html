@@ -22,6 +22,7 @@
 <link rel="manifest" href="manifest.json?v=4">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 
 <script type="module">
 // ═══════════════════════════════════════════════════
@@ -485,7 +486,16 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
       </div>
 
-      <button class="submit-btn" onclick="submitDepot()" id="depot-btn">
+      <div style="margin-top:12px;display:flex;justify-content:center;">
+        <div class="cf-turnstile" id="ts-depot"
+             data-sitekey="0x4AAAAAADiBCInulptSk3m6"
+             data-callback="onTsDepot"
+             data-error-callback="onTsError"
+             data-theme="dark"
+             data-size="normal"></div>
+      </div>
+
+      <button class="submit-btn" onclick="submitDepot()" id="depot-btn" disabled style="opacity:0.5;">
         <span id="depot-btn-text">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="depot-spinner"></div>
       </button>
@@ -546,7 +556,16 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
       </div>
 
-      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn">
+      <div style="margin-top:12px;display:flex;justify-content:center;">
+        <div class="cf-turnstile" id="ts-retrait"
+             data-sitekey="0x4AAAAAADiBCInulptSk3m6"
+             data-callback="onTsRetrait"
+             data-error-callback="onTsError"
+             data-theme="dark"
+             data-size="normal"></div>
+      </div>
+
+      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn" disabled style="opacity:0.5;">
         <span id="retrait-btn-text">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="retrait-spinner"></div>
       </button>
@@ -1079,6 +1098,8 @@ async function saveTxFirebase(tx, _retries){
     if(!txToSave.createdAt) txToSave.createdAt = new Date();
     await window.fsAddDoc(window.fsCollection(window.db,'orders'), txToSave);
     showToast('✅ Ordre enregistré avec succès','success');
+    // Réinitialiser Turnstile après soumission réussie
+    if(txToSave.type==='Dépôt') _resetTs('depot'); else _resetTs('retrait');
   } catch(e){
     if(_retries < 5){
       showToast('⚠️ Reconnexion Firebase... ('+(5-_retries)+' essais restants)','warning');
@@ -1240,7 +1261,28 @@ function genererOrderId(){
   return mm+dd+n;
 }
 
+var _tsDepotToken='';
+var _tsRetraitToken='';
+function onTsDepot(token){
+  _tsDepotToken=token;
+  var btn=document.getElementById('depot-btn');
+  if(btn){ btn.disabled=false; btn.style.opacity='1'; }
+}
+function onTsRetrait(token){
+  _tsRetraitToken=token;
+  var btn=document.getElementById('retrait-btn');
+  if(btn){ btn.disabled=false; btn.style.opacity='1'; }
+}
+function onTsError(){
+  showToast('⚠️ Vérification échouée — rechargez la page','error');
+}
+function _resetTs(which){
+  if(which==='depot'){ _tsDepotToken=''; var btn=document.getElementById('depot-btn'); if(btn){btn.disabled=true;btn.style.opacity='0.5';} if(window.turnstile) window.turnstile.reset('#ts-depot'); }
+  else { _tsRetraitToken=''; var btn2=document.getElementById('retrait-btn'); if(btn2){btn2.disabled=true;btn2.style.opacity='0.5';} if(window.turnstile) window.turnstile.reset('#ts-retrait'); }
+}
+
 async function submitDepot(){
+  if(!_tsDepotToken){ showToast('⚠️ Vérification humaine requise','error'); return; }
   const m=document.getElementById('depot-montant').value;
   const id=document.getElementById('depot-id').value.trim();
   const h=document.getElementById('depot-hash').value.trim();
@@ -1297,6 +1339,7 @@ async function submitDepot(){
 }
 
 async function submitRetrait(){
+  if(!_tsRetraitToken){ showToast('⚠️ Vérification humaine requise','error'); return; }
   const c=document.getElementById('retrait-code').value.trim();
   const t=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
