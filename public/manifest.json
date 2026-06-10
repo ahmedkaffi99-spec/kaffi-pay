@@ -1,14 +1,14 @@
 {
-  "id": "/",
   "name": "Kaffi-Pay",
   "short_name": "Kaffi-Pay",
   "description": "Plateforme d'échange 1xBet & Waafi",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
   "background_color": "#07101e",
   "theme_color": "#07101e",
-  "orientation": "portrait",
+  "orientation": "portrait-primary",
+  "lang": "fr",
   "icons": [
     {
       "src": "icon-192.png",
