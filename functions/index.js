@@ -21,6 +21,7 @@ const { onSchedule }                           = require("firebase-functions/v2/
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
+const crypto                                   = require("crypto");
 
 initializeApp();
 const db = getFirestore();
@@ -31,9 +32,13 @@ const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_WEBHOOK_URL = defineSecret("MACRODROID_WEBHOOK_URL");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET");
-const SUPPORT_BOT_TOKEN = defineSecret("SUPPORT_BOT_TOKEN");
-const ULTRAMSG_INSTANCE = defineSecret("ULTRAMSG_INSTANCE_ID");
-const ULTRAMSG_TOKEN    = defineSecret("ULTRAMSG_TOKEN");
+const SUPPORT_BOT_TOKEN  = defineSecret("SUPPORT_BOT_TOKEN");
+const ULTRAMSG_INSTANCE  = defineSecret("ULTRAMSG_INSTANCE_ID");
+const ULTRAMSG_TOKEN     = defineSecret("ULTRAMSG_TOKEN");
+const MOBCASH_HASH       = defineSecret("MOBCASH_HASH");
+const MOBCASH_CASHIERPASS = defineSecret("MOBCASH_CASHIERPASS");
+const MOBCASH_CASHDESKID = defineSecret("MOBCASH_CASHDESKID");
+const MOBCASH_LOGIN      = defineSecret("MOBCASH_LOGIN");
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 1 — STATE MACHINE
@@ -176,7 +181,69 @@ async function callMacrodroidLocked(webhookBase, ordreId, montant, id1xbet) {
 
 
 // ══════════════════════════════════════════════════════════════════
-// SECTION 5b — SCORING CORRESPONDANCE (3 critères)
+// SECTION 5b — MOBCASH API (Dépôt / Retrait 1xBet)
+//
+//  Login  : POST /Login/{cashdeskId}
+//           sign = SHA256(login + cashdeskId + cashierpass + hash)
+//  Dépôt  : POST /Deposit/{userId1xbet}/Add
+//  Retrait: POST /Deposit/{userId1xbet}/Payout
+//           sign = MD5(summa + cashierpass + cashdeskId)
+// ══════════════════════════════════════════════════════════════════
+const MOBCASH_BASE = "https://partners.servcul.com/CashdeskBotAPI";
+
+async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
+  const hash        = MOBCASH_HASH.value();
+  const cashierpass = MOBCASH_CASHIERPASS.value();
+  const cashdeskId  = MOBCASH_CASHDESKID.value();
+  const login       = MOBCASH_LOGIN.value();
+  if (!hash || !cashierpass || !cashdeskId || !login)
+    throw new Error("Secrets MobCash non configurés (MOBCASH_HASH / MOBCASH_CASHIERPASS / MOBCASH_CASHDESKID / MOBCASH_LOGIN)");
+
+  // Step 1 — login
+  const loginSign = crypto.createHash("sha256")
+    .update(login + cashdeskId + cashierpass + hash)
+    .digest("hex");
+  const loginBody = new URLSearchParams({
+    userid: login, cashdeskid: cashdeskId,
+    cashierpass, hash, lng: "en", sign: loginSign,
+  });
+  const loginResp = await fetch(`${MOBCASH_BASE}/Login/${cashdeskId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: loginBody.toString(),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!loginResp.ok) throw new Error(`MobCash login HTTP ${loginResp.status}`);
+  const loginData = await loginResp.json();
+  if (!loginData.token) throw new Error(`MobCash login: ${JSON.stringify(loginData)}`);
+
+  // Step 2 — transaction
+  const endpoint = type === "Retrait" ? "Payout" : "Add";
+  const txSign = crypto.createHash("md5")
+    .update(String(montant) + cashierpass + cashdeskId)
+    .digest("hex");
+  const txBody = new URLSearchParams({
+    summa: String(montant), cashdeskid: cashdeskId,
+    cashierpass, token: loginData.token, sign: txSign,
+  });
+  if (type === "Retrait" && withdrawalCode) txBody.set("code", withdrawalCode);
+
+  const txResp = await fetch(`${MOBCASH_BASE}/Deposit/${userId1xbet}/${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: txBody.toString(),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!txResp.ok) throw new Error(`MobCash ${endpoint} HTTP ${txResp.status}`);
+  const txData = await txResp.json();
+  if (txData.error || txData.status === "error" || txData.result === "error")
+    throw new Error(`MobCash ${endpoint}: ${JSON.stringify(txData)}`);
+  return txData;
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// SECTION 5c — SCORING CORRESPONDANCE (3 critères)
 //
 //  Règles :
 //  3/3 → confirmer automatiquement
@@ -787,7 +854,8 @@ exports.onOrdreUpdated = onDocumentUpdated(
   {
     document: "orders/{docId}",
     region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN],
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+              MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -848,62 +916,58 @@ exports.onOrdreUpdated = onDocumentUpdated(
       if (waMsg) await sendWhatsApp(after.whatsapp, waMsg);
     }
 
-    // ── MacroDroid — auto-match : "Argent Reçu" → Macrodroid → "Confirmé" ──
-    // confirmerDepot() place le statut à "Argent Reçu" (confirmedBy: "auto_match_waafi").
-    // C'est ici, et seulement ici, que MacroDroid est déclenché pour le flux auto.
+    // ── MobCash — auto-match : "Argent Reçu" → MobCash → "Confirmé" ──
     if (after.status === "Argent Reçu" && after.confirmedBy?.startsWith("auto")) {
       const id1xbet    = after.userId1xBet || after.id1x || "";
       const montantVal = Number(after.montant || 0);
-      const webhookBase = MACRO_WEBHOOK_URL.value() || "";
 
       if (!id1xbet) {
         await sendTelegram(token, adminId,
           `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\nCrédit impossible, intervention manuelle requise.`);
         return;
       }
-      if (!webhookBase) return;
 
       try {
-        await callMacrodroidLocked(webhookBase, ordreId, montantVal, id1xbet);
+        await callMobcash("Dépôt", id1xbet, montantVal, null);
         await event.data.after.ref.update({
           status: "Confirmé",
           webhookStatus: "ok",
           webhookAt: FieldValue.serverTimestamp(),
         });
-        logAudit("macrodroid_ok", { ordreId, id1xbet, source: "auto_argent_recu" });
+        logAudit("mobcash_ok", { ordreId, id1xbet, source: "auto_argent_recu" });
       } catch (e) {
         await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
         await sendTelegram(token, adminId,
-          `⚠️ <b>MacroDroid échoué</b> — #${ordreId}\n<code>${e.message}</code>\n` +
+          `⚠️ <b>MobCash échoué</b> — #${ordreId}\n<code>${e.message}</code>\n` +
           `<i>Le scheduler relancera automatiquement dans 5 min.</i>`);
-        logAudit("macrodroid_echec", { ordreId, err: e.message });
+        logAudit("mobcash_echec", { ordreId, err: e.message });
       }
       return;
     }
 
-    // ── MacroDroid — confirmation manuelle admin ──
+    // ── MobCash — confirmation manuelle admin ──
     // Admin confirme (En attente → Confirmé ou Argent Reçu → Confirmé).
-    // On déclenche Macrodroid seulement si pas encore fait.
     if (after.status !== "Confirmé") return;
 
     const wbAlreadyOk = after.webhookStatus === "ok" || after.webhookStatus === "ok_retry_rt";
-    if (wbAlreadyOk) return; // Auto-flow a déjà traité ce dépôt
+    if (wbAlreadyOk) return;
 
-    const id1xbet    = after.userId1xBet || after.id1x || "";
-    const montantVal = Number(after.montant || 0);
-    const webhookBase = MACRO_WEBHOOK_URL.value() || "";
+    const id1xbet        = after.userId1xBet || after.id1x || "";
+    const montantVal     = Number(after.montant || 0);
+    const orderType      = after.type || "Dépôt";
+    const withdrawalCode = after.withdrawalCode || "";
 
-    if (!id1xbet || !webhookBase) return;
+    if (!id1xbet) return;
 
     try {
-      await callMacrodroidLocked(webhookBase, ordreId, montantVal, id1xbet);
+      await callMobcash(orderType, id1xbet, montantVal, withdrawalCode);
       await event.data.after.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
-      logAudit("macrodroid_ok", { ordreId, id1xbet });
+      logAudit("mobcash_ok", { ordreId, id1xbet, type: orderType });
     } catch (e) {
       await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
       await sendTelegram(token, adminId,
-        `⚠️ <b>MacroDroid échoué</b> — #${ordreId}\n<code>${e.message}</code>`);
-      logAudit("macrodroid_echec", { ordreId, err: e.message });
+        `⚠️ <b>MobCash échoué</b> — #${ordreId}\n<code>${e.message}</code>`);
+      logAudit("mobcash_echec", { ordreId, err: e.message });
     }
   }
 );
@@ -999,7 +1063,8 @@ exports.macroJob = onRequest(
 //  2. Alerte si ordres > 60 min sans SMS trouvé
 // ══════════════════════════════════════════════════════════════════
 exports.ordresBloques = onSchedule(
-  { schedule: "every 5 minutes", region: REGION, timeoutSeconds: 120, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  { schedule: "every 5 minutes", region: REGION, timeoutSeconds: 120,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN] },
   async () => {
     const token   = TELEGRAM_TOKEN.value();
     const adminId = TELEGRAM_ADMIN_ID.value();
@@ -1079,15 +1144,12 @@ exports.ordresBloques = onSchedule(
 
     await alertRef.set({ ts: FieldValue.serverTimestamp(), count: vieux.length });
 
-    // ── PARTIE 3 : Recovery Macrodroid ────────────────────────────────
+    // ── PARTIE 3 : Recovery MobCash ──────────────────────────────────
     // Cas A : "Argent Reçu" (auto_match_waafi) + webhookStatus != ok
-    //   → MacroDroid n'a pas encore crédité (ou a échoué). Re-déclenche
+    //   → MobCash n'a pas encore crédité (ou a échoué). Re-déclenche
     //   et passe directement à "Confirmé" si succès.
     // Cas B : "Confirmé" + webhookStatus != ok
-    //   → Confirmation admin manuelle sans MacroDroid (ou MacroDroid échoué).
-    //   Re-déclenche sans changer le statut.
-    const webhookBase = (MACRO_WEBHOOK_URL && MACRO_WEBHOOK_URL.value) ? MACRO_WEBHOOK_URL.value() : "";
-
+    //   → Confirmation admin manuelle sans crédit. Re-déclenche.
     const [snapArgentRecu, snapConfirme] = await Promise.all([
       db.collection("orders")
         .where("status", "==", "Argent Reçu")
@@ -1110,7 +1172,7 @@ exports.ordresBloques = onSchedule(
       const wbOk    = o.webhookStatus === "ok" || o.webhookStatus === "ok_confirmed" || o.webhookStatus === "ok_retry_rt";
 
       if (wbOk) continue;
-      if (!id1xbet || !webhookBase) continue;
+      if (!id1xbet) continue;
 
       // Vérifie dans ordre_traite (anti-doublon)
       const tid        = o.waafitranfertID || o.hash || "";
@@ -1119,25 +1181,26 @@ exports.ordresBloques = onSchedule(
         : { empty: true };
 
       if (!dejaTraite.empty) {
-        // Déjà dans ordre_traite mais champ pas à jour
         await ordreDoc.ref.update({ webhookStatus: "ok_recovery" });
         continue;
       }
 
       try {
-        await callMacrodroidLocked(webhookBase, ordreId, Number(o.montant || 0), id1xbet);
+        const orderType      = o.type || "Dépôt";
+        const withdrawalCode = o.withdrawalCode || "";
+        await callMobcash(orderType, id1xbet, Number(o.montant || 0), withdrawalCode);
         const updateData = { webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), recoveryBy: "scheduler" };
-        if (setConfirme) updateData.status = "Confirmé"; // Argent Reçu → Confirmé
+        if (setConfirme) updateData.status = "Confirmé";
         await ordreDoc.ref.update(updateData);
         await sendTelegram(token, adminId,
-          `🔄 <b>Recovery MacroDroid</b> — #<code>${ordreId}</code> relancé\n` +
+          `🔄 <b>Recovery MobCash</b> — #<code>${ordreId}</code> relancé\n` +
           `ID 1xBet: <code>${id1xbet}</code> | ${Number(o.montant||0).toLocaleString()} DJF`
         );
-        logAudit("macrodroid_recovery_scheduler", { ordreId, id1xbet, setConfirme });
+        logAudit("mobcash_recovery_scheduler", { ordreId, id1xbet, setConfirme });
       } catch (err) {
         await ordreDoc.ref.update({ webhookStatus: "echec", webhookErr: err.message });
         await sendTelegram(token, adminId,
-          `⚠️ <b>Recovery échoué</b> — #${ordreId}\n<code>${err.message}</code>`
+          `⚠️ <b>Recovery MobCash échoué</b> — #${ordreId}\n<code>${err.message}</code>`
         );
       }
     }
@@ -1311,7 +1374,8 @@ exports.waRecap = onRequest(
 // Flux simple : client donne numéro d'ordre → Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
 exports.supportClient = onRequest(
-  { region: REGION, secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_WEBHOOK_URL, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN], timeoutSeconds: 60 },
+  { region: REGION, secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+                              MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
 
@@ -1501,7 +1565,7 @@ exports.supportClient = onRequest(
         const adminToken = TELEGRAM_TOKEN.value();
         const adminId2   = TELEGRAM_ADMIN_ID.value();
 
-        // ── Confirmé mais non crédité → support bot relance MacroDroid ──
+        // ── Confirmé mais non crédité → support bot relance MobCash ──
         if (o.status === "Confirmé" && !wbOk) {
           const id1xbet = o.userId1xBet || o.id1x || "";
           if (!id1xbet) {
@@ -1513,25 +1577,23 @@ exports.supportClient = onRequest(
               `🆘 <b>ID 1xBet manquant</b> — 👤 ${firstName}\nOrdre <b>#${ordreId}</b> | ${Number(o.montant||0).toLocaleString()} DJF`);
             return;
           }
-          const wbUrl = (MACRO_WEBHOOK_URL && MACRO_WEBHOOK_URL.value) ? MACRO_WEBHOOK_URL.value() : "";
           await send(
-            `✅ <b>Dépôt confirmé — Crédit en cours</b>\n\n` +
+            `✅ <b>Ordre confirmé — Crédit en cours</b>\n\n` +
             `Ordre : <b>#${ordreId}</b> | ${Number(o.montant||0).toLocaleString()} DJF\n` +
             `ID 1xBet : <code>${id1xbet}</code>\n\n` +
             `⏱️ Votre compte sera crédité sous peu.`
           );
           await sendTelegram(adminToken, adminId2,
-            `📋 <b>Support → relance MacroDroid</b> — 👤 ${firstName}\nOrdre <b>#${ordreId}</b> | <code>${id1xbet}</code>`);
-          if (wbUrl) {
-            try {
-              await callMacrodroidLocked(wbUrl, ordreId, o.montant || 0, id1xbet);
-              await oRef.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
-              logAudit("macrodroid_ok_support", { ordreId, clientName: firstName });
-            } catch (err) {
-              await oRef.update({ webhookStatus: "echec", webhookErr: err.message });
-              await sendTelegram(adminToken, adminId2,
-                `⚠️ MacroDroid échoué (support) — #${ordreId}\n<code>${err.message}</code>`);
-            }
+            `📋 <b>Support → relance MobCash</b> — 👤 ${firstName}\nOrdre <b>#${ordreId}</b> | <code>${id1xbet}</code>`);
+          try {
+            const orderType = o.type || "Dépôt";
+            await callMobcash(orderType, id1xbet, o.montant || 0, o.withdrawalCode || "");
+            await oRef.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp() });
+            logAudit("mobcash_ok_support", { ordreId, clientName: firstName });
+          } catch (err) {
+            await oRef.update({ webhookStatus: "echec", webhookErr: err.message });
+            await sendTelegram(adminToken, adminId2,
+              `⚠️ MobCash échoué (support) — #${ordreId}\n<code>${err.message}</code>`);
           }
           return;
         }
@@ -1585,7 +1647,9 @@ exports.supportClient = onRequest(
 // HTTP — ADMIN BOT
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
-  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_WEBHOOK_URL, MACRO_SECRET, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN], timeoutSeconds: 60 },
+  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_WEBHOOK_URL, MACRO_SECRET,
+                              ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+                              MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
     try {
@@ -1708,18 +1772,16 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // test macro — vérifie que MacroDroid répond
-      if (t === "test macro" || t === "/test_macro") {
-        const wbUrl = MACRO_WEBHOOK_URL.value() || "";
-        if (!wbUrl) { await sendTelegram(token, adminId, "❌ MACRODROID_WEBHOOK_URL non configuré dans Firebase Secrets."); return; }
-        await sendTelegram(token, adminId, `🔄 Test MacroDroid...\n<code>${wbUrl.substring(0, 60)}...</code>`);
+      // test mobcash — vérifie que MobCash répond (login)
+      if (t === "test mobcash" || t === "/test_mobcash" || t === "test macro" || t === "/test_macro") {
+        await sendTelegram(token, adminId, "🔄 Test MobCash (login)…");
         try {
-          await triggerMacrodroid(wbUrl, "TEST", 0, "TEST");
-          await sendTelegram(token, adminId, "✅ MacroDroid répond correctement !");
+          await callMobcash("Dépôt", "TEST_NO_EXEC", 0, null);
+          await sendTelegram(token, adminId, "✅ MobCash répond correctement !");
         } catch (e) {
           await sendTelegram(token, adminId,
-            `❌ MacroDroid ne répond pas :\n<code>${e.message}</code>\n\n` +
-            "Vérifiez que :\n• MacroDroid est ouvert sur le téléphone\n• Le webhook est bien configuré dans MacroDroid\n• L'URL dans Firebase Secrets est correcte");
+            `❌ MobCash : <code>${e.message}</code>\n\n` +
+            "Vérifiez les secrets : MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN");
         }
         return;
       }
@@ -1835,7 +1897,7 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // recharge #ID — relance MacroDroid manuellement pour un ordre confirmé
+      // recharge #ID — relance MobCash manuellement pour un ordre confirmé
       const rechargeMatch = text.match(/^recharge\s+#?(\d{5,8})\b/i);
       if (rechargeMatch) {
         const num  = rechargeMatch[1];
@@ -1846,20 +1908,20 @@ exports.adminBot = onRequest(
         if (oData.status !== "Confirmé") {
           await sendTelegram(token, adminId, `⛔ Ordre <b>#${num}</b> n'est pas Confirmé (statut: <b>${oData.status}</b>).`); return;
         }
-        const id1xbet    = oData.userId1xBet || oData.id1x || oData.idBet || "";
-        const montantVal = oData.montant || oData.amount || 0;
+        const id1xbet        = oData.userId1xBet || oData.id1x || oData.idBet || "";
+        const montantVal     = oData.montant || oData.amount || 0;
+        const orderType      = oData.type || "Dépôt";
+        const withdrawalCode = oData.withdrawalCode || "";
         if (!id1xbet) { await sendTelegram(token, adminId, `⚠️ ID 1xBet manquant pour <b>#${num}</b>.`); return; }
-        const wbUrl = MACRO_WEBHOOK_URL.value() || "";
-        if (!wbUrl) { await sendTelegram(token, adminId, `❌ MACRODROID_WEBHOOK_URL non configuré.`); return; }
-        await sendTelegram(token, adminId, `🔄 Relance MacroDroid — <b>#${num}</b> | <code>${id1xbet}</code>…`);
+        await sendTelegram(token, adminId, `🔄 Relance MobCash — <b>#${num}</b> | <code>${id1xbet}</code>…`);
         try {
-          await callMacrodroidLocked(wbUrl, num, montantVal, id1xbet);
+          await callMobcash(orderType, id1xbet, montantVal, withdrawalCode);
           await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAdmin: true });
           logAudit("recharge_manuelle_ok", { num, adminId, id1xbet });
           await sendTelegram(token, adminId,
             `✅ <b>Recharge réussie !</b>\n#${num} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
         } catch (e) {
-          await sendTelegram(token, adminId, `❌ Échec : <code>${e.message}</code>`);
+          await sendTelegram(token, adminId, `❌ Échec MobCash : <code>${e.message}</code>`);
         }
         return;
       }
