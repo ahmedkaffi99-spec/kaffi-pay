@@ -491,6 +491,31 @@ async function sendTelegram(token, chatId, text) {
   } catch (e) { console.warn("Telegram failed:", e.message); }
 }
 
+// Envoie un message Telegram avec boutons inline (keyboard = [[{text, callback_data|url}]])
+async function sendTelegramKeyboard(token, chatId, text, keyboard) {
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId, text, parse_mode: "HTML",
+        reply_markup: { inline_keyboard: keyboard },
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) { console.warn("Telegram keyboard failed:", e.message); }
+}
+
+// Répond à un callback_query Telegram (supprime le spinner sur le bouton)
+async function answerCallback(token, callbackId, text) {
+  if (!token || !callbackId) return;
+  fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: callbackId, text: text || "" }),
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => {});
+}
+
 async function sendTelegramToBot(token, chatId, text) {
   if (!token || !chatId) return false;
   try {
@@ -573,7 +598,8 @@ function extractNumClient(text, own = "77275572") {
 exports.onNouvelOrdre = onDocumentCreated(
   {
     document: "orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_SECRET, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN],
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_SECRET, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+              MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -783,9 +809,8 @@ exports.onNouvelOrdre = onDocumentCreated(
     }
 
     // ════════════════════════════════════════════════════════════
-    //  RETRAIT — Analyse fraude + notification admin
-    //  Pour un retrait, il n'y a pas de Transfer ID Waafi.
-    //  On passe le code de retrait à la place pour vérifier son format.
+    //  RETRAIT — Appel immédiat MobCash Payout + USSD admin
+    //  Flow : soumission → MobCash → USSD admin → Terminer → crédité
     // ════════════════════════════════════════════════════════════
     const tidRetrait = (tx.withdrawalCode || "").trim();
     const fraud = analyserFraude(tx, tidRetrait);
@@ -796,24 +821,102 @@ exports.onNouvelOrdre = onDocumentCreated(
     });
 
     if (fraud.action === "rejeter" || fraud.risque === "élevé") {
+      const raisonFraude = "Fraude: " + fraud.raisons.join(", ");
       await db.collection("orders").doc(docId).update({
-        status: "Paiement Non Reçu", flagRaison: "Fraude: " + fraud.raisons.join(", "),
+        status: "Paiement Non Reçu", flagRaison: raisonFraude,
       });
       await sendTelegram(token, adminId,
         `🚨 <b>Retrait rejeté — Fraude (score ${fraud.score_fraude}/100)</b>\n` +
         `Ordre: <code>#${ordreId}</code> | ${fraud.raisons.join(", ")}`
       );
+      if (tx.whatsapp) {
+        await sendWhatsApp(tx.whatsapp,
+          `❌ *Kaffi-Pay — Retrait refusé*\n\n` +
+          `Votre demande de retrait *#${ordreId}* a été refusée.\n` +
+          `Raison : ${raisonFraude}\n\n` +
+          `Contactez le support si besoin.`
+        );
+      }
       logAudit("ordre_rejete_fraude", { ordreId, score: fraud.score_fraude });
       return;
     }
 
-    await sendTelegram(token, adminId,
-      `📤 <b>Nouveau Retrait</b>\n` +
-      `Ordre: <b>#${ordreId}</b> | <b>${Number(tx.montant).toLocaleString()} DJF</b>\n` +
-      `Code: <code>${tx.withdrawalCode || "?"}</code> | N° Waafi: <code>${tx.waafiNumber || "?"}</code>\n` +
-      (doublon ? "⚠️ <i>Doublon possible</i>\n" : "") +
-      `Risque: <i>${fraud.risque} (${fraud.score_fraude}/100)</i>`
-    );
+    // ── Appel MobCash Payout immédiat ──
+    const id1xbet    = tx.userId1xBet || tx.id1x || "";
+    const montantVal = Number(tx.montant || 0);
+    const waafiNum   = (tx.waafiNumber || tx.tel || "").replace(/\s/g, "");
+
+    if (!id1xbet) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>Retrait sans ID 1xBet</b> — #${ordreId}\nIntervention manuelle requise.`);
+      return;
+    }
+
+    try {
+      await callMobcash("Retrait", id1xbet, montantVal, tidRetrait);
+
+      // Stocker dans ordre_traite (retrait traité par MobCash)
+      await db.collection("ordre_traite").add({
+        ordreId, type: "Retrait",
+        id1xbet, montant: montantVal, withdrawalCode: tidRetrait,
+        mobcashAt: FieldValue.serverTimestamp(),
+        status: "retrait_en_cours",
+      });
+
+      await db.collection("orders").doc(docId).update({
+        status: "Paiement Reçu",
+        webhookStatus: "ok",        // empêche onOrdreUpdated de rappeler MobCash
+        webhookAt: FieldValue.serverTimestamp(),
+        mobcashRetraitAt: FieldValue.serverTimestamp(),
+      });
+
+      // ── WhatsApp 2/3 — retrait en cours ──
+      if (tx.whatsapp) {
+        await sendWhatsApp(tx.whatsapp,
+          `⏳ *Kaffi-Pay — Retrait en cours* 💳\n\n` +
+          `Votre retrait *#${ordreId}* de *${montantVal.toLocaleString()} DJF* a été accepté.\n\n` +
+          `Statut : ⏳ *Retrait en cours*\n\n` +
+          `Vous recevrez votre argent sur Waafi sous peu.\n` +
+          `📲 kaffi-pay.com/#suivi-${ordreId}`
+        );
+      }
+
+      // ── Telegram admin — USSD + bouton Terminer ──
+      const ussd = `*200*${waafiNum}*${montantVal}#`;
+      const ussdUrl = `tel:${ussd.replace(/#/g, "%23")}`;
+      await sendTelegramKeyboard(token, adminId,
+        `📤 <b>Retrait à payer — #${ordreId}</b>\n\n` +
+        `Montant : <b>${montantVal.toLocaleString()} DJF</b>\n` +
+        `N° Waafi client : <code>${waafiNum}</code>\n` +
+        `Code retrait 1xBet : <code>${tidRetrait}</code>\n\n` +
+        `📱 <b>USSD à composer :</b>\n<code>${ussd}</code>\n\n` +
+        (doublon ? "⚠️ <i>Doublon possible</i>\n\n" : "") +
+        `<i>Composez le code USSD sur votre téléphone puis cliquez Terminer.</i>`,
+        [
+          [{ text: `📞 Composer ${ussd}`, url: ussdUrl }],
+          [{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }],
+        ]
+      );
+
+      logAudit("retrait_mobcash_ok", { ordreId, id1xbet, montantVal });
+
+    } catch (e) {
+      await db.collection("orders").doc(docId).update({
+        status: "Paiement Non Reçu",
+        flagRaison: `MobCash Payout échoué: ${e.message}`,
+        flaggedAt: FieldValue.serverTimestamp(),
+      });
+      await sendTelegram(token, adminId,
+        `❌ <b>Retrait MobCash échoué</b> — #${ordreId}\n<code>${e.message}</code>`);
+      if (tx.whatsapp) {
+        await sendWhatsApp(tx.whatsapp,
+          `❌ *Kaffi-Pay — Retrait échoué*\n\n` +
+          `Votre demande de retrait *#${ordreId}* n'a pas pu être traitée.\n\n` +
+          `Notre équipe intervient sous peu. Contactez le support si besoin.`
+        );
+      }
+      logAudit("retrait_mobcash_echec", { ordreId, err: e.message });
+    }
   }
 );
 
@@ -1526,6 +1629,75 @@ exports.adminBot = onRequest(
   async (req, res) => {
     res.status(200).send("OK");
     try {
+      // ── Callback query — boutons inline (ex: Terminer retrait) ──
+      const callbackQuery = (req.body || {}).callback_query;
+      if (callbackQuery) {
+        const cbToken   = TELEGRAM_TOKEN.value();
+        const cbAdminId = String(TELEGRAM_ADMIN_ID.value());
+        const fromId    = String((callbackQuery.from || {}).id || "");
+        const cbData    = callbackQuery.data || "";
+        const cbId      = callbackQuery.id;
+
+        if (fromId === cbAdminId && cbData.startsWith("terminer_")) {
+          const ordreId = cbData.replace("terminer_", "");
+
+          await answerCallback(cbToken, cbId, "✅ Retrait finalisé !");
+
+          const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get();
+          if (snap.empty) {
+            await sendTelegram(cbToken, cbAdminId, `❓ Ordre <b>#${ordreId}</b> introuvable.`);
+            return;
+          }
+
+          const doc  = snap.docs[0];
+          const data = doc.data();
+
+          if (data.status === "Crédité avec succès") {
+            await sendTelegram(cbToken, cbAdminId, `ℹ️ Retrait <b>#${ordreId}</b> déjà finalisé.`);
+            return;
+          }
+
+          if (!transitionValide(data.status, "Crédité avec succès")) {
+            await sendTelegram(cbToken, cbAdminId,
+              `⛔ Impossible de finaliser — statut actuel : <b>${data.status}</b>.`);
+            return;
+          }
+
+          await doc.ref.update({
+            status: "Crédité avec succès",
+            finalisePar: "admin_terminer_button",
+            finaliseAt: FieldValue.serverTimestamp(),
+          });
+
+          logAudit("retrait_finalise_admin", { ordreId, adminId: cbAdminId });
+
+          const montantStr = Number(data.montant || 0).toLocaleString();
+          const waafiNum   = (data.waafiNumber || data.tel || "—").replace(/\s/g, "");
+
+          // WhatsApp 3/3 — retrait effectué
+          if (data.whatsapp) {
+            await sendWhatsApp(data.whatsapp,
+              `✅ *Kaffi-Pay — Retrait effectué !*\n\n` +
+              `Votre retrait *#${ordreId}* de *${montantStr} DJF* a été traité avec succès.\n\n` +
+              `💰 Votre argent a été envoyé sur votre numéro Waafi : *${waafiNum}*\n\n` +
+              `✅ *Crédité avec succès*\n\n` +
+              `Merci d'avoir utilisé Kaffi-Pay ! 🎉`
+            );
+          }
+
+          await sendTelegram(cbToken, cbAdminId,
+            `✅ <b>Retrait finalisé — #${ordreId}</b>\n\n` +
+            `Montant : <b>${montantStr} DJF</b>\n` +
+            `N° Waafi : <code>${waafiNum}</code>\n` +
+            (data.whatsapp ? `WhatsApp : <code>${data.whatsapp}</code>\n` : "") +
+            `\n<i>Client notifié via WhatsApp.</i>`
+          );
+        } else {
+          await answerCallback(cbToken, cbId, "");
+        }
+        return;
+      }
+
       const msg = (req.body || {}).message || (req.body || {}).edited_message;
       if (!msg) return;
 
@@ -1747,6 +1919,23 @@ exports.adminBot = onRequest(
         const rj = await r.json().catch(() => ({}));
         if (rj.ok) {
           await sendTelegram(token, adminId, `✅ Webhook support bot configuré :\n<code>${funcUrl}</code>`);
+        } else {
+          await sendTelegram(token, adminId, `❌ Erreur webhook : ${rj.description || r.status}`);
+        }
+        return;
+      }
+
+      // webhook admin — configure le webhook du bot admin (message + callback_query pour boutons inline)
+      if (t === "webhook admin" || t === "/webhook_admin") {
+        const funcUrl = "https://europe-west1-kaffi-pay.cloudfunctions.net/adminBot";
+        const r = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: funcUrl, allowed_updates: ["message", "callback_query"] }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const rj = await r.json().catch(() => ({}));
+        if (rj.ok) {
+          await sendTelegram(token, adminId, `✅ Webhook admin bot configuré :\n<code>${funcUrl}</code>`);
         } else {
           await sendTelegram(token, adminId, `❌ Erreur webhook : ${rj.description || r.status}`);
         }
