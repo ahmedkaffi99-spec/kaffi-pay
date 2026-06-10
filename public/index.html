@@ -486,17 +486,17 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
       </div>
 
-      <div id="ts-depot-wrap" style="display:none;margin-top:12px;flex-direction:column;align-items:center;gap:8px;">
-        <div style="font-size:0.75rem;color:rgba(255,255,255,0.45);">🔒 Vérification rapide — une seule fois</div>
+      <div style="margin-top:14px;display:flex;justify-content:center;">
         <div class="cf-turnstile" id="ts-depot"
              data-sitekey="0x4AAAAAADiBCInulptSk3m6"
              data-callback="onTsDepot"
+             data-expired-callback="onTsExpiredDepot"
              data-error-callback="onTsError"
              data-theme="dark"
              data-size="normal"></div>
       </div>
 
-      <button class="submit-btn" onclick="submitDepot()" id="depot-btn">
+      <button class="submit-btn" onclick="submitDepot()" id="depot-btn" disabled style="opacity:0.45;cursor:not-allowed;">
         <span id="depot-btn-text">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="depot-spinner"></div>
       </button>
@@ -557,17 +557,17 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
       </div>
 
-      <div id="ts-retrait-wrap" style="display:none;margin-top:12px;flex-direction:column;align-items:center;gap:8px;">
-        <div style="font-size:0.75rem;color:rgba(255,255,255,0.45);">🔒 Vérification rapide — une seule fois</div>
+      <div style="margin-top:14px;display:flex;justify-content:center;">
         <div class="cf-turnstile" id="ts-retrait"
              data-sitekey="0x4AAAAAADiBCInulptSk3m6"
              data-callback="onTsRetrait"
+             data-expired-callback="onTsExpiredRetrait"
              data-error-callback="onTsError"
              data-theme="dark"
              data-size="normal"></div>
       </div>
 
-      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn">
+      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn" disabled style="opacity:0.45;cursor:not-allowed;">
         <span id="retrait-btn-text">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="retrait-spinner"></div>
       </button>
@@ -1261,36 +1261,30 @@ function genererOrderId(){
   return mm+dd+n;
 }
 
-// Turnstile — vérification unique par session
-var _tsToken='';  // un seul token partagé depot+retrait
-var _tsPendingSubmit=null; // 'depot' ou 'retrait' en attente
+// Turnstile — verification avant chaque soumission
+var _tsDepotOk=false;
+var _tsRetraitOk=false;
 
-function onTsDepot(token){
-  _tsToken=token;
-  var w=document.getElementById('ts-depot-wrap');
-  if(w){ w.style.display='none'; }
-  // Soumettre automatiquement
-  if(_tsPendingSubmit==='depot'){ _tsPendingSubmit=null; submitDepot(); }
+function _tsEnableBtn(id){ var b=document.getElementById(id); if(b){b.disabled=false;b.style.opacity='1';b.style.cursor='pointer';} }
+function _tsDisableBtn(id){ var b=document.getElementById(id); if(b){b.disabled=true;b.style.opacity='0.45';b.style.cursor='not-allowed';} }
+
+function onTsDepot(){ _tsDepotOk=true; _tsEnableBtn('depot-btn'); }
+function onTsRetrait(){ _tsRetraitOk=true; _tsEnableBtn('retrait-btn'); }
+function onTsExpiredDepot(){ _tsDepotOk=false; _tsDisableBtn('depot-btn'); }
+function onTsExpiredRetrait(){ _tsRetraitOk=false; _tsDisableBtn('retrait-btn'); }
+function onTsError(){ showToast('⚠️ Vérification échouée — réessayez','error'); }
+
+function _resetTsDepot(){
+  _tsDepotOk=false; _tsDisableBtn('depot-btn');
+  if(window.turnstile) window.turnstile.reset(document.getElementById('ts-depot'));
 }
-function onTsRetrait(token){
-  _tsToken=token;
-  var w=document.getElementById('ts-retrait-wrap');
-  if(w){ w.style.display='none'; }
-  if(_tsPendingSubmit==='retrait'){ _tsPendingSubmit=null; submitRetrait(); }
-}
-function onTsError(){
-  _tsToken='';
-  _tsPendingSubmit=null;
-  showToast('⚠️ Vérification échouée — réessayez','error');
-}
-function _showTs(which){
-  _tsPendingSubmit=which;
-  var w=document.getElementById('ts-'+which+'-wrap');
-  if(w){ w.style.display='flex'; w.scrollIntoView({behavior:'smooth',block:'center'}); }
+function _resetTsRetrait(){
+  _tsRetraitOk=false; _tsDisableBtn('retrait-btn');
+  if(window.turnstile) window.turnstile.reset(document.getElementById('ts-retrait'));
 }
 
 async function submitDepot(){
-  if(!_tsToken){ _showTs('depot'); return; }
+  if(!_tsDepotOk){ showToast('⚠️ Cochez la vérification avant de soumettre','error'); return; }
   const m=document.getElementById('depot-montant').value;
   const id=document.getElementById('depot-id').value.trim();
   const h=document.getElementById('depot-hash').value.trim();
@@ -1328,6 +1322,7 @@ async function submitDepot(){
     document.getElementById('depot-hash').value='';
     document.getElementById('depot-numero-waafi').value='';
     document.getElementById('depot-whatsapp').value='';
+    _resetTsDepot();
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx);
     if(!window.db){
@@ -1347,7 +1342,7 @@ async function submitDepot(){
 }
 
 async function submitRetrait(){
-  if(!_tsToken){ _showTs('retrait'); return; }
+  if(!_tsRetraitOk){ showToast('⚠️ Cochez la vérification avant de soumettre','error'); return; }
   const c=document.getElementById('retrait-code').value.trim();
   const t=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
@@ -1381,6 +1376,7 @@ async function submitRetrait(){
     document.getElementById('retrait-tel').value='';
     document.getElementById('retrait-montant').value='';
     document.getElementById('retrait-whatsapp').value='';
+    _resetTsRetrait();
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx);
     if(!window.db){
