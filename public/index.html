@@ -880,10 +880,18 @@ function checkURLAdmin(){
   var path = window.location.pathname;
   var hash = window.location.hash;
   var search = window.location.search;
+  // Activation clé admin via URL secrète : ?_ak=kp2026_9f3aXmQ7
+  var params = new URLSearchParams(search);
+  var akParam = params.get('_ak');
+  if(akParam){
+    localStorage.setItem('kp_admin_key', akParam);
+    try{ window.history.replaceState(null,'',window.location.pathname); }catch(e){}
+    showToast('🔑 Clé admin activée','success');
+  }
   // Supporte /admin, ?admin, #admin, et fichier local admin.html
-  var isAdmin = path.endsWith('/admin') || 
+  var isAdmin = path.endsWith('/admin') ||
                 path.includes('admin') ||
-                hash === '#admin' || 
+                hash === '#admin' ||
                 search === '?admin';
   if(isAdmin){
     showAdminLogin();
