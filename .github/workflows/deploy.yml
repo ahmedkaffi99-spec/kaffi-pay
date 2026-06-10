@@ -23,5 +23,10 @@ jobs:
       - name: Install functions dependencies
         run: cd functions && npm install
 
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+
       - name: Deploy to Firebase
-        run: npx firebase-tools@latest deploy --only functions --project kaffi-pay --token "${{ secrets.FIREBASE_TOKEN }}"
+        run: npx firebase-tools@latest deploy --only functions --project kaffi-pay
