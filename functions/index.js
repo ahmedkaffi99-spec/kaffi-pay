@@ -8,9 +8,10 @@
  * ║  3. Check ordre_traite (anti-fraude doublon) → "Paiement Reçu"       ║
  * ║  4. onOrdreUpdated → MobCash API → "Crédité avec succès"            ║
  * ║                                                                      ║
- * ║  FLOW RETRAIT (admin) :                                               ║
- * ║  1. User soumet retrait → admin vérifie → confirmer #ID              ║
- * ║  2. → "Paiement Reçu" → MobCash Payout → "Crédité avec succès"     ║
+ * ║  FLOW RETRAIT (automatique) :                                         ║
+ * ║  1. User soumet retrait → MobCash Payout immédiat                    ║
+ * ║  2. Succès → "Paiement Reçu" + USSD admin (Telegram + Web)          ║
+ * ║  3. Admin compose USSD + clique Terminer → "Crédité avec succès"    ║
  * ║                                                                      ║
  * ║  STATUTS : En attente → Paiement Reçu → Crédité avec succès         ║
  * ║                       ↘ Paiement Non Reçu (rejet / fraude)           ║
@@ -23,7 +24,7 @@
  */
 
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { onCall, onRequest }                    = require("firebase-functions/v2/https");
+const { onRequest }                            = require("firebase-functions/v2/https");
 const { onSchedule }                           = require("firebase-functions/v2/scheduler");
 const { defineSecret }                         = require("firebase-functions/params");
 const { initializeApp }                        = require("firebase-admin/app");
@@ -53,8 +54,8 @@ const TRANSITIONS_VALIDES = {
   "En attente":           ["Paiement Reçu", "Paiement Non Reçu", "Annulé"],
   "Paiement Reçu":        ["Crédité avec succès", "Paiement Non Reçu"],
   "Crédité avec succès":  [],
-  "Paiement Non Reçu":    [],
-  "Annulé":               [],
+  "Paiement Non Reçu":    ["En attente"],
+  "Annulé":               ["En attente"],
 };
 
 function transitionValide(de, vers) {
@@ -68,7 +69,7 @@ function analyserFraude(tx, transferId) {
   const raisons = [];
   let score     = 0;
   const montant = Number(tx.montant || 0);
-  const num     = (tx.numeroPayment || "").replace(/\s/g, "");
+  const num     = (tx.numeroPayment || tx.waafiNumber || "").replace(/\s/g, "");
 
   if (montant > 200000)      { score += 50; raisons.push("Montant extrême (> 200 000 DJF)"); }
   else if (montant > 100000) { score += 35; raisons.push("Montant très élevé (> 100 000 DJF)"); }
@@ -949,42 +950,48 @@ exports.onOrdreUpdated = onDocumentUpdated(
 
     logAudit("transition_statut", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
 
-    // ── Telegram admin ──
-    let msg = "";
-    if (after.status === "Paiement Reçu")
-      msg = `💳 <b>Paiement reçu</b>\n#${ordreId} — ${montant} DJF\n⏳ Crédit MobCash en cours…`;
-    else if (after.status === "Crédité avec succès")
-      msg = `✅ <b>${type} — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`;
-    else if (after.status === "Paiement Non Reçu")
-      msg = `❌ <b>${type} — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
+    // Retrait avec webhookStatus "ok" : notifications déjà envoyées par onNouvelOrdre.
+    // On skip pour éviter les doublons (WhatsApp + Telegram).
+    const retraitDejaNotifie = after.status === "Paiement Reçu" && after.webhookStatus === "ok";
 
-    if (msg) await sendTelegram(token, adminId, msg);
+    if (!retraitDejaNotifie) {
+      // ── Telegram admin ──
+      let msg = "";
+      if (after.status === "Paiement Reçu")
+        msg = `💳 <b>Paiement reçu</b>\n#${ordreId} — ${montant} DJF\n⏳ Crédit MobCash en cours…`;
+      else if (after.status === "Crédité avec succès")
+        msg = `✅ <b>${type} — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`;
+      else if (after.status === "Paiement Non Reçu")
+        msg = `❌ <b>${type} — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
 
-    // ── WhatsApp client ──
-    if (after.whatsapp) {
-      let waMsg = "";
-      if (after.status === "Paiement Reçu") {
-        waMsg = `💳 *Kaffi-Pay — Paiement reçu* ✅\n\n` +
-                `Votre paiement *#${ordreId}* de *${montant} DJF* a bien été reçu.\n\n` +
-                `Statut : 💳 *Paiement reçu*\n\n` +
-                `⏳ Crédit de votre compte ${after.type === "Dépôt" ? "1xBet" : "Waafi"} en cours...`;
-      } else if (after.status === "Crédité avec succès") {
-        waMsg = after.type === "Dépôt"
-          ? `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
-            `Votre dépôt *#${ordreId}* de *${montant} DJF* a été traité avec succès.\n\n` +
-            `✅ *Crédité avec succès*\n\n` +
-            `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
-          : `🎉 *Kaffi-Pay — Retrait effectué !*\n\n` +
-            `Votre retrait *#${ordreId}* de *${montant} DJF* a été traité.\n\n` +
-            `✅ *Crédité avec succès*\n\n` +
-            `Votre argent a été envoyé sur votre numéro Waafi.`;
-      } else if (after.status === "Paiement Non Reçu") {
-        waMsg = `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
-                `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
-                `Raison : ${after.flagRaison || "Paiement non reçu"}\n\n` +
-                `Soumettez un nouvel ordre sur kaffi-pay.com`;
+      if (msg) await sendTelegram(token, adminId, msg);
+
+      // ── WhatsApp client ──
+      if (after.whatsapp) {
+        let waMsg = "";
+        if (after.status === "Paiement Reçu") {
+          waMsg = `💳 *Kaffi-Pay — Paiement reçu* ✅\n\n` +
+                  `Votre paiement *#${ordreId}* de *${montant} DJF* a bien été reçu.\n\n` +
+                  `Statut : 💳 *Paiement reçu*\n\n` +
+                  `⏳ Crédit de votre compte ${after.type === "Dépôt" ? "1xBet" : "Waafi"} en cours...`;
+        } else if (after.status === "Crédité avec succès") {
+          waMsg = after.type === "Dépôt"
+            ? `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
+              `Votre dépôt *#${ordreId}* de *${montant} DJF* a été traité avec succès.\n\n` +
+              `✅ *Crédité avec succès*\n\n` +
+              `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
+            : `🎉 *Kaffi-Pay — Retrait effectué !*\n\n` +
+              `Votre retrait *#${ordreId}* de *${montant} DJF* a été traité.\n\n` +
+              `✅ *Crédité avec succès*\n\n` +
+              `Votre argent a été envoyé sur votre numéro Waafi.`;
+        } else if (after.status === "Paiement Non Reçu") {
+          waMsg = `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+                  `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+                  `Raison : ${after.flagRaison || "Paiement non reçu"}\n\n` +
+                  `Soumettez un nouvel ordre sur kaffi-pay.com`;
+        }
+        if (waMsg) await sendWhatsApp(after.whatsapp, waMsg);
       }
-      if (waMsg) await sendWhatsApp(after.whatsapp, waMsg);
     }
 
     // ── MobCash — "Paiement Reçu" → API → "Crédité avec succès" ──
@@ -1068,13 +1075,12 @@ exports.ordresBloques = onSchedule(
       if (notifSnap.empty) continue;
 
       const waafiDoc = notifSnap.docs[0];
-      const { decision } = scorerCorrespondance(ordre, waafiDoc.data());
+      const { score, mismatches, decision } = scorerCorrespondance(ordre, waafiDoc.data());
 
       if (decision === "confirmer") {
         const ok = await confirmerDepot(ordreDoc, waafiDoc, token, adminId);
         if (ok) autoConfirmes++;
       } else {
-        const { score, mismatches } = scorerCorrespondance(ordre, waafiDoc.data());
         const raison = mismatchToRaison(mismatches);
         await ordreDoc.ref.update({
           status: "Paiement Non Reçu",
@@ -1092,33 +1098,33 @@ exports.ordresBloques = onSchedule(
     const cutoff60 = new Date(Date.now() - 60 * 60 * 1000);
     const alertRef  = db.collection("alertes_etat").doc("ordres_bloques");
     const alertSnap = await alertRef.get();
-    if (alertSnap.exists) {
-      const last = alertSnap.data().ts?.toDate?.() || new Date(0);
-      if (Date.now() - last.getTime() < 60 * 60 * 1000) return;
+    const dernierAlerte = alertSnap.exists
+      ? (alertSnap.data().ts?.toDate?.() || new Date(0))
+      : new Date(0);
+    const alertThrottle = Date.now() - dernierAlerte.getTime() < 60 * 60 * 1000;
+
+    if (!alertThrottle) {
+      const reSnapAttente = await db.collection("orders")
+        .where("status", "==", "En attente").get().catch(() => ({ docs: [] }));
+
+      const vieux = reSnapAttente.docs.filter((d) => {
+        const ts = d.data().ts;
+        return ts && new Date(ts) < cutoff60;
+      });
+
+      if (vieux.length) {
+        const lignes = vieux.map((d) => {
+          const o   = d.data();
+          const age = Math.round((Date.now() - o.ts) / 60000);
+          return `• #${o.orderId || d.id} | ${o.montant} DJF | ⏱ ${age}min | TID:${o.waafitranfertID || "?"}`;
+        });
+        await sendTelegram(token, adminId,
+          `⚠️ <b>${vieux.length} ordre(s) > 60 min sans SMS Waafi</b>\n\n${lignes.join("\n")}\n\n` +
+          `<i>SMS Waafi introuvable — vérifiez le paiement.</i>`
+        );
+        await alertRef.set({ ts: FieldValue.serverTimestamp(), count: vieux.length });
+      }
     }
-
-    const reSnapAttente = await db.collection("orders")
-      .where("status", "==", "En attente").get().catch(() => ({ docs: [] }));
-
-    const vieux = reSnapAttente.docs.filter((d) => {
-      const ts = d.data().ts;
-      return ts && new Date(ts) < cutoff60;
-    });
-
-    if (!vieux.length) return;
-
-    const lignes = vieux.map((d) => {
-      const o   = d.data();
-      const age = Math.round((Date.now() - o.ts) / 60000);
-      return `• #${o.orderId || d.id} | ${o.montant} DJF | ⏱ ${age}min | TID:${o.waafitranfertID || "?"}`;
-    });
-
-    await sendTelegram(token, adminId,
-      `⚠️ <b>${vieux.length} ordre(s) > 60 min sans SMS Waafi</b>\n\n${lignes.join("\n")}\n\n` +
-      `<i>SMS Waafi introuvable — vérifiez le paiement.</i>`
-    );
-
-    await alertRef.set({ ts: FieldValue.serverTimestamp(), count: vieux.length });
 
     // ── PARTIE 3 : Recovery MobCash ──────────────────────────────────
     // Cas A : "Paiement Reçu" (auto_match_waafi) + webhookStatus != ok
@@ -1210,6 +1216,7 @@ exports.smsWebhook = onRequest(
     const docRef = await db.collection("waafi_notifications").add({
       notification: notif, transferId, montant, numClient,
       secret: expectedSecret, source: "macrodroid",
+      status: "reçu",
       processedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
     });
@@ -1486,7 +1493,7 @@ exports.supportClient = onRequest(
           `1️⃣ Allez sur <b>kaffi-pay.com</b>\n` +
           `2️⃣ Retrouvez votre ordre dans l'historique\n` +
           `3️⃣ Cliquez sur le bouton <b>🚫 Annuler cet ordre</b>\n\n` +
-          `⚠️ Un ordre <b>Confirmé</b> ne peut pas être annulé.\n\n` +
+          `⚠️ Un ordre <b>Crédité</b> ne peut pas être annulé.\n\n` +
           `Envoyez votre numéro d'ordre si vous avez besoin d'aide.`
         );
         return;
@@ -1792,7 +1799,7 @@ exports.adminBot = onRequest(
           const n = d.data();
           return `• TID:${n.transferId || "?"} | ${n.montant || "?"}DJF | N°${n.numClient || "?"} | ${n.status}`;
         });
-        await sendTelegram(token, adminId, `📭 <b>SMS en attente (${snap.size})</b>\n\n${lignes.join("\n")}`);
+        await sendTelegram(token, adminId, `📭 <b>SMS en attente (${snap.docs.length})</b>\n\n${lignes.join("\n")}`);
         return;
       }
 
@@ -1929,7 +1936,7 @@ exports.adminBot = onRequest(
         const oDoc  = snap.docs[0];
         const oData = oDoc.data();
         if (oData.status !== "Crédité avec succès") {
-          await sendTelegram(token, adminId, `⛔ Ordre <b>#${num}</b> n'est pas Confirmé (statut: <b>${oData.status}</b>).`); return;
+          await sendTelegram(token, adminId, `⛔ Ordre <b>#${num}</b> non crédité (statut: <b>${oData.status}</b>).`); return;
         }
         const id1xbet        = oData.userId1xBet || oData.id1x || oData.idBet || "";
         const montantVal     = oData.montant || oData.amount || 0;
