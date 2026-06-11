@@ -1900,6 +1900,92 @@ exports.adminBot = onRequest(
         return;
       }
 
+      // /sms <texte SMS Waafi> — injecte manuellement un SMS Waafi sans MacroDroid
+      const smsMatch = text.match(/^\/sms\s+(.+)/is);
+      if (smsMatch) {
+        const smsText  = smsMatch[1].trim();
+        const tid      = extractTransferId(smsText);
+        const montant  = extractMontant(smsText);
+        const numCli   = extractNumClient(smsText);
+
+        if (!tid && !montant) {
+          await sendTelegram(token, adminId,
+            `❌ <b>SMS non reconnu</b>\nFormat attendu : Transfer-Id, Received DJF, numéro\n\n` +
+            `SMS reçu :\n<code>${smsText.substring(0, 200)}</code>`);
+          return;
+        }
+
+        // Vérifie si ce TID est déjà dans waafi_notifications
+        let existingDoc = null;
+        if (tid) {
+          const ex = await db.collection("waafi_notifications")
+            .where("transferId", "==", tid).limit(1).get();
+          if (!ex.empty) existingDoc = ex.docs[0];
+        }
+
+        let docRef;
+        if (existingDoc) {
+          docRef = existingDoc.ref;
+          await sendTelegram(token, adminId,
+            `ℹ️ TID <code>${tid}</code> déjà enregistré — tentative de confirmation...`);
+        } else {
+          const newRef = await db.collection("waafi_notifications").add({
+            notification: smsText, transferId: tid, montant, numClient: numCli,
+            source: "admin_manual", status: "reçu",
+            processedAt: FieldValue.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
+          });
+          docRef = newRef;
+          await sendTelegram(token, adminId,
+            `📩 <b>SMS Waafi enregistré</b>\n\n` +
+            `Transfer-ID: <code>${tid || "?"}</code>\n` +
+            `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
+            `Expéditeur: <code>${numCli || "?"}</code>\n\n` +
+            `<i>Recherche d'un ordre correspondant...</i>`);
+        }
+
+        // Cherche un ordre En attente avec ce TID
+        if (!tid) {
+          await sendTelegram(token, adminId, `⚠️ Transfer-ID non trouvé dans le SMS — confirmation manuelle requise.`);
+          return;
+        }
+
+        const ordreSnap = await db.collection("orders")
+          .where("waafitranfertID", "==", tid)
+          .where("status", "==", "En attente").limit(1).get();
+
+        if (ordreSnap.empty) {
+          await sendTelegram(token, adminId,
+            `⏳ Aucun ordre "En attente" avec TID <code>${tid}</code> trouvé.\n` +
+            `La notification est enregistrée — elle sera utilisée dès qu'un ordre correspondant sera soumis.`);
+          return;
+        }
+
+        const dejaTraite = await db.collection("ordre_traite")
+          .where("transferId", "==", tid).limit(1).get();
+        if (!dejaTraite.empty) {
+          await sendTelegram(token, adminId, `⚠️ TID <code>${tid}</code> déjà traité — doublon bloqué.`);
+          return;
+        }
+
+        const ordreDoc  = ordreSnap.docs[0];
+        const waafiSnap = await docRef.get();
+        const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), waafiSnap.data());
+        const ordreRef2 = ordreDoc.data().orderId || ordreDoc.id;
+
+        if (decision === "confirmer") {
+          await confirmerDepot(ordreDoc, waafiSnap, token, adminId);
+          await sendTelegram(token, adminId, `✅ Ordre <b>#${ordreRef2}</b> confirmé via SMS manuel.`);
+        } else {
+          const raison = mismatchToRaison(mismatches);
+          await sendTelegram(token, adminId,
+            `❌ <b>Score ${score}/3 — ${raison}</b>\nOrdre <code>#${ordreRef2}</code>\n` +
+            mismatches.map((m) => `• ${m}`).join("\n") +
+            `\n\nUtilise <code>confirmer ${ordreRef2}</code> pour forcer si nécessaire.`);
+        }
+        return;
+      }
+
       // webhook admin — configure le webhook du bot admin (message + callback_query pour boutons inline)
       if (t === "webhook admin" || t === "/webhook_admin") {
         const funcUrl = "https://europe-west1-kaffi-pay.cloudfunctions.net/adminBot";
