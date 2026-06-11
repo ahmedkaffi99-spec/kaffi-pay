@@ -734,10 +734,10 @@ exports.onNouvelRetrait = onDocumentCreated(
       return;
     }
 
-    const loginId = MOBCASH_LOGIN.value() || "0";
+    const cashdeskIdForPayout = MOBCASH_CASHDESKID.value() || "0";
 
     try {
-      const mobcashData    = await callMobcash("Retrait", loginId, montantVal, tidRetrait);
+      const mobcashData    = await callMobcash("Retrait", cashdeskIdForPayout, montantVal, tidRetrait);
       const montantMobcash = Number(
         mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
       );
