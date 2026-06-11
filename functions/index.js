@@ -1246,10 +1246,13 @@ exports.testMobcash = onRequest(
     const ak     = body._ak || req.query._ak || "";
     if (ak !== "kp2026_9f3aXmQ7") { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
 
-    const type   = (body.type || "depot").toLowerCase();
-    const userId = (body.userId || "0").trim();
-    const montant= Number(body.montant || 0);
-    const code   = (body.code || "").trim();
+    const type      = (body.type || "depot").toLowerCase();
+    const montant   = Number(body.montant || 0);
+    const code      = (body.code || "").trim();
+    // Pour le retrait, userId = cashdeskId (fixe). Pour le dépôt = ID 1xBet du joueur.
+    const userId    = type === "retrait"
+      ? MOBCASH_CASHDESKID.value()
+      : (body.userId || "0").trim();
 
     try {
       const data = type === "retrait"
