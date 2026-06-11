@@ -1496,9 +1496,7 @@ exports.supportClient = onRequest(
 
     // Message sans texte (photo, sticker, voice…)
     if (!text) {
-      await reply(chatId,
-        `Veuillez envoyer un <b>message texte</b>.\n\nEnvoyez votre <b>numéro d'ordre</b> pour un suivi immédiat.\nExemple : <code>#06111</code>`
-      );
+      await replyKb(chatId, `Veuillez envoyer un <b>message texte</b>.\nComment puis-je vous aider ?`, MAIN_KB);
       return;
     }
 
@@ -1574,8 +1572,8 @@ exports.supportClient = onRequest(
       // ── Problème général ──
       if (/pas.*reçu|non.*crédit|pas.*crédit|toujours.*pas|n'a pas|pas.*arrivé|problem|problème|erreur|bloqué|coincé/.test(t)) {
         await replyKb(chatId,
-          `⚠️ <b>Problème avec votre ordre ?</b>\n\nEnvoyez votre <b>numéro d'ordre</b> et je vérifie immédiatement.\nVotre numéro se trouve dans l'historique sur <b>kaffi-pay.com</b>.`,
-          [[{ text: "👤 Contacter un agent", callback_data: "sc_agent" }]]
+          `⚠️ <b>Problème avec votre ordre ?</b>\n\nUtilisez le bouton <b>Suivre mon ordre</b> pour vérifier votre statut, ou contactez un agent.`,
+          [[{ text: "📋 Suivre mon ordre", callback_data: "sc_ordre" }, { text: "👤 Contacter un agent", callback_data: "sc_agent" }]]
         );
         return;
       }
@@ -1679,10 +1677,7 @@ exports.supportClient = onRequest(
       }
 
       // ── Fallback ──────────────────────────────────────────────
-      await replyKb(chatId,
-        `Envoyez votre <b>numéro d'ordre</b> pour voir son statut, ou choisissez une option :`,
-        MAIN_KB
-      );
+      await replyKb(chatId, `Comment puis-je vous aider ?`, MAIN_KB);
 
     } catch (e) {
       console.error("supportClient crash:", e.message, e.stack);
