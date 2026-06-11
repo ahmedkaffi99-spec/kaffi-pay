@@ -1475,8 +1475,8 @@ exports.supportClient = onRequest(
           const adminTok = TELEGRAM_TOKEN.value();
           const adminId0 = TELEGRAM_ADMIN_ID.value();
           await replyKb(cbChatId,
-            `👤 <b>Un agent va vous répondre</b>\n\nVotre demande a été transmise à notre équipe.\nPour accélérer, envoyez aussi votre <b>numéro d'ordre</b>.`,
-            [[{ text: "📋 Suivre mon ordre", callback_data: "sc_ordre" }]]
+            `👤 <b>Un agent va vous répondre</b>\n\nVotre demande a été transmise à notre équipe.\nUn agent vous répondra dans les plus brefs délais.`,
+            BACK_KB
           );
           await sendTelegram(adminTok, adminId0,
             `🆘 <b>Demande agent</b> — Support Bot\n👤 ${cbName} (chat: <code>${cbChatId}</code>)`
