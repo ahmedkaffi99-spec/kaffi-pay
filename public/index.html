@@ -645,10 +645,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
   <!-- DASHBOARD -->
   <div class="page-section active" id="page-dashboard">
-    <div class="mode-card">
-      <div class="mode-item"><div class="mode-dot"></div><div><div class="mode-name">Waafi</div><div class="mode-tag">⚙️ Traitement </div></div></div>
-      <div class="mode-item"><div class="mode-dot"></div><div><div class="mode-name">1xBet</div><div class="mode-tag">⚙️ Traitement </div></div></div>
-    </div>
     <div class="stats-grid">
       <div class="stat-card green"><div class="stat-label">Total Dépôts</div><div class="stat-value" id="stat-depot">0</div><div class="stat-sub" id="stat-depot-sub">0 confirmés</div></div>
       <div class="stat-card red"><div class="stat-label">Total Retraits</div><div class="stat-value" id="stat-retrait">0</div><div class="stat-sub" id="stat-retrait-sub">0 confirmés</div></div>
@@ -1122,7 +1118,7 @@ function goOrders(){
 // ═══════════════════════════════════════════════════
 var _txsCache = [];
 var _agentsCache = [];
-var _reservesCache = {r1x:35000,rW:22000,r1x_base:35000,rW_base:22000};
+var _reservesCache = {r1x:0,rW:0,r1x_base:0,rW_base:0};
 var _unsubTxs = null;
 
 function getTxs(){
@@ -1503,8 +1499,8 @@ function calcAndUpdateReserves(){
   //   → Réserve 1xBet AUGMENTE (on reçoit du 1xBet du client)
   const ret=txs.filter(x=>x.type==='Retrait').reduce((s,x)=>s+Number(x.montant),0);
   const stored=getReserves();
-  const base1x = stored.r1x_base||35000;
-  const baseW  = stored.rW_base||22000;
+  const base1x = stored.r1x_base||0;
+  const baseW  = stored.rW_base||0;
   // 1xBet : commence à base1x, diminue avec dépôts, augmente avec retraits
   const r1x = Math.max(0, base1x - dep + ret);
   // Waafi : commence à baseW, augmente avec dépôts, diminue avec retraits
@@ -1961,7 +1957,7 @@ function showPage(p){
   if(p==='orders'){ renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:''); }
   if(p==='agents') renderAgents();
   if(p==='reserves') calcAndUpdateReserves();
-  if(p==='dashboard'){ updateStats(); renderRecentTx(); }
+  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart('7j'); }
   if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); listenWaafiSms(); }
 }
 
