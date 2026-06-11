@@ -168,50 +168,46 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
   const hash        = MOBCASH_HASH.value();
   const cashierpass = MOBCASH_CASHIERPASS.value();
   const cashdeskId  = MOBCASH_CASHDESKID.value();
-  const login       = MOBCASH_LOGIN.value();
-  if (!hash || !cashierpass || !cashdeskId || !login)
-    throw new Error("Secrets MobCash non configurés (MOBCASH_HASH / MOBCASH_CASHIERPASS / MOBCASH_CASHDESKID / MOBCASH_LOGIN)");
+  if (!hash || !cashierpass || !cashdeskId)
+    throw new Error("Secrets MobCash non configurés (MOBCASH_HASH / MOBCASH_CASHIERPASS / MOBCASH_CASHDESKID)");
 
-  // Step 1 — login
-  const loginSign = crypto.createHash("sha256")
-    .update(login + cashdeskId + cashierpass + hash)
+  const userId   = String(userId1xbet);
+  const lng      = "en";
+  const isDepot  = type !== "Retrait";
+  const endpoint = isDepot ? "Add" : "Payout";
+
+  // Signature step 1 : SHA256(hash=H&lng=L&userid=U)
+  const part1 = crypto.createHash("sha256")
+    .update(`hash=${hash}&lng=${lng}&userid=${userId}`)
     .digest("hex");
-  const loginBody = new URLSearchParams({
-    userid: login, cashdeskid: cashdeskId,
-    cashierpass, hash, lng: "en", sign: loginSign,
-  });
-  const loginResp = await fetch(`${MOBCASH_BASE}/Login/${cashdeskId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: loginBody.toString(),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!loginResp.ok) throw new Error(`MobCash login HTTP ${loginResp.status}`);
-  const loginData = await loginResp.json();
-  if (!loginData.token) throw new Error(`MobCash login: ${JSON.stringify(loginData)}`);
 
-  // Step 2 — transaction
-  const endpoint = type === "Retrait" ? "Payout" : "Add";
-  const txSign = crypto.createHash("md5")
-    .update(String(montant) + cashierpass + cashdeskId)
-    .digest("hex");
-  const txBody = new URLSearchParams({
-    summa: String(montant), cashdeskid: cashdeskId,
-    cashierpass, token: loginData.token, sign: txSign,
-  });
-  if (type === "Retrait" && withdrawalCode) txBody.set("code", withdrawalCode);
+  // Signature step 2 : MD5 selon type
+  const part2 = isDepot
+    ? crypto.createHash("md5").update(`summa=${montant}&cashierpass=${cashierpass}&cashdeskid=${cashdeskId}`).digest("hex")
+    : crypto.createHash("md5").update(`code=${withdrawalCode}&cashierpass=${cashierpass}&cashdeskid=${cashdeskId}`).digest("hex");
 
-  const txResp = await fetch(`${MOBCASH_BASE}/Deposit/${userId1xbet}/${endpoint}`, {
+  // Signature step 3 : SHA256(part1 + part2) → header "sign"
+  const sign = crypto.createHash("sha256").update(part1 + part2).digest("hex");
+
+  // confirm = MD5(userId:hash) → body
+  const confirm = crypto.createHash("md5").update(`${userId}:${hash}`).digest("hex");
+
+  const body = isDepot
+    ? { cashdeskid: Number(cashdeskId), lng, summa: montant, confirm }
+    : { cashdeskId: Number(cashdeskId), lng, code: String(withdrawalCode || ""), confirm };
+
+  const resp = await fetch(`${MOBCASH_BASE}/Deposit/${userId}/${endpoint}`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: txBody.toString(),
+    headers: { "Content-Type": "application/json", "sign": sign },
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(30000),
   });
-  if (!txResp.ok) throw new Error(`MobCash ${endpoint} HTTP ${txResp.status}`);
-  const txData = await txResp.json();
-  if (txData.error || txData.status === "error" || txData.result === "error")
-    throw new Error(`MobCash ${endpoint}: ${JSON.stringify(txData)}`);
-  return txData;
+
+  if (!resp.ok) throw new Error(`MobCash ${endpoint} HTTP ${resp.status}`);
+  const data = await resp.json();
+  if (data.success === false || (data.messageId && data.messageId !== 0))
+    throw new Error(`MobCash ${endpoint}: ${data.message || JSON.stringify(data)}`);
+  return data;
 }
 
 
