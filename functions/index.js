@@ -309,6 +309,11 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
 
   if (!claimed) return false;
 
+  // Marquer la notification Waafi comme "matché" → affichage correct onglet Notifications admin
+  db.collection("waafi_notifications").doc(waafiDoc.id).update({
+    status: "matché", ordreRef: ordreId, matchedAt: FieldValue.serverTimestamp(),
+  }).catch(() => {});
+
   logAudit("depot_paiement_confirme", { ordreId, transferId: notif.transferId, montant: montantNotif });
 
   // Telegram admin — paiement confirmé, MobCash va créditer
@@ -606,6 +611,16 @@ exports.onNouvelDepot = onDocumentCreated(
     const adminId    = TELEGRAM_ADMIN_ID.value();
 
     logAudit("nouvel_depot", { ordreId, montant: tx.montant, phone });
+
+    // ── Telegram admin — nouvel ordre reçu ──
+    await sendTelegram(token, adminId,
+      `📥 <b>Nouvel ordre Dépôt</b> — <code>#${ordreId}</code>\n\n` +
+      `Montant : <b>${Number(tx.montant || 0).toLocaleString()} DJF</b>\n` +
+      `ID 1xBet : <code>${tx.userId1xBet || tx.id1x || "—"}</code>\n` +
+      `Transfer-ID : <code>${transferId || "—"}</code>\n` +
+      `N° Waafi : <code>${phone || "—"}</code>\n\n` +
+      `<i>⏳ Vérification en cours...</i>`
+    );
 
     // ── WhatsApp — accusé de réception immédiat ──
     if (tx.whatsapp) {
