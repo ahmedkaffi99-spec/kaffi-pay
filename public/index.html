@@ -1846,16 +1846,20 @@ async function testMobcashAPI(type){
       pre.style.color='#7fff9a';
       var d=data.data||{};
       var lines=['✅ SUCCÈS MobCash',''];
+      var summa   = d.Summa     ?? d.summa;
+      var success = d.Success   ?? d.success;
+      var opId    = d.OperationId ?? d.operationId ?? d.MessageId ?? d.messageId;
+      var msgTxt  = d.Message   || d.message;
       if(type==='retrait'){
-        lines.push('💰 Montant retrait : '+(d.summa!=null?d.summa+' DJF':'—'));
-        lines.push('✔️  success         : '+d.success);
-        lines.push('🔢 messageId        : '+(d.messageId!=null?d.messageId:'—'));
-        if(d.message) lines.push('💬 message         : '+d.message);
+        lines.push('💰 Montant retrait  : '+(summa!=null?summa+' DJF':'—'));
+        lines.push('✔️  success          : '+success);
+        lines.push('🔢 operationId      : '+(opId!=null?opId:'—'));
+        if(msgTxt) lines.push('💬 message          : '+msgTxt);
       } else {
-        lines.push('💰 Montant crédité : '+(d.summa!=null?d.summa+' DJF':'—'));
-        lines.push('✔️  success         : '+d.success);
-        lines.push('🔢 messageId        : '+(d.messageId!=null?d.messageId:'—'));
-        if(d.message) lines.push('💬 message         : '+d.message);
+        lines.push('💰 Montant crédité  : '+(summa!=null?summa+' DJF':'—'));
+        lines.push('✔️  success          : '+success);
+        lines.push('🔢 operationId      : '+(opId!=null?opId:'—'));
+        if(msgTxt) lines.push('💬 message          : '+msgTxt);
       }
       lines.push('');
       lines.push('── Réponse brute ──');
