@@ -1849,7 +1849,17 @@ async function testMobcashAPI(type){
       var summa   = d.Summa     ?? d.summa;
       var success = d.Success   ?? d.success;
       var opId    = d.OperationId ?? d.operationId ?? d.MessageId ?? d.messageId;
-      var msgTxt  = d.Message   || d.message;
+      var rawMsg  = d.Message   || d.message || '';
+      var msgMap  = {
+        'Операция прошла успешно': 'Opération réussie',
+        'Операция выполнена':      'Opération effectuée',
+        'Недостаточно средств':    'Solde insuffisant',
+        'Пользователь не найден':  'Utilisateur introuvable',
+        'Неверный код':            'Code invalide',
+        'Код уже использован':     'Code déjà utilisé',
+        'Код истек':               'Code expiré',
+      };
+      var msgTxt  = msgMap[rawMsg] || rawMsg;
       if(type==='retrait'){
         lines.push('💰 Montant retrait  : '+(summa!=null?summa+' DJF':'—'));
         lines.push('✔️  success          : '+success);
