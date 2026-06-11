@@ -811,17 +811,16 @@ exports.onNouvelRetrait = onDocumentCreated(
         );
       }
 
-      const ussd    = `*200*${waafiNum}*${montantMobcash}#`;
-      const ussdUrl = `tel:${ussd.replace(/#/g, "%23")}`;
+      const ussd = `*200*${waafiNum}*${montantMobcash}#`;
+      // tel: URLs are rejected by Telegram Bot API — use only the callback button
       await sendTelegramKeyboard(token, adminId,
         `📤 <b>Retrait à payer — #${ordreId}</b>\n\n` +
         `Montant : <b>${montantMobcash.toLocaleString()} DJF</b>\n` +
         `N° Waafi : <code>${waafiNum}</code>\n` +
         `Code retrait : <code>${tidRetrait}</code>\n\n` +
         `📱 USSD : <code>${ussd}</code>\n\n` +
-        `<i>1. Composez le USSD → 2. Confirmez → 3. Cliquez Terminer.</i>`,
+        `<i>1. Copiez le USSD ci-dessus → 2. Composez → 3. Confirmez → 4. Cliquez Terminer.</i>`,
         [
-          [{ text: `📞 ${ussd}`, url: ussdUrl }],
           [{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }],
         ]
       );
