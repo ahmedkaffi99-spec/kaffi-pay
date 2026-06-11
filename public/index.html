@@ -109,6 +109,11 @@ html{scroll-behavior:smooth;}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;overflow-x:hidden;transition:background .3s,color .3s;}
 #theme-toggle{background:none;border:1px solid rgba(255,215,0,.25);border-radius:999px;width:28px;height:28px;font-size:.85rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;}
 body.light #theme-toggle{border-color:rgba(0,0,0,.15);}
+.lang-pick{display:flex;gap:3px;}
+.lang-btn{background:none;border:1px solid rgba(255,215,0,.15);border-radius:999px;padding:3px 8px;font-size:.6rem;font-weight:600;color:var(--muted);cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .2s;letter-spacing:.3px;}
+.lang-btn.active,.lang-btn:hover{border-color:rgba(255,215,0,.45);color:var(--gold);}
+body.light .lang-btn{border-color:rgba(0,0,0,.12);}
+body.light .lang-btn.active,body.light .lang-btn:hover{border-color:rgba(0,0,0,.3);color:var(--text);}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:radial-gradient(ellipse 55% 40% at 5% -5%,rgba(255,215,0,0.06) 0%,transparent 55%),
              radial-gradient(ellipse 40% 35% at 95% 100%,rgba(255,194,0,0.04) 0%,transparent 50%);}
@@ -396,13 +401,18 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <img src="data:image/jpeg;base64,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" alt="Kaffi-Pay" class="logo-img">
       <div class="logo-text">
         <div class="logo-name">Kaffi-<span>Pay</span></div>
-        <div class="logo-slogan">Échange 1xBet ↔ Waafi · Djibouti</div>
+        <div class="logo-slogan" data-i18n="slogan">Échange 1xBet ↔ Waafi · Djibouti</div>
       </div>
     </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
       <div style="display:flex;align-items:center;gap:6px;">
+        <div class="lang-pick">
+          <button class="lang-btn active" onclick="setLang('fr')" id="lang-fr">FR</button>
+          <button class="lang-btn" onclick="setLang('en')" id="lang-en">EN</button>
+          <button class="lang-btn" onclick="setLang('so')" id="lang-so">SO</button>
+        </div>
         <button id="theme-toggle" onclick="toggleTheme()" title="Mode clair/sombre">🌙</button>
-        <div class="secure-badge">🔒 Sécurisé</div>
+        <div class="secure-badge" data-i18n="secure">🔒 Sécurisé</div>
       </div>
       <button id="pwa-install-btn" onclick="triggerInstall()" style="display:none;background:linear-gradient(135deg,#f5d020,#f5a623);border:none;border-radius:999px;padding:5px 12px;font-size:0.62rem;font-weight:700;color:#07101e;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;box-shadow:0 2px 10px rgba(245,166,35,0.4);">⬇ Installer l'app</button>
     </div>
@@ -410,11 +420,11 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
   <section class="hero">
     <div class="hero-desc">
-      Bienvenue sur <strong style="color:var(--text)">Kaffi-Pay</strong> — une plateforme d'échange conçue pour la rapidité et l'automatique. Échangez vos fonds en toute confiance.
+      <span data-i18n="hero">Bienvenue sur <strong style="color:var(--text)">Kaffi-Pay</strong> — une plateforme d'échange conçue pour la rapidité et l'automatique. Échangez vos fonds en toute confiance.</span>
     </div>
     <div class="promo-box">
       <div>
-        <div class="promo-label">🎁 Code promo pour réduire vos pertes :</div>
+        <div class="promo-label" data-i18n="promo-label">🎁 Code promo pour réduire vos pertes :</div>
         <div class="promo-code">kaffi10</div>
       </div>
       <button id="copyBtn" onclick="copyPromo()" style="display:flex;align-items:center;gap:5px;background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.35);color:var(--gold);border-radius:8px;padding:7px 13px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Copier</button>
@@ -422,33 +432,33 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   </section>
 
   <div class="tabs">
-    <button class="tab-btn active" onclick="switchTab('depot')" id="tab-depot">📥 Dépôt 1xBet</button>
-    <button class="tab-btn" onclick="switchTab('retrait')" id="tab-retrait">📤 Retrait 1xBet</button>
+    <button class="tab-btn active" onclick="switchTab('depot')" id="tab-depot" data-i18n="tab-depot">📥 Dépôt 1xBet</button>
+    <button class="tab-btn" onclick="switchTab('retrait')" id="tab-retrait" data-i18n="tab-retrait">📤 Retrait 1xBet</button>
   </div>
 
   <!-- DÉPÔT -->
   <div class="tab-content active" id="content-depot">
     <div class="form-card">
-      <div class="form-title">💰 Dépôt 1xBet</div>
-      <div class="form-subtitle">Rechargez votre compte 1xBet via Waafi</div>
+      <div class="form-title" data-i18n="title-depot">💰 Dépôt 1xBet</div>
+      <div class="form-subtitle" data-i18n="sub-depot">Rechargez votre compte 1xBet via Waafi</div>
 
       <div class="payment-box">
-        <div class="payment-box-title">📲 Envoyez d'abord votre paiement à :</div>
+        <div class="payment-box-title" data-i18n="pay-box-title">📲 Envoyez d'abord votre paiement à :</div>
         <div class="payment-row">
-          <div class="pay-label">📱 Numéro Waafi</div>
+          <div class="pay-label" data-i18n="label-waafi-num">📱 Numéro Waafi</div>
           <div class="pay-val" style="display:flex;align-items:center;gap:8px;">
             <span class="pay-num">77275572</span>
             <button onclick="copyPayNum('77275572',this)" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:5px 10px;font-size:0.72rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s;">📋 Copier</button>
           </div>
         </div>
         <div class="payment-row">
-          <div class="pay-label">👤 Nom du compte</div>
+          <div class="pay-label" data-i18n="label-account-name">👤 Nom du compte</div>
           <div class="pay-val"><span class="pay-name">Choukri Med Elmi</span></div>
         </div>
             </div>
 
       <div class="field">
-        <label>💳 Méthode de paiement</label>
+        <label data-i18n="label-method">💳 Méthode de paiement</label>
         <div class="method-display">
           <div class="method-logo" style="background:transparent;padding:0;overflow:hidden;"><img src="data:image/jpeg;base64,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" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"></div>
           <div><div class="method-name">Waafi</div><div class="method-tag">Paiement instantané</div></div>
@@ -456,21 +466,21 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div class="field">
-        <label>💵 Montant (min. 50 DJF)</label>
+        <label data-i18n="label-amount-depot">💵 Montant (min. 50 DJF)</label>
         <div class="amount-wrap">
           <span class="currency-sym">DJF</span>
           <input type="number" id="depot-montant" placeholder="Ex: 1000" min="50" inputmode="numeric" oninput="updateUSSD()">
         </div>
       </div>
       <div class="field">
-        <label>🎯 ID Compte 1xBet</label>
+        <label data-i18n="label-id1x">🎯 ID Compte 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="tel" id="depot-id" placeholder="Ex: 1234567890" inputmode="numeric" maxlength="12" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
           <button onclick="pasteField('depot-id')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
         </div>
       </div>
       <div class="field">
-        <label>🔑 Waafi Transfer ID</label>
+        <label data-i18n="label-tid">🔑 Waafi Transfer ID</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="tel" id="depot-hash" placeholder="Ex: 77422311" inputmode="numeric" maxlength="15" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
           <button onclick="pasteField('depot-hash')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
@@ -478,18 +488,18 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div class="field">
-        <label>📞 Votre numéro Waafi expéditeur</label>
+        <label data-i18n="label-sender">📞 Votre numéro Waafi expéditeur</label>
         <input type="tel" id="depot-numero-waafi" placeholder="Ex: 77275572" maxlength="8" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
-        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">8 chiffres · commence par 77</div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-sender">8 chiffres · commence par 77</div>
       </div>
 
       <div class="field">
-        <label>💬 Votre numéro WhatsApp</label>
+        <label data-i18n="label-whatsapp">💬 Votre numéro WhatsApp</label>
         <div style="position:relative;">
           <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
           <input type="tel" id="depot-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         </div>
-        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
 
       <div style="margin-top:14px;display:flex;justify-content:center;">
@@ -503,7 +513,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <button class="submit-btn" onclick="submitDepot()" id="depot-btn" disabled style="opacity:0.45;cursor:not-allowed;">
-        <span id="depot-btn-text">⚡ Soumettre l'Ordre</span>
+        <span id="depot-btn-text" data-i18n="submit-order">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="depot-spinner"></div>
       </button>
     </div>
@@ -512,42 +522,42 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   <!-- RETRAIT -->
   <div class="tab-content" id="content-retrait">
     <div class="form-card">
-      <div class="form-title">📤 Retrait 1xBet</div>
-      <div class="form-subtitle">Recevez votre argent sur Waafi</div>
+      <div class="form-title" data-i18n="title-retrait">📤 Retrait 1xBet</div>
+      <div class="form-subtitle" data-i18n="sub-retrait">Recevez votre argent sur Waafi</div>
 
       <div class="info-box">
-        <div class="info-box-title">📋 Instructions retrait 1xBet</div>
+        <div class="info-box-title" data-i18n="retrait-info-title">📋 Instructions retrait 1xBet</div>
         <ul class="info-steps">
-          <li>Allez sur <strong>1xBet → Retrait</strong></li>
-          <li>Sélectionnez <strong>Espèces</strong></li>
-          <li>Choisissez ville <strong>Djibouti</strong></li>
-          <li>Sélectionnez rue <strong>Kaffi Activity</strong></li>
-          <li>Entrez montant et confirmez</li>
-          <li>Copiez le <strong>code de retrait</strong> ci-dessous</li>
+          <li data-i18n="retrait-step-1">Allez sur <strong>1xBet → Retrait</strong></li>
+          <li data-i18n="retrait-step-2">Sélectionnez <strong>Espèces</strong></li>
+          <li data-i18n="retrait-step-3">Choisissez ville <strong>Djibouti</strong></li>
+          <li data-i18n="retrait-step-4">Sélectionnez rue <strong>Kaffi Activity</strong></li>
+          <li data-i18n="retrait-step-5">Entrez montant et confirmez</li>
+          <li data-i18n="retrait-step-6">Copiez le <strong>code de retrait</strong> ci-dessous</li>
         </ul>
       </div>
 
       <div class="field">
-        <label>🔑 Code de retrait 1xBet</label>
+        <label data-i18n="label-code-retrait">🔑 Code de retrait 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" id="retrait-code" placeholder="Ex: jK7o" maxlength="4" style="flex:1;">
           <button onclick="pasteField('retrait-code')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
         </div>
-        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Lettres et chiffres · 4 caractères</div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-code-retrait">Lettres et chiffres · 4 caractères</div>
       </div>
       <div class="method-display">
         <div class="method-logo" style="background:transparent;padding:0;overflow:hidden;"><img src="data:image/jpeg;base64,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" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"></div>
-        <div><div class="method-name">Waafi</div><div class="method-tag">Réception instantanée</div></div>
+        <div><div class="method-name">Waafi</div><div class="method-tag" data-i18n="method-tag-retrait">Réception instantanée</div></div>
       </div>
       <div class="field">
-        <label>📞 Votre numéro Waafi</label>
+        <label data-i18n="label-waafi-retrait">📞 Votre numéro Waafi</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="tel" id="retrait-tel" placeholder="Ex: 77275572" maxlength="8" inputmode="numeric" style="flex:1;">
           <button onclick="pasteField('retrait-tel')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
         </div>
       </div>
       <div class="field">
-        <label>💵 Montant (min. 250 DJF)</label>
+        <label data-i18n="label-amount-retrait">💵 Montant (min. 250 DJF)</label>
         <div class="amount-wrap">
           <span class="currency-sym">DJF</span>
           <input type="number" id="retrait-montant" placeholder="Ex: 500" min="250" inputmode="numeric">
@@ -555,12 +565,12 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div class="field">
-        <label>💬 Votre numéro WhatsApp</label>
+        <label data-i18n="label-whatsapp-retrait">💬 Votre numéro WhatsApp</label>
         <div style="position:relative;">
           <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
           <input type="tel" id="retrait-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         </div>
-        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Pour vous contacter · obligatoire</div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
 
       <div style="margin-top:14px;display:flex;justify-content:center;">
@@ -574,13 +584,13 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn" disabled style="opacity:0.45;cursor:not-allowed;">
-        <span id="retrait-btn-text">⚡ Soumettre l'Ordre</span>
+        <span id="retrait-btn-text" data-i18n="submit-order">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="retrait-spinner"></div>
       </button>
     </div>
   </div>
 
-  <a class="support-btn" href="https://t.me/kaffipay_support_bot" target="_blank">
+  <a class="support-btn" href="https://t.me/kaffipay_support_bot" target="_blank" data-i18n="support-btn">
     💬 Support Kaffi-Pay
   </a>
 
@@ -2779,6 +2789,145 @@ function triggerInstall(){
     }
   });
 }
+
+// ── Multi-langue ──
+var KP_LANGS = {
+  fr: {
+    'slogan':              'Échange 1xBet ↔ Waafi · Djibouti',
+    'secure':              '🔒 Sécurisé',
+    'hero':                'Bienvenue sur <strong style="color:var(--text)">Kaffi-Pay</strong> — une plateforme d\'échange conçue pour la rapidité et l\'automatique. Échangez vos fonds en toute confiance.',
+    'promo-label':         '🎁 Code promo pour réduire vos pertes :',
+    'tab-depot':           '📥 Dépôt 1xBet',
+    'tab-retrait':         '📤 Retrait 1xBet',
+    'title-depot':         '💰 Dépôt 1xBet',
+    'sub-depot':           'Rechargez votre compte 1xBet via Waafi',
+    'pay-box-title':       '📲 Envoyez d\'abord votre paiement à :',
+    'label-waafi-num':     '📱 Numéro Waafi',
+    'label-account-name':  '👤 Nom du compte',
+    'label-method':        '💳 Méthode de paiement',
+    'label-amount-depot':  '💵 Montant (min. 50 DJF)',
+    'label-id1x':          '🎯 ID Compte 1xBet',
+    'label-tid':           '🔑 Waafi Transfer ID',
+    'label-sender':        '📞 Votre numéro Waafi expéditeur',
+    'hint-sender':         '8 chiffres · commence par 77',
+    'label-whatsapp':      '💬 Votre numéro WhatsApp',
+    'hint-whatsapp':       'Pour vous contacter · obligatoire',
+    'submit-order':        '⚡ Soumettre l\'Ordre',
+    'title-retrait':       '📤 Retrait 1xBet',
+    'sub-retrait':         'Recevez votre argent sur Waafi',
+    'retrait-info-title':  '📋 Instructions retrait 1xBet',
+    'retrait-step-1':      'Allez sur <strong>1xBet → Retrait</strong>',
+    'retrait-step-2':      'Sélectionnez <strong>Espèces</strong>',
+    'retrait-step-3':      'Choisissez ville <strong>Djibouti</strong>',
+    'retrait-step-4':      'Sélectionnez rue <strong>Kaffi Activity</strong>',
+    'retrait-step-5':      'Entrez montant et confirmez',
+    'retrait-step-6':      'Copiez le <strong>code de retrait</strong> ci-dessous',
+    'label-code-retrait':  '🔑 Code de retrait 1xBet',
+    'hint-code-retrait':   'Lettres et chiffres · 4 caractères',
+    'method-tag-retrait':  'Réception instantanée',
+    'label-waafi-retrait': '📞 Votre numéro Waafi',
+    'label-amount-retrait':'💵 Montant (min. 250 DJF)',
+    'label-whatsapp-retrait':'💬 Votre numéro WhatsApp',
+    'support-btn':         '💬 Support Kaffi-Pay'
+  },
+  en: {
+    'slogan':              '1xBet ↔ Waafi Exchange · Djibouti',
+    'secure':              '🔒 Secured',
+    'hero':                'Welcome to <strong style="color:var(--text)">Kaffi-Pay</strong> — an exchange platform built for speed and automation. Exchange your funds with confidence.',
+    'promo-label':         '🎁 Promo code to reduce your fees:',
+    'tab-depot':           '📥 1xBet Deposit',
+    'tab-retrait':         '📤 1xBet Withdrawal',
+    'title-depot':         '💰 1xBet Deposit',
+    'sub-depot':           'Top up your 1xBet account via Waafi',
+    'pay-box-title':       '📲 First send your payment to:',
+    'label-waafi-num':     '📱 Waafi Number',
+    'label-account-name':  '👤 Account Name',
+    'label-method':        '💳 Payment Method',
+    'label-amount-depot':  '💵 Amount (min. 50 DJF)',
+    'label-id1x':          '🎯 1xBet Account ID',
+    'label-tid':           '🔑 Waafi Transfer ID',
+    'label-sender':        '📞 Your Waafi sender number',
+    'hint-sender':         '8 digits · starts with 77',
+    'label-whatsapp':      '💬 Your WhatsApp number',
+    'hint-whatsapp':       'To contact you · required',
+    'submit-order':        '⚡ Submit Order',
+    'title-retrait':       '📤 1xBet Withdrawal',
+    'sub-retrait':         'Receive your money on Waafi',
+    'retrait-info-title':  '📋 1xBet Withdrawal Instructions',
+    'retrait-step-1':      'Go to <strong>1xBet → Withdrawal</strong>',
+    'retrait-step-2':      'Select <strong>Cash</strong>',
+    'retrait-step-3':      'Choose city <strong>Djibouti</strong>',
+    'retrait-step-4':      'Select street <strong>Kaffi Activity</strong>',
+    'retrait-step-5':      'Enter amount and confirm',
+    'retrait-step-6':      'Copy the <strong>withdrawal code</strong> below',
+    'label-code-retrait':  '🔑 1xBet Withdrawal Code',
+    'hint-code-retrait':   'Letters and digits · 4 characters',
+    'method-tag-retrait':  'Instant reception',
+    'label-waafi-retrait': '📞 Your Waafi number',
+    'label-amount-retrait':'💵 Amount (min. 250 DJF)',
+    'label-whatsapp-retrait':'💬 Your WhatsApp number',
+    'support-btn':         '💬 Kaffi-Pay Support'
+  },
+  so: {
+    'slogan':              '1xBet ↔ Waafi Beddelka · Jabuuti',
+    'secure':              '🔒 Ammaan',
+    'hero':                '<strong style="color:var(--text)">Kaffi-Pay</strong> ku soo dhawow — xarunta beddelka ee degdegga ah iyo xisaabinta otomaatig. Lacagtaada si ammaan ah u beddel.',
+    'promo-label':         '🎁 Koodhka dhimista lacagta:',
+    'tab-depot':           '📥 Gelinta 1xBet',
+    'tab-retrait':         '📤 Bixinta 1xBet',
+    'title-depot':         '💰 Gelinta 1xBet',
+    'sub-depot':           'Xisaabkaaga 1xBet ku buuxi Waafi',
+    'pay-box-title':       '📲 Marka hore lacagta u dir:',
+    'label-waafi-num':     '📱 Lambarka Waafi',
+    'label-account-name':  '👤 Magaca Xisaabta',
+    'label-method':        '💳 Habka Lacag Bixinta',
+    'label-amount-depot':  '💵 Xaddiga (ugu yaraan 50 DJF)',
+    'label-id1x':          '🎯 ID Xisaabta 1xBet',
+    'label-tid':           '🔑 Waafi Transfer ID',
+    'label-sender':        '📞 Lambarka Waafi ee aad dirsatay',
+    'hint-sender':         '8 lambar · ku bilaabo 77',
+    'label-whatsapp':      '💬 Lambarka WhatsApp',
+    'hint-whatsapp':       'Si aan kuula xiriirno · waajib',
+    'submit-order':        '⚡ Gudbi Codsiga',
+    'title-retrait':       '📤 Bixinta 1xBet',
+    'sub-retrait':         'Lacagtaada Waafi ku hel',
+    'retrait-info-title':  '📋 Tilmaamaha Bixinta 1xBet',
+    'retrait-step-1':      'Aad <strong>1xBet → Bixinta</strong>',
+    'retrait-step-2':      'Dooro <strong>Lacag Caddaan ah</strong>',
+    'retrait-step-3':      'Magaalada dooro <strong>Djibouti</strong>',
+    'retrait-step-4':      'Wadada dooro <strong>Kaffi Activity</strong>',
+    'retrait-step-5':      'Xaddiga gali oo xaqiiji',
+    'retrait-step-6':      '<strong>Koodhka bixinta</strong> hoos ku koobiyee',
+    'label-code-retrait':  '🔑 Koodhka Bixinta 1xBet',
+    'hint-code-retrait':   'Xarfo iyo lambaro · 4 xaraf',
+    'method-tag-retrait':  'Qaadashada degdeg ah',
+    'label-waafi-retrait': '📞 Lambarka Waafi',
+    'label-amount-retrait':'💵 Xaddiga (ugu yaraan 250 DJF)',
+    'label-whatsapp-retrait':'💬 Lambarka WhatsApp',
+    'support-btn':         '💬 Taageerada Kaffi-Pay'
+  }
+};
+
+function applyLang(l) {
+  if (!KP_LANGS[l]) l = 'fr';
+  var t = KP_LANGS[l];
+  document.querySelectorAll('[data-i18n]').forEach(function(el) {
+    var k = el.getAttribute('data-i18n');
+    if (t[k] !== undefined) el.innerHTML = t[k];
+  });
+  ['fr','en','so'].forEach(function(code) {
+    var btn = document.getElementById('lang-' + code);
+    if (btn) btn.classList.toggle('active', code === l);
+  });
+  document.documentElement.lang = l;
+}
+
+function setLang(l) {
+  localStorage.setItem('kp-lang', l);
+  applyLang(l);
+}
+
+(function() { applyLang(localStorage.getItem('kp-lang') || 'fr'); })();
 
 // ── Service Worker PWA ──
 // Fonctionne sur kaffi-pay.com (Firebase Hosting sert sw.js)
