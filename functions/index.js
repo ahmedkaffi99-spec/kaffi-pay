@@ -466,8 +466,8 @@ function traiterAdminBot(text, orders, notifs) {
     "🚨 <code>fraudes</code> — ordres suspects\n" +
     "❌ <code>rejetés</code> — ordres rejetés\n" +
     "👤 <code>client 77123456</code> — ordres d'un numéro\n" +
-    "📋 <code>macro jobs</code> — file d'attente MacroDroid\n" +
-    "🔄 <code>test macro</code> — tester le webhook\n" +
+    "🤖 <code>statut support</code> — statut webhook bot client\n" +
+    "🔄 <code>test mobcash</code> — tester MobCash\n" +
     "📱 <code>test whatsapp +25377XXXXXX</code> — tester l'envoi WhatsApp\n\n" +
     "<i>Le système confirme et recharge automatiquement.</i>"
   );
@@ -1372,7 +1372,21 @@ exports.supportClient = onRequest(
     const text         = (msg.text || "").trim();
     const firstName    = (msg.from || {}).first_name || "Client";
     const supportToken = SUPPORT_BOT_TOKEN.value();
-    if (!text || !supportToken) return;
+
+    if (!supportToken) {
+      console.error("supportClient: SUPPORT_BOT_TOKEN non configuré — impossible de répondre");
+      return;
+    }
+
+    // Message sans texte (photo, sticker, voice, etc.) → guider l'utilisateur
+    if (!text) {
+      await sendTelegramToBot(supportToken, chatId,
+        `Veuillez envoyer un message texte.\n\n` +
+        `Envoyez votre <b>numéro d'ordre</b> pour voir son statut.\n` +
+        `Exemple : <code>#06111</code>\n\n— <i>Support Kaffi-Pay</i>`
+      );
+      return;
+    }
 
     const send = (txt) => sendTelegramToBot(supportToken, chatId, txt + "\n\n— <i>Support Kaffi-Pay</i>");
 
@@ -1907,6 +1921,36 @@ exports.adminBot = onRequest(
         await db.collection("circuit_breakers").doc("macrodroid").set({ etat: "closed", echecs: 0, resetAt: Date.now() });
         logAudit("circuit_reset", { adminId });
         await sendTelegram(token, adminId, "✅ Circuit breaker réinitialisé — <b>CLOSED</b>");
+        return;
+      }
+
+      // statut support — vérifie l'état du webhook du bot client
+      if (t === "statut support" || t === "/statut_support") {
+        const sToken = SUPPORT_BOT_TOKEN.value();
+        if (!sToken) {
+          await sendTelegram(token, adminId, "❌ Secret <b>SUPPORT_BOT_TOKEN</b> non configuré dans Firebase Secrets.");
+          return;
+        }
+        // getMe — vérifie que le token est valide
+        const [meR, whR] = await Promise.all([
+          fetch(`https://api.telegram.org/bot${sToken}/getMe`, { signal: AbortSignal.timeout(8000) }),
+          fetch(`https://api.telegram.org/bot${sToken}/getWebhookInfo`, { signal: AbortSignal.timeout(8000) }),
+        ]);
+        const meJ  = await meR.json().catch(() => ({}));
+        const whJ  = await whR.json().catch(() => ({}));
+        const bot  = meJ.result || {};
+        const wh   = whJ.result || {};
+        await sendTelegram(token, adminId,
+          `🤖 <b>Support Bot — Diagnostic</b>\n\n` +
+          `<b>Bot :</b> ${bot.first_name || "?"} (@${bot.username || "?"})\n` +
+          `<b>Token :</b> ${meJ.ok ? "✅ valide" : "❌ invalide"}\n\n` +
+          `<b>Webhook URL :</b>\n<code>${wh.url || "❌ non configuré"}</code>\n` +
+          `<b>Mises à jour en attente :</b> ${wh.pending_update_count ?? "?"}\n` +
+          `<b>Dernière erreur :</b> ${wh.last_error_message ? `❌ ${wh.last_error_message}` : "✅ aucune"}\n\n` +
+          (wh.url
+            ? "✅ Bot actif — les messages clients sont reçus."
+            : "⚠️ Webhook non configuré !\nTapez <code>webhook support</code> pour le configurer.")
+        );
         return;
       }
 
