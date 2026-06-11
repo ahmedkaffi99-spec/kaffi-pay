@@ -941,12 +941,15 @@ exports.onNouvelRetrait = onDocumentCreated(
 );
 
 // ══════════════════════════════════════════════════════════════════
-// TRIGGER 2 — ORDRE MIS À JOUR (State Machine)
+// TRIGGER 2a — DÉPÔT MIS À JOUR
+//
+//  "Paiement Reçu"       → MobCash Deposit → crédite 1xBet
+//  "Crédité avec succès" → WhatsApp + Telegram (succès dépôt)
+//  "Paiement Non Reçu"   → WhatsApp + Telegram (rejet dépôt)
 // ══════════════════════════════════════════════════════════════════
-exports.onOrdreUpdated = onDocumentUpdated(
+exports.onDepotUpdated = onDocumentUpdated(
   {
-    document: "orders/{docId}",
-    region: REGION,
+    document: "orders/{docId}", region: REGION,
     secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
@@ -954,96 +957,64 @@ exports.onOrdreUpdated = onDocumentUpdated(
   async (event) => {
     const before = event.data.before.data();
     const after  = event.data.after.data();
+    if (after.type !== "Dépôt") return;
     if (before.status === after.status) return;
 
     if (!transitionValide(before.status, after.status)) {
-      console.warn(`Transition invalide ignorée: ${before.status} → ${after.status}`);
+      console.warn(`[Dépôt] Transition invalide ignorée: ${before.status} → ${after.status}`);
       return;
     }
 
-    const ordreId  = after.orderId || event.params.docId;
-    const montant  = Number(after.montant || 0).toLocaleString();
-    const type     = after.type || "Ordre";
-    const token    = TELEGRAM_TOKEN.value();
-    const adminId  = TELEGRAM_ADMIN_ID.value();
+    const ordreId = after.orderId || event.params.docId;
+    const montant = Number(after.montant || 0).toLocaleString();
+    const token   = TELEGRAM_TOKEN.value();
+    const adminId = TELEGRAM_ADMIN_ID.value();
 
-    logAudit("transition_statut", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
+    logAudit("depot_transition", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
 
-    // Retrait avec webhookStatus "ok" : notifications déjà envoyées par onNouvelOrdre.
-    // Notifications "Paiement Reçu" — gérées dans confirmerDepot (dépôt) et onNouvelOrdre (retrait).
-    // Ici on gère uniquement les états finaux : Crédité avec succès + Paiement Non Reçu.
-    if (after.status === "Crédité avec succès" || after.status === "Paiement Non Reçu") {
-      let msg = "";
-      const isRetrait = after.type === "Retrait";
-      if (after.status === "Crédité avec succès")
-        msg = isRetrait
-          ? `✅ <b>Retrait — Waafi envoyé</b>\n#${ordreId} — ${montant} DJF`
-          : `✅ <b>Dépôt — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`;
-      else if (after.status === "Paiement Non Reçu")
-        msg = isRetrait
-          ? `❌ <b>Retrait échoué</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`
-          : `❌ <b>Dépôt — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
-
-      if (msg) await sendTelegram(token, adminId, msg);
-
-      // ── WhatsApp client ──
+    if (after.status === "Crédité avec succès") {
+      await sendTelegram(token, adminId,
+        `✅ <b>Dépôt — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`);
       if (after.whatsapp) {
-        let waMsg = "";
-        if (after.status === "Crédité avec succès") {
-          waMsg = after.type === "Dépôt"
-            ? `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
-              `Votre dépôt *#${ordreId}* de *${montant} DJF* a été traité avec succès.\n\n` +
-              `✅ *Crédité avec succès*\n\n` +
-              `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
-            : `🎉 *Kaffi-Pay — Waafi envoyé !*\n\n` +
-              `Votre retrait *#${ordreId}* de *${montant} DJF* a été effectué.\n\n` +
-              `✅ *Waafi envoyé*\n\n` +
-              `L'argent a été viré sur votre numéro Waafi. Vérifiez votre solde.`;
-        } else if (after.status === "Paiement Non Reçu") {
-          waMsg = `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
-                  `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
-                  `Raison : ${after.flagRaison || "Paiement non reçu"}\n\n` +
-                  `Soumettez un nouvel ordre sur kaffi-pay.com`;
-        }
-        if (waMsg) await sendWhatsApp(after.whatsapp, waMsg);
+        await sendWhatsApp(after.whatsapp,
+          `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
+          `Votre dépôt *#${ordreId}* de *${montant} DJF* a été traité avec succès.\n\n` +
+          `✅ *Crédité avec succès*\n\n` +
+          `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
+        );
       }
+      return;
     }
 
-    // ── MobCash — "Paiement Reçu" → API → "Crédité avec succès" ──
-    // Dépôt: déclenché automatiquement après match Waafi
-    // Retrait: déclenché après confirmation admin (confirmer #ID → "Paiement Reçu")
+    if (after.status === "Paiement Non Reçu") {
+      await sendTelegram(token, adminId,
+        `❌ <b>Dépôt — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`);
+      if (after.whatsapp) {
+        await sendWhatsApp(after.whatsapp,
+          `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+          `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+          `Raison : ${after.flagRaison || "Paiement non reçu"}\n\n` +
+          `Soumettez un nouvel ordre sur kaffi-pay.com`
+        );
+      }
+      return;
+    }
+
+    // ── "Paiement Reçu" → MobCash Deposit → crédite le compte 1xBet ──
     if (after.status !== "Paiement Reçu") return;
+    if (after.webhookStatus === "ok") return;
 
-    const wbAlreadyOk = after.webhookStatus === "ok";
-    if (wbAlreadyOk) return;
+    const montantVal  = Number(after.montant || 0);
+    const userId1xBet = after.userId1xBet || after.id1x || "";
 
-    const montantVal     = Number(after.montant || 0);
-    const orderType      = after.type || "Dépôt";
-    const withdrawalCode = after.withdrawalCode || "";
-    const isRetrait      = orderType === "Retrait";
-
-    let mobcashUserId;
-    if (isRetrait) {
-      // Retrait : utilise l'identifiant opérateur — le code retrait identifie la transaction
-      mobcashUserId = MOBCASH_LOGIN.value() || "0";
-      if (!withdrawalCode) {
-        await sendTelegram(token, adminId,
-          `⚠️ <b>Code retrait manquant</b> — #${ordreId}\nIntervention manuelle requise.`);
-        return;
-      }
-    } else {
-      // Dépôt : utilise l'ID 1xBet du client
-      mobcashUserId = after.userId1xBet || after.id1x || "";
-      if (!mobcashUserId) {
-        await sendTelegram(token, adminId,
-          `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\nCrédit impossible, vérifiez l'ordre.`);
-        return;
-      }
+    if (!userId1xBet) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\nCrédit impossible, vérifiez l'ordre.`);
+      return;
     }
 
     try {
-      await callMobcash(orderType, mobcashUserId, montantVal, withdrawalCode);
-      // Marquer le TID comme crédité dans ordre_traite (Dépôt seulement)
+      await callMobcash("Dépôt", userId1xBet, montantVal, "");
       const tid = after.waafitranfertID || after.hash || "";
       if (tid) {
         db.collection("ordre_traite").doc(tid).update({
@@ -1055,13 +1026,128 @@ exports.onOrdreUpdated = onDocumentUpdated(
         webhookStatus: "ok",
         webhookAt: FieldValue.serverTimestamp(),
       });
-      logAudit("mobcash_ok", { ordreId, userId: mobcashUserId, type: orderType });
+      logAudit("depot_mobcash_ok", { ordreId, userId1xBet });
     } catch (e) {
       await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
       await sendTelegram(token, adminId,
-        `⚠️ <b>MobCash échoué</b> — #${ordreId}\n<code>${e.message}</code>\n` +
-        `<i>Le scheduler relancera automatiquement dans 5 min.</i>`);
-      logAudit("mobcash_echec", { ordreId, err: e.message });
+        `⚠️ <b>MobCash Dépôt échoué</b> — #${ordreId}\n<code>${e.message}</code>\n` +
+        `<i>Le scheduler relancera dans 5 min.</i>`);
+      logAudit("depot_mobcash_echec", { ordreId, err: e.message });
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// TRIGGER 2b — RETRAIT MIS À JOUR
+//
+//  "Paiement Reçu" (webhookStatus != ok) → retry MobCash Payout
+//                                          → renvoie USSD à l'admin
+//  "Crédité avec succès"                 → WhatsApp + Telegram (Waafi envoyé)
+//  "Paiement Non Reçu"                   → WhatsApp + Telegram (retrait échoué)
+// ══════════════════════════════════════════════════════════════════
+exports.onRetraitUpdated = onDocumentUpdated(
+  {
+    document: "orders/{docId}", region: REGION,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+              MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
+    timeoutSeconds: 60,
+  },
+  async (event) => {
+    const before = event.data.before.data();
+    const after  = event.data.after.data();
+    if (after.type !== "Retrait") return;
+    if (before.status === after.status) return;
+
+    if (!transitionValide(before.status, after.status)) {
+      console.warn(`[Retrait] Transition invalide ignorée: ${before.status} → ${after.status}`);
+      return;
+    }
+
+    const ordreId = after.orderId || event.params.docId;
+    const montant = Number(after.montant || 0).toLocaleString();
+    const token   = TELEGRAM_TOKEN.value();
+    const adminId = TELEGRAM_ADMIN_ID.value();
+
+    logAudit("retrait_transition", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
+
+    if (after.status === "Crédité avec succès") {
+      await sendTelegram(token, adminId,
+        `✅ <b>Retrait — Waafi envoyé</b>\n#${ordreId} — ${montant} DJF`);
+      if (after.whatsapp) {
+        await sendWhatsApp(after.whatsapp,
+          `🎉 *Kaffi-Pay — Waafi envoyé !*\n\n` +
+          `Votre retrait *#${ordreId}* de *${montant} DJF* a été effectué.\n\n` +
+          `✅ *Waafi envoyé*\n\n` +
+          `L'argent a été viré sur votre numéro Waafi. Vérifiez votre solde.`
+        );
+      }
+      return;
+    }
+
+    if (after.status === "Paiement Non Reçu") {
+      await sendTelegram(token, adminId,
+        `❌ <b>Retrait échoué</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`);
+      if (after.whatsapp) {
+        await sendWhatsApp(after.whatsapp,
+          `❌ *Kaffi-Pay — Retrait échoué*\n\n` +
+          `Votre retrait *#${ordreId}* n'a pas pu être traité.\n` +
+          `Raison : ${after.flagRaison || "Retrait échoué"}\n\n` +
+          `Contactez le support sur kaffi-pay.com`
+        );
+      }
+      return;
+    }
+
+    // ── "Paiement Reçu" + webhookStatus != "ok" → retry MobCash Payout ──
+    // Cas : onNouvelRetrait a échoué et admin relance via "confirmer #ID".
+    // Si webhookStatus est déjà "ok" ou "ok_retry_rt", MobCash déjà appelé → skip.
+    if (after.status !== "Paiement Reçu") return;
+    const wbOk = after.webhookStatus === "ok" || after.webhookStatus === "ok_retry_rt";
+    if (wbOk) return;
+
+    const montantVal = Number(after.montant || 0);
+    const waafiNum   = (after.waafiNumber || after.tel || "").replace(/\s/g, "");
+    const tidRetrait = (after.withdrawalCode || "").trim();
+    const loginId    = MOBCASH_LOGIN.value() || "0";
+
+    if (!tidRetrait) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>Code retrait manquant</b> — #${ordreId}\nIntervention manuelle requise.`);
+      return;
+    }
+
+    try {
+      const mobcashData    = await callMobcash("Retrait", loginId, montantVal, tidRetrait);
+      const montantMobcash = Number(
+        mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
+      );
+
+      await event.data.after.ref.update({
+        webhookStatus: "ok_retry_rt",
+        webhookAt: FieldValue.serverTimestamp(),
+        montantMobcash,
+      });
+
+      const ussd    = `*200*${waafiNum}*${montantMobcash}#`;
+      const ussdUrl = `tel:${ussd.replace(/#/g, "%23")}`;
+      await sendTelegramKeyboard(token, adminId,
+        `🔄 <b>Retrait relancé — #${ordreId}</b>\n\n` +
+        `Montant MobCash : <b>${montantMobcash.toLocaleString()} DJF</b>\n` +
+        `N° Waafi client : <code>${waafiNum}</code>\n` +
+        `Code retrait 1xBet : <code>${tidRetrait}</code>\n\n` +
+        `📱 <b>USSD à composer :</b>\n<code>${ussd}</code>\n\n` +
+        `<i>1. Composez le USSD → 2. Confirmez → 3. Cliquez Terminer.</i>`,
+        [
+          [{ text: `📞 ${ussd}`, url: ussdUrl }],
+          [{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }],
+        ]
+      );
+      logAudit("retrait_mobcash_retry_ok", { ordreId, waafiNum, montantMobcash });
+    } catch (e) {
+      await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
+      await sendTelegram(token, adminId,
+        `⚠️ <b>MobCash Retrait retry échoué</b> — #${ordreId}\n<code>${e.message}</code>`);
+      logAudit("retrait_mobcash_retry_echec", { ordreId, err: e.message });
     }
   }
 );
@@ -1155,27 +1241,23 @@ exports.ordresBloques = onSchedule(
       }
     }
 
-    // ── PARTIE 3 : Recovery MobCash ──────────────────────────────────
-    // Cas A : "Paiement Reçu" (auto_match_waafi) + webhookStatus != ok
-    //   → MobCash n'a pas encore crédité (ou a échoué). Re-déclenche
-    //   et passe directement à "Crédité avec succès" si succès.
-    // Cas B : "Crédité avec succès" + webhookStatus != ok
-    //   → "Paiement Reçu" + webhookStatus != ok = MobCash pas encore crédité. Re-déclenche.
-    const snapPaiementRecu = await db.collection("orders")
+    // ── PARTIE 3a : Recovery Dépôt — "Paiement Reçu" + webhookStatus != ok ──
+    // MobCash Deposit n'a pas crédité 1xBet. Re-tente automatiquement.
+    const snapDepotRecu = await db.collection("orders")
       .where("status", "==", "Paiement Reçu")
+      .where("type", "==", "Dépôt")
       .get().catch(() => ({ docs: [] }));
 
-    for (const ordreDoc of snapPaiementRecu.docs) {
-      const o       = ordreDoc.data();
-      const ordreId = o.orderId || ordreDoc.id;
-      const id1xbet = o.userId1xBet || o.id1x || "";
-      const wbOk    = o.webhookStatus === "ok";
+    for (const ordreDoc of snapDepotRecu.docs) {
+      const o         = ordreDoc.data();
+      const ordreId   = o.orderId || ordreDoc.id;
+      const id1xbet   = o.userId1xBet || o.id1x || "";
+      const wbOk      = o.webhookStatus === "ok" || o.webhookStatus === "ok_recovery";
 
       if (wbOk) continue;
       if (!id1xbet) continue;
 
-      // Vérifie dans ordre_traite (anti-doublon) — si déjà crédité, juste mettre à jour le statut
-      const tid        = o.waafitranfertID || o.hash || "";
+      const tid         = o.waafitranfertID || o.hash || "";
       const dejaCredite = tid
         ? await db.collection("ordre_traite")
             .where("transferId", "==", tid).where("status", "==", "credite").limit(1).get()
@@ -1187,9 +1269,7 @@ exports.ordresBloques = onSchedule(
       }
 
       try {
-        const orderType      = o.type || "Dépôt";
-        const withdrawalCode = o.withdrawalCode || "";
-        await callMobcash(orderType, id1xbet, Number(o.montant || 0), withdrawalCode);
+        await callMobcash("Dépôt", id1xbet, Number(o.montant || 0), "");
         if (tid) {
           db.collection("ordre_traite").doc(tid).update({
             status: "credite", creditedAt: FieldValue.serverTimestamp(),
@@ -1202,14 +1282,68 @@ exports.ordresBloques = onSchedule(
           recoveryBy: "scheduler",
         });
         await sendTelegram(token, adminId,
-          `🔄 <b>Recovery MobCash</b> — #<code>${ordreId}</code> crédité\n` +
+          `🔄 <b>Recovery Dépôt</b> — #<code>${ordreId}</code> crédité\n` +
           `ID 1xBet: <code>${id1xbet}</code> | ${Number(o.montant||0).toLocaleString()} DJF`
         );
-        logAudit("mobcash_recovery_scheduler", { ordreId, id1xbet });
+        logAudit("depot_recovery_scheduler", { ordreId, id1xbet });
       } catch (err) {
         await ordreDoc.ref.update({ webhookStatus: "echec", webhookErr: err.message });
         await sendTelegram(token, adminId,
-          `⚠️ <b>Recovery MobCash échoué</b> — #${ordreId}\n<code>${err.message}</code>`
+          `⚠️ <b>Recovery Dépôt échoué</b> — #${ordreId}\n<code>${err.message}</code>`
+        );
+      }
+    }
+
+    // ── PARTIE 3b : Recovery Retrait — "Paiement Reçu" + webhookStatus != ok/ok_retry_rt ──
+    // MobCash Payout n'a pas retiré les fonds 1xBet. Re-tente et renvoie USSD à l'admin.
+    const snapRetraitRecu = await db.collection("orders")
+      .where("status", "==", "Paiement Reçu")
+      .where("type", "==", "Retrait")
+      .get().catch(() => ({ docs: [] }));
+
+    const loginId = MOBCASH_LOGIN.value() || "0";
+
+    for (const ordreDoc of snapRetraitRecu.docs) {
+      const o       = ordreDoc.data();
+      const ordreId = o.orderId || ordreDoc.id;
+      const wbOk    = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
+
+      if (wbOk) continue;
+
+      const tidRetrait = (o.withdrawalCode || "").trim();
+      const waafiNum   = (o.waafiNumber || o.tel || "").replace(/\s/g, "");
+      if (!tidRetrait) continue;
+
+      try {
+        const mobcashData    = await callMobcash("Retrait", loginId, Number(o.montant || 0), tidRetrait);
+        const montantMobcash = Number(
+          mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? o.montant
+        );
+
+        await ordreDoc.ref.update({
+          webhookStatus: "ok_retry_rt",
+          webhookAt: FieldValue.serverTimestamp(),
+          montantMobcash,
+          recoveryBy: "scheduler",
+        });
+
+        const ussd    = `*200*${waafiNum}*${montantMobcash}#`;
+        const ussdUrl = `tel:${ussd.replace(/#/g, "%23")}`;
+        await sendTelegramKeyboard(token, adminId,
+          `🔄 <b>Recovery Retrait — #${ordreId}</b>\n\n` +
+          `Montant MobCash : <b>${montantMobcash.toLocaleString()} DJF</b>\n` +
+          `N° Waafi : <code>${waafiNum}</code>\n\n` +
+          `📱 USSD : <code>${ussd}</code>`,
+          [
+            [{ text: `📞 ${ussd}`, url: ussdUrl }],
+            [{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }],
+          ]
+        );
+        logAudit("retrait_recovery_scheduler", { ordreId, waafiNum, montantMobcash });
+      } catch (err) {
+        await ordreDoc.ref.update({ webhookStatus: "echec", webhookErr: err.message });
+        await sendTelegram(token, adminId,
+          `⚠️ <b>Recovery Retrait échoué</b> — #${ordreId}\n<code>${err.message}</code>`
         );
       }
     }
