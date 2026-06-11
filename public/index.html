@@ -631,7 +631,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <button class="nav-tab" onclick="goOrders()" id="ntab-orders"><span>📋</span>Ordres<div class="notif-dot" id="notif-dot"></div></button>
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
-    <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>📨</span>SMS Waafi<div class="notif-dot" id="notif-bell-dot"></div></button>
+    <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>📨</span>Notifications<div class="notif-dot" id="notif-bell-dot"></div></button>
   </div>
 
   <!-- DASHBOARD -->
@@ -712,13 +712,13 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   <!-- NOTIFICATIONS -->
   <div class="page-section" id="page-notifs">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <div style="font-family:'Playfair Display',serif;font-size:0.9rem;font-weight:700;">📨 SMS Waafi reçus</div>
+      <div style="font-family:'Playfair Display',serif;font-size:0.9rem;font-weight:700;">📨 Notifications Waafi</div>
       <div id="waafi-sms-count" style="font-size:0.65rem;color:var(--muted);"></div>
     </div>
     <div id="waafi-sms-list" style="display:flex;flex-direction:column;gap:7px;">
       <div style="text-align:center;padding:30px;color:var(--muted);font-size:0.78rem;">
         <div style="font-size:1.8rem;margin-bottom:8px;">📡</div>
-        Connexion au flux SMS...
+        Connexion aux notifications...
       </div>
     </div>
   </div>
@@ -937,9 +937,8 @@ function checkURLAdmin(){
                 hash === '#admin' ||
                 search === '?admin';
   if(isAdmin){
-    showAdminLogin();
-    document.getElementById('screen-login').style.opacity='1';
     try{ window.history.replaceState(null,'',window.location.pathname.replace('/admin','/') || '/'); }catch(e){}
+    loginSuccess({user:'admin', role:'Admin', isCreator:true});
   } else if(hash.startsWith('#suivi-')){
     // Restaurer la page suivi après refresh / pull-to-refresh
     window._pendingSuiviRef = decodeURIComponent(hash.replace('#suivi-',''));
@@ -2357,9 +2356,9 @@ function renderWaafiSms(docs){
   var el = document.getElementById('waafi-sms-list');
   if(!el) return;
   var countEl = document.getElementById('waafi-sms-count');
-  if(countEl) countEl.textContent = docs.length ? docs.length+' SMS' : '';
+  if(countEl) countEl.textContent = docs.length ? docs.length+' notif' : '';
   if(!docs.length){
-    el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:0.78rem;"><div style="font-size:1.8rem;margin-bottom:8px;">📡</div>Aucun SMS reçu</div>';
+    el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:0.78rem;"><div style="font-size:1.8rem;margin-bottom:8px;">📡</div>Aucune notification reçue</div>';
     return;
   }
   var STATUS = {
