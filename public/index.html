@@ -1904,6 +1904,17 @@ async function testMobcashAPI(type){
       } else {
         lines.push(err);
       }
+      if(data.debugInfo){
+        lines.push('');
+        lines.push('── Debug ──');
+        lines.push('🔗 URL    : '+data.debugInfo.url);
+        lines.push('👤 userId : '+data.debugInfo.userId);
+      }
+      if(data.rawData){
+        lines.push('');
+        lines.push('── Réponse brute MobCash ──');
+        lines.push(JSON.stringify(data.rawData, null, 2));
+      }
       pre.textContent=lines.join('\n');
     }
   }catch(e){

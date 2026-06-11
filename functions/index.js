@@ -155,14 +155,21 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
 
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "");
-    throw new Error(`MobCash ${endpoint} HTTP ${resp.status}: ${errText}`);
+    const err = new Error(`MobCash ${endpoint} HTTP ${resp.status}: ${errText}`);
+    err.rawData = { httpStatus: resp.status, body: errText };
+    err.debugInfo = { url: `${MOBCASH_BASE}/Deposit/${userId}/${endpoint}`, userId, endpoint };
+    throw err;
   }
   const data = await resp.json();
   const isSuccess = data.Success ?? data.success;
   const msgId     = data.MessageId ?? data.messageId;
   const msgText   = data.Message   || data.message || JSON.stringify(data);
-  if (isSuccess === false || (msgId && msgId !== 0))
-    throw new Error(`MobCash ${endpoint}: ${msgText}`);
+  if (isSuccess === false || (msgId && msgId !== 0)) {
+    const err = new Error(`MobCash ${endpoint}: ${msgText}`);
+    err.rawData  = data;
+    err.debugInfo = { url: `${MOBCASH_BASE}/Deposit/${userId}/${endpoint}`, userId, endpoint };
+    throw err;
+  }
   return data;
 }
 
@@ -1260,7 +1267,7 @@ exports.testMobcash = onRequest(
         : await callMobcash("Dépôt",   userId, montant, "");
       res.json({ ok: true, data });
     } catch (e) {
-      res.json({ ok: false, error: e.message });
+      res.json({ ok: false, error: e.message, rawData: e.rawData || null, debugInfo: e.debugInfo || null });
     }
   }
 );
