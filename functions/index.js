@@ -755,9 +755,10 @@ exports.onNouvelRetrait = onDocumentCreated(
 
     try {
       const mobcashData    = await callMobcash("Retrait", userId1xBetVal, montantVal, tidRetrait);
-      const montantMobcash = Number(
-        mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
-      );
+      // MobCash Payout returns Summa as a negative value (e.g. -250), use Math.abs()
+      const montantMobcash = Math.abs(Number(
+        mobcashData.Summa ?? mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
+      ));
 
       // Montant MobCash ≠ montant soumis → Code Invalide
       if (montantMobcash !== montantVal) {
@@ -1762,7 +1763,7 @@ exports.adminBot = onRequest(
         snap.empty = snap.docs.length === 0;
         if (snap.empty) { await sendTelegram(token, adminId, `❓ Aucun ordre pour <code>${phone}</code>.`); return; }
         const lignes = snap.docs.map((d) => { const o = d.data(); return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status}`; });
-        await sendTelegram(token, adminId, `👤 <b>Ordres ${phone} (${snap.size})</b>\n\n${lignes.join("\n")}`);
+        await sendTelegram(token, adminId, `👤 <b>Ordres ${phone} (${snap.docs.length})</b>\n\n${lignes.join("\n")}`);
         return;
       }
 
