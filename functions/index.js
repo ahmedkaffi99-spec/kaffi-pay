@@ -144,7 +144,7 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
 
   const body = isDepot
     ? { cashdeskid: Number(cashdeskId), lng, summa: montant, confirm }
-    : { cashdeskId: Number(cashdeskId), lng, code: String(withdrawalCode || ""), confirm };
+    : { cashdeskid: Number(cashdeskId), lng, code: String(withdrawalCode || ""), confirm };
 
   const resp = await fetch(`${MOBCASH_BASE}/Deposit/${userId}/${endpoint}`, {
     method: "POST",
