@@ -604,9 +604,9 @@ function extractNumClient(text, own = "77275572") {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// TRIGGER 1 — NOUVEL ORDRE  ← MOTEUR PRINCIPAL DE CONFIRMATION
+// TRIGGER 1a — NOUVEL ORDRE DÉPÔT
 //
-//  FLOW PRIMAIRE :
+//  FLOW :
 //  1. waafi_notifications arrive en premier (user a payé)
 //  2. User soumet l'ordre avec le Transfer ID
 //  3. Ce trigger cherche la notif Waafi correspondante
@@ -615,7 +615,7 @@ function extractNumClient(text, own = "77275572") {
 //  ANTI-FRAUDE : si Transfer ID introuvable dans waafi_notifications
 //  → le paiement n'existe pas → rejet immédiat
 // ══════════════════════════════════════════════════════════════════
-exports.onNouvelOrdre = onDocumentCreated(
+exports.onNouvelDepot = onDocumentCreated(
   {
     document: "orders/{docId}", region: REGION,
     secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_SECRET, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
@@ -623,46 +623,36 @@ exports.onNouvelOrdre = onDocumentCreated(
     timeoutSeconds: 60,
   },
   async (event) => {
-    const tx         = event.data.data();
+    const tx      = event.data.data();
+    if (tx.type !== "Dépôt") return;
+
     const docId      = event.params.docId;
     const ordreId    = tx.orderId || docId;
     const transferId = (tx.waafitranfertID || tx.hash || "").trim();
-    const isDepot    = tx.type === "Dépôt";
     const phone      = (tx.numeroPayment || tx.waafiNumber || "").trim();
     const token      = TELEGRAM_TOKEN.value();
     const adminId    = TELEGRAM_ADMIN_ID.value();
 
-    logAudit("nouvel_ordre", { ordreId, type: tx.type, montant: tx.montant, phone });
+    logAudit("nouvel_depot", { ordreId, montant: tx.montant, phone });
 
-    // ── WhatsApp 1/3 — accusé de réception immédiat ──
+    // ── WhatsApp — accusé de réception immédiat ──
     if (tx.whatsapp) {
       const montantStr = Number(tx.montant || 0).toLocaleString();
-      const receiptMsg = isDepot
-        ? `🧾 *Kaffi-Pay — Ordre reçu* ✅\n\n` +
-          `Votre ordre *#${ordreId}* a bien été soumis.\n\n` +
-          `📥 *Dépôt 1xBet*\n` +
-          `Montant : *${montantStr} DJF*\n` +
-          `ID 1xBet : ${tx.userId1xBet || tx.id1x || "—"}\n` +
-          `Waafi Transfer ID : ${tx.waafitranfertID || tx.hash || "—"}\n` +
-          `N° expéditeur : ${tx.numeroPayment || "—"}\n\n` +
-          `Statut : ⏳ *En attente*\n\n` +
-          `Vous recevrez une notification dès que votre paiement sera validé.\n` +
-          `📲 Suivi : kaffi-pay.com/#suivi-${ordreId}`
-        : `🧾 *Kaffi-Pay — Ordre reçu* ✅\n\n` +
-          `Votre demande de retrait *#${ordreId}* a bien été soumise.\n\n` +
-          `📤 *Retrait 1xBet*\n` +
-          `Montant : *${montantStr} DJF*\n` +
-          `Code retrait : ${tx.withdrawalCode || tx.code || "—"}\n` +
-          `Numéro Waafi : ${tx.waafiNumber || tx.tel || "—"}\n\n` +
-          `Statut : ⏳ *En attente*\n\n` +
-          `Vous recevrez une notification dès validation.\n` +
-          `📲 Suivi : kaffi-pay.com/#suivi-${ordreId}`;
-      await sendWhatsApp(tx.whatsapp, receiptMsg);
+      await sendWhatsApp(tx.whatsapp,
+        `🧾 *Kaffi-Pay — Ordre reçu* ✅\n\n` +
+        `Votre ordre *#${ordreId}* a bien été soumis.\n\n` +
+        `📥 *Dépôt 1xBet*\n` +
+        `Montant : *${montantStr} DJF*\n` +
+        `ID 1xBet : ${tx.userId1xBet || tx.id1x || "—"}\n` +
+        `Waafi Transfer ID : ${tx.waafitranfertID || tx.hash || "—"}\n` +
+        `N° expéditeur : ${tx.numeroPayment || "—"}\n\n` +
+        `Statut : ⏳ *En attente*\n\n` +
+        `Vous recevrez une notification dès que votre paiement sera validé.\n` +
+        `📲 Suivi : kaffi-pay.com/#suivi-${ordreId}`
+      );
     }
 
-    // ── FRAUDE 1 : Transfer ID déjà utilisé pour un autre ordre ─
-    // Vérifie 3 sources : ordre confirmé, notif matchée, notif traitée.
-    // Si trouvé → tentative de réutilisation d'un paiement = FRAUDE.
+    // ── FRAUDE : Transfer ID déjà utilisé pour un autre ordre ──
     if (transferId) {
       const [confirmeSnap, ordreTraiteSnap] = await Promise.all([
         db.collection("orders")
@@ -676,13 +666,9 @@ exports.onNouvelOrdre = onDocumentCreated(
       const srcMatch    = ordreTraiteSnap.docs[0];
 
       if (srcConfirme || srcMatch) {
-        // Récupérer la référence de l'ordre d'origine
         let ancienRef = "inconnu";
-        if (srcConfirme) {
-          ancienRef = srcConfirme.data().orderId || srcConfirme.id;
-        } else if (srcMatch) {
-          ancienRef = srcMatch.data().ordreId || srcMatch.id;
-        }
+        if (srcConfirme) ancienRef = srcConfirme.data().orderId || srcConfirme.id;
+        else if (srcMatch) ancienRef = srcMatch.data().ordreId || srcMatch.id;
 
         await db.collection("orders").doc(docId).update({
           status: "Paiement Non Reçu",
@@ -692,7 +678,6 @@ exports.onNouvelOrdre = onDocumentCreated(
           fraudTID: transferId,
           fraudAncienOrdre: ancienRef,
         });
-
         await sendTelegram(token, adminId,
           `🚨 <b>TENTATIVE DE FRAUDE — Paiement réutilisé</b>\n\n` +
           `Nouvel ordre : <code>#${ordreId}</code>\n` +
@@ -700,13 +685,12 @@ exports.onNouvelOrdre = onDocumentCreated(
           `Ce TID a déjà été utilisé pour l'ordre <code>#${ancienRef}</code>.\n\n` +
           `⛔ Ordre <b>rejeté automatiquement</b>.`
         );
-
         logAudit("fraude_tid_reutilise", { ordreId, transferId, ancienRef, phone });
         return;
       }
     }
 
-    // ── DOUBLON ──────────────────────────────────────────────────
+    // ── DOUBLON ──
     const doublon = await detecterDoublon(phone, Number(tx.montant), tx.type, docId);
     if (doublon) {
       await db.collection("orders").doc(docId).update({
@@ -719,106 +703,130 @@ exports.onNouvelOrdre = onDocumentCreated(
       );
     }
 
-    // ════════════════════════════════════════════════════════════
-    //  DÉPÔT — RECHERCHE DE LA NOTIFICATION WAAFI CORRESPONDANTE
-    //  C'est le cœur du système : l'user a payé en premier,
-    //  le SMS est déjà dans waafi_notifications (status: "prêt")
-    // ════════════════════════════════════════════════════════════
-    if (isDepot) {
-      if (!transferId) {
-        await db.collection("orders").doc(docId).update({
-          status: "Paiement Non Reçu",
-          flagRaison: "Transfer ID manquant",
-          flaggedAt: FieldValue.serverTimestamp(),
-        });
-        await sendTelegram(token, adminId,
-          `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`
-        );
-        return;
-      }
-
-      // Recherche 1 : par Transfer ID exact (pas de filtre status — status = état à l'arrivée)
-      // On vérifie ensuite que ce TID n'est pas déjà dans ordre_traite (déjà utilisé)
-      let waafiDoc = null;
-      const [byTID, dejaTraiteSnap] = await Promise.all([
-        db.collection("waafi_notifications")
-          .where("transferId", "==", transferId).limit(1).get(),
-        db.collection("ordre_traite")
-          .where("transferId", "==", transferId).limit(1).get(),
-      ]);
-
-      if (!byTID.empty && dejaTraiteSnap.empty) {
-        waafiDoc = byTID.docs[0];
-      }
-
-      // Recherche 2 (fallback) : par numéro + montant ±5% si TID pas encore parsé
-      if (!waafiDoc && phone) {
-        const montantOrdre = Number(tx.montant || 0);
-        const tolerance    = Math.max(5, montantOrdre * 0.05);
-        const byPhone = await db.collection("waafi_notifications")
-          .where("numClient", "==", phone)
-          .limit(10).get();
-
-        for (const d of byPhone.docs) {
-          const n = d.data();
-          if (!n.montant || Math.abs(montantOrdre - n.montant) > tolerance) continue;
-          const dejaTID = n.transferId
-            ? (await db.collection("ordre_traite").where("transferId", "==", n.transferId).limit(1).get()).empty
-            : true;
-          if (dejaTID) { waafiDoc = d; break; }
-        }
-      }
-
-      if (waafiDoc) {
-        // Notation trouvée → vérifier les 3 critères
-        const ordreSnap  = await db.collection("orders").doc(docId).get();
-        const { score, mismatches, decision } = scorerCorrespondance(tx, waafiDoc.data());
-
-        if (decision === "confirmer") {
-          // 3/3 — confirmation automatique
-          await confirmerDepot(ordreSnap, waafiDoc, token, adminId);
-          return;
-        }
-
-        // score < 3 — rejet avec raison spécifique par champ
-        const raison = mismatchToRaison(mismatches);
-        await db.collection("orders").doc(docId).update({
-          status: "Paiement Non Reçu",
-          flagRaison: raison,
-          flaggedAt: FieldValue.serverTimestamp(),
-        });
-        await sendTelegram(token, adminId,
-          `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\n\n` +
-          `Ordre <code>#${ordreId}</code>\n${mismatches.map((m) => `• ${m}`).join("\n")}`
-        );
-        logAudit("depot_rejete_mauvaise_correspondance", { ordreId, score, mismatches, raison });
-        return;
-      }
-
-      // Aucune notification trouvée → Transfer ID invalide/frauduleux
+    if (!transferId) {
       await db.collection("orders").doc(docId).update({
         status: "Paiement Non Reçu",
-        flagRaison: `Paiement non reçu — Transfer ID ${transferId} introuvable dans notre système`,
+        flagRaison: "Transfer ID manquant",
         flaggedAt: FieldValue.serverTimestamp(),
       });
       await sendTelegram(token, adminId,
-        `❌ <b>Dépôt rejeté — Paiement introuvable</b>\n\n` +
-        `Ordre: <code>#${ordreId}</code>\n` +
-        `Transfer-ID: <code>${transferId}</code>\n` +
-        `Montant: ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
-        `<i>Aucune notification Waafi correspondante trouvée.</i>`
+        `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`
       );
-      logAudit("depot_rejete_tId_introuvable", { ordreId, transferId });
       return;
     }
 
-    // ════════════════════════════════════════════════════════════
-    //  RETRAIT — MobCash Payout → vérif montant → USSD admin → Terminer
-    //  Pas d'analyse fraude : on se fie au résultat MobCash uniquement.
-    // ════════════════════════════════════════════════════════════
+    // Recherche 1 : par Transfer ID exact
+    let waafiDoc = null;
+    const [byTID, dejaTraiteSnap] = await Promise.all([
+      db.collection("waafi_notifications")
+        .where("transferId", "==", transferId).limit(1).get(),
+      db.collection("ordre_traite")
+        .where("transferId", "==", transferId).limit(1).get(),
+    ]);
+    if (!byTID.empty && dejaTraiteSnap.empty) waafiDoc = byTID.docs[0];
+
+    // Recherche 2 (fallback) : par numéro + montant ±5%
+    if (!waafiDoc && phone) {
+      const montantOrdre = Number(tx.montant || 0);
+      const tolerance    = Math.max(5, montantOrdre * 0.05);
+      const byPhone = await db.collection("waafi_notifications")
+        .where("numClient", "==", phone).limit(10).get();
+      for (const d of byPhone.docs) {
+        const n = d.data();
+        if (!n.montant || Math.abs(montantOrdre - n.montant) > tolerance) continue;
+        const dejaTID = n.transferId
+          ? (await db.collection("ordre_traite").where("transferId", "==", n.transferId).limit(1).get()).empty
+          : true;
+        if (dejaTID) { waafiDoc = d; break; }
+      }
+    }
+
+    if (waafiDoc) {
+      const ordreSnap = await db.collection("orders").doc(docId).get();
+      const { score, mismatches, decision } = scorerCorrespondance(tx, waafiDoc.data());
+
+      if (decision === "confirmer") {
+        await confirmerDepot(ordreSnap, waafiDoc, token, adminId);
+        return;
+      }
+
+      const raison = mismatchToRaison(mismatches);
+      await db.collection("orders").doc(docId).update({
+        status: "Paiement Non Reçu",
+        flagRaison: raison,
+        flaggedAt: FieldValue.serverTimestamp(),
+      });
+      await sendTelegram(token, adminId,
+        `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\n\n` +
+        `Ordre <code>#${ordreId}</code>\n${mismatches.map((m) => `• ${m}`).join("\n")}`
+      );
+      logAudit("depot_rejete_mauvaise_correspondance", { ordreId, score, mismatches, raison });
+      return;
+    }
+
+    // Aucune notification trouvée → Transfer ID invalide/frauduleux
+    await db.collection("orders").doc(docId).update({
+      status: "Paiement Non Reçu",
+      flagRaison: `Paiement non reçu — Transfer ID ${transferId} introuvable dans notre système`,
+      flaggedAt: FieldValue.serverTimestamp(),
+    });
+    await sendTelegram(token, adminId,
+      `❌ <b>Dépôt rejeté — Paiement introuvable</b>\n\n` +
+      `Ordre: <code>#${ordreId}</code>\n` +
+      `Transfer-ID: <code>${transferId}</code>\n` +
+      `Montant: ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
+      `<i>Aucune notification Waafi correspondante trouvée.</i>`
+    );
+    logAudit("depot_rejete_tId_introuvable", { ordreId, transferId });
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// TRIGGER 1b — NOUVEL ORDRE RETRAIT
+//
+//  FLOW :
+//  1. Client soumet demande de retrait (code + numéro Waafi)
+//  2. MobCash Payout retire le montant du compte 1xBet
+//  3. Vérification montant MobCash = montant soumis
+//  4. Admin reçoit USSD Waafi + bouton Terminer
+//  5. Admin paie Waafi et clique Terminer → "Crédité avec succès"
+// ══════════════════════════════════════════════════════════════════
+exports.onNouvelRetrait = onDocumentCreated(
+  {
+    document: "orders/{docId}", region: REGION,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+              MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
+    timeoutSeconds: 60,
+  },
+  async (event) => {
+    const tx = event.data.data();
+    if (tx.type !== "Retrait") return;
+
+    const docId      = event.params.docId;
+    const ordreId    = tx.orderId || docId;
     const tidRetrait = (tx.withdrawalCode || "").trim();
     const montantVal = Number(tx.montant || 0);
     const waafiNum   = (tx.waafiNumber || tx.tel || "").replace(/\s/g, "");
+    const token      = TELEGRAM_TOKEN.value();
+    const adminId    = TELEGRAM_ADMIN_ID.value();
+
+    logAudit("nouvel_retrait", { ordreId, montant: montantVal, waafiNum });
+
+    // ── WhatsApp — accusé de réception immédiat ──
+    if (tx.whatsapp) {
+      const montantStr = montantVal.toLocaleString();
+      await sendWhatsApp(tx.whatsapp,
+        `🧾 *Kaffi-Pay — Ordre reçu* ✅\n\n` +
+        `Votre demande de retrait *#${ordreId}* a bien été soumise.\n\n` +
+        `📤 *Retrait 1xBet*\n` +
+        `Montant : *${montantStr} DJF*\n` +
+        `Code retrait : ${tx.withdrawalCode || tx.code || "—"}\n` +
+        `Numéro Waafi : ${tx.waafiNumber || tx.tel || "—"}\n\n` +
+        `Statut : ⏳ *En attente*\n\n` +
+        `Vous recevrez une notification dès validation.\n` +
+        `📲 Suivi : kaffi-pay.com/#suivi-${ordreId}`
+      );
+    }
 
     if (!tidRetrait) {
       await sendTelegram(token, adminId,
@@ -832,17 +840,14 @@ exports.onNouvelOrdre = onDocumentCreated(
     }
 
     // Pour le Payout MobCash, on utilise notre identifiant opérateur (MOBCASH_LOGIN).
-    // Le code retrait identifie déjà la transaction côté 1xBet.
     const loginId = MOBCASH_LOGIN.value() || "0";
 
     try {
-      // ── Appel MobCash Payout — retourne le montant réel traité ──
-      const mobcashData  = await callMobcash("Retrait", loginId, montantVal, tidRetrait);
+      const mobcashData    = await callMobcash("Retrait", loginId, montantVal, tidRetrait);
       const montantMobcash = Number(
         mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
       );
 
-      // ── Vérification montant : MobCash vs client ──
       if (montantMobcash !== montantVal) {
         await db.collection("orders").doc(docId).update({
           status: "Paiement Non Reçu",
@@ -869,7 +874,6 @@ exports.onNouvelOrdre = onDocumentCreated(
         return;
       }
 
-      // ── Montants identiques → stocker et préparer USSD ──
       await db.collection("ordre_traite").add({
         ordreId, type: "Retrait",
         montant: montantMobcash, withdrawalCode: tidRetrait,
@@ -886,7 +890,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         montantMobcash,
       });
 
-      // ── WhatsApp 2/3 — retrait 1xBet validé, envoi Waafi en cours ──
+      // ── WhatsApp — retrait 1xBet validé, envoi Waafi en cours ──
       if (tx.whatsapp) {
         await sendWhatsApp(tx.whatsapp,
           `⏳ *Kaffi-Pay — Retrait 1xBet validé* ✅\n\n` +
@@ -897,7 +901,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         );
       }
 
-      // ── Telegram admin — USSD avec montant MobCash + bouton Terminer ──
+      // ── Telegram admin — USSD + bouton Terminer ──
       const ussd    = `*200*${waafiNum}*${montantMobcash}#`;
       const ussdUrl = `tel:${ussd.replace(/#/g, "%23")}`;
       await sendTelegramKeyboard(token, adminId,
