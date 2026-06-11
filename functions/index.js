@@ -194,7 +194,7 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
 
   const body = isDepot
     ? { cashdeskid: Number(cashdeskId), lng, summa: montant, confirm }
-    : { cashdeskId: Number(cashdeskId), lng, code: String(withdrawalCode || ""), confirm };
+    : { cashdeskid: Number(cashdeskId), lng, code: String(withdrawalCode || ""), confirm };
 
   const resp = await fetch(`${MOBCASH_BASE}/Deposit/${userId}/${endpoint}`, {
     method: "POST",
@@ -1013,19 +1013,32 @@ exports.onOrdreUpdated = onDocumentUpdated(
     const wbAlreadyOk = after.webhookStatus === "ok";
     if (wbAlreadyOk) return;
 
-    const id1xbet        = after.userId1xBet || after.id1x || "";
     const montantVal     = Number(after.montant || 0);
     const orderType      = after.type || "Dépôt";
     const withdrawalCode = after.withdrawalCode || "";
+    const isRetrait      = orderType === "Retrait";
 
-    if (!id1xbet) {
-      await sendTelegram(token, adminId,
-        `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\nCrédit impossible, vérifiez l'ordre.`);
-      return;
+    let mobcashUserId;
+    if (isRetrait) {
+      // Retrait : utilise l'identifiant opérateur — le code retrait identifie la transaction
+      mobcashUserId = MOBCASH_LOGIN.value() || "0";
+      if (!withdrawalCode) {
+        await sendTelegram(token, adminId,
+          `⚠️ <b>Code retrait manquant</b> — #${ordreId}\nIntervention manuelle requise.`);
+        return;
+      }
+    } else {
+      // Dépôt : utilise l'ID 1xBet du client
+      mobcashUserId = after.userId1xBet || after.id1x || "";
+      if (!mobcashUserId) {
+        await sendTelegram(token, adminId,
+          `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\nCrédit impossible, vérifiez l'ordre.`);
+        return;
+      }
     }
 
     try {
-      await callMobcash(orderType, id1xbet, montantVal, withdrawalCode);
+      await callMobcash(orderType, mobcashUserId, montantVal, withdrawalCode);
       // Marquer le TID comme crédité dans ordre_traite (Dépôt seulement)
       const tid = after.waafitranfertID || after.hash || "";
       if (tid) {
@@ -1038,7 +1051,7 @@ exports.onOrdreUpdated = onDocumentUpdated(
         webhookStatus: "ok",
         webhookAt: FieldValue.serverTimestamp(),
       });
-      logAudit("mobcash_ok", { ordreId, id1xbet, type: orderType });
+      logAudit("mobcash_ok", { ordreId, userId: mobcashUserId, type: orderType });
     } catch (e) {
       await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
       await sendTelegram(token, adminId,
