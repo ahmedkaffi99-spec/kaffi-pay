@@ -640,6 +640,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
     <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>📨</span>Notifications<div class="notif-dot" id="notif-bell-dot"></div></button>
+    <button class="nav-tab" onclick="showPage('testapi')" id="ntab-testapi"><span>🧪</span>Test API</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -689,6 +690,32 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <input type="text" placeholder="Référence, ID, numéro..." id="search-input" oninput="searchTx(this.value)">
     </div>
     <div class="tx-list" id="all-tx-list"></div>
+  </div>
+
+  <!-- TEST API -->
+  <div class="page-section" id="page-testapi">
+    <div style="padding:4px 0 16px;font-size:0.75rem;color:var(--muted);">Test direct MobCash API — résultat brut affiché.</div>
+
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;margin-bottom:16px;">
+      <div style="font-weight:700;font-size:0.85rem;color:var(--gold);margin-bottom:12px;">📥 Test Dépôt (Add)</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <input type="text" id="test-depot-userid" placeholder="ID 1xBet du joueur (ex: 123456)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
+        <input type="number" id="test-depot-montant" placeholder="Montant (ex: 100)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
+        <button onclick="testMobcashAPI('depot')" style="background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">▶ Tester Dépôt</button>
+      </div>
+      <pre id="test-depot-result" style="margin-top:12px;background:rgba(0,0,0,0.3);border-radius:8px;padding:10px;font-size:0.7rem;color:#adf;white-space:pre-wrap;word-break:break-all;display:none;"></pre>
+    </div>
+
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;">
+      <div style="font-weight:700;font-size:0.85rem;color:#e91e8c;margin-bottom:12px;">📤 Test Retrait (Payout)</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <input type="text" id="test-retrait-userid" placeholder="ID 1xBet du joueur (ex: 123456)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
+        <input type="text" id="test-retrait-code" placeholder="Code retrait 1xBet (ex: Ab3c)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
+        <input type="number" id="test-retrait-montant" placeholder="Montant (ex: 250)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
+        <button onclick="testMobcashAPI('retrait')" style="background:linear-gradient(135deg,#e91e8c,#c2185b);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">▶ Tester Retrait</button>
+      </div>
+      <pre id="test-retrait-result" style="margin-top:12px;background:rgba(0,0,0,0.3);border-radius:8px;padding:10px;font-size:0.7rem;color:#adf;white-space:pre-wrap;word-break:break-all;display:none;"></pre>
+    </div>
   </div>
 
   <!-- RÉSERVES -->
@@ -1809,6 +1836,31 @@ window.addEventListener('popstate', function(){
     if(valid.indexOf(page) >= 0) showPage(page);
   }
 });
+
+async function testMobcashAPI(type){
+  var pre = document.getElementById('test-'+type+'-result');
+  pre.style.display='block';
+  pre.style.color='#adf';
+  pre.textContent='⏳ Appel en cours...';
+  var userId = document.getElementById('test-'+type+'-userid').value.trim();
+  var montant= Number(document.getElementById('test-'+type+'-montant').value)||0;
+  var code   = type==='retrait'?(document.getElementById('test-retrait-code').value.trim()):'';
+  var ak     = localStorage.getItem('kp_admin_key')||'';
+  var baseUrl= 'https://europe-west1-kaffi-pay.cloudfunctions.net/testMobcash';
+  try{
+    var r=await fetch(baseUrl,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({type,userId,montant,code,_ak:ak})
+    });
+    var data=await r.json();
+    pre.style.color = data.ok ? '#7fff9a' : '#ff7f7f';
+    pre.textContent = JSON.stringify(data, null, 2);
+  }catch(e){
+    pre.style.color='#ff7f7f';
+    pre.textContent='❌ Erreur réseau : '+e.message;
+  }
+}
 
 function showPage(p){
   document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));

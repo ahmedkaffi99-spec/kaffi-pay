@@ -1234,6 +1234,36 @@ exports.healthCheck = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════════
+// HTTP — TEST MOBCASH (admin only)
+// ══════════════════════════════════════════════════════════════════
+exports.testMobcash = onRequest(
+  { region: REGION, invoker: "public",
+    secrets: [MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID] },
+  async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+
+    const body   = req.body || {};
+    const ak     = body._ak || req.query._ak || "";
+    if (ak !== "kp2026_9f3aXmQ7") { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
+
+    const type   = (body.type || "depot").toLowerCase();
+    const userId = (body.userId || "0").trim();
+    const montant= Number(body.montant || 0);
+    const code   = (body.code || "").trim();
+
+    try {
+      const data = type === "retrait"
+        ? await callMobcash("Retrait", userId, montant, code)
+        : await callMobcash("Dépôt",   userId, montant, "");
+      res.json({ ok: true, data });
+    } catch (e) {
+      res.json({ ok: false, error: e.message });
+    }
+  }
+);
+
 // HTTP — WHATSAPP RECAP (appelé par le bouton "Recevoir les détails")
 // Envoie automatiquement via UltraMsg — pas de wa.me manuel.
 // ══════════════════════════════════════════════════════════════════
