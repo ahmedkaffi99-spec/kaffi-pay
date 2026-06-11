@@ -681,20 +681,21 @@ exports.onNouvelDepot = onDocumentCreated(
       return;
     }
 
-    // Aucune notification trouvée → Transfer ID invalide/frauduleux
-    await db.collection("depot_orders").doc(docId).update({
-      status: "Paiement Non Reçu",
-      flagRaison: `Paiement non reçu — Transfer ID ${transferId} introuvable dans notre système`,
-      flaggedAt: FieldValue.serverTimestamp(),
-    });
-    await sendTelegram(token, adminId,
-      `❌ <b>Dépôt rejeté — Paiement introuvable</b>\n\n` +
-      `Ordre: <code>#${ordreId}</code>\n` +
-      `Transfer-ID: <code>${transferId}</code>\n` +
-      `Montant: ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
-      `<i>Aucune notification Waafi correspondante trouvée.</i>`
-    );
-    logAudit("depot_rejete_tId_introuvable", { ordreId, transferId });
+    // Aucune notification trouvée → ordre reste "En attente" (SMS peut arriver dans les prochaines minutes)
+    // Le scheduler ordresBloques (toutes les 5 min) et smsWebhook (reverse match) prendront le relais.
+    // Alerte admin uniquement si ordre > 10 min sans SMS.
+    const ageMin = tx.ts ? Math.round((Date.now() - tx.ts) / 60000) : 0;
+    if (ageMin >= 10) {
+      await sendTelegram(token, adminId,
+        `⏳ <b>Dépôt en attente — SMS introuvable</b>\n\n` +
+        `Ordre: <code>#${ordreId}</code>\n` +
+        `Transfer-ID: <code>${transferId}</code>\n` +
+        `Montant: ${Number(tx.montant || 0).toLocaleString()} DJF\n` +
+        `Âge: ${ageMin} min\n\n` +
+        `<i>Notification Waafi non encore reçue. Le scheduler relancera automatiquement.</i>`
+      );
+    }
+    logAudit("depot_sms_introuvable_attente", { ordreId, transferId, ageMin });
   }
 );
 
