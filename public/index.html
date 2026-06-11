@@ -1436,8 +1436,8 @@ function setLoading(type,on){
 function updateStats(){
   const t=getTxs();
   const dep=t.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès');
-  const ret=t.filter(x=>x.type==='Retrait'&&x.status==='Crédité avec succès');
-  const pending=t.filter(x=>x.status==='En attente'||x.status==='Paiement Reçu');
+  const ret=t.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès'));
+  const pending=t.filter(x=>x.status==='En attente'||x.status==='Paiement Reçu'||x.status==='Code Validé');
   document.getElementById('stat-depot').textContent=dep.reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
   document.getElementById('stat-depot-sub').textContent=dep.length+' crédités';
   document.getElementById('stat-retrait').textContent=ret.reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
@@ -1447,14 +1447,14 @@ function updateStats(){
   document.getElementById('stat-pending-sub').textContent=fraudes.length?'à traiter · '+fraudes.length+' fraudes':'à traiter';
   const today=new Date().toLocaleDateString('fr-FR');
   document.getElementById('stat-today').textContent=
-    t.filter(x=>x.date&&x.date.startsWith(today)&&x.status==='Crédité avec succès').reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
+    t.filter(x=>x.date&&x.date.startsWith(today)&&(x.status==='Crédité avec succès'||x.status==='Payé')).reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
 }
 
 // ═══════════════════════════════════════════════════
 // ADMIN — RÉSERVES
 // ═══════════════════════════════════════════════════
 function calcAndUpdateReserves(){
-  const txs=getTxs().filter(x=>x.status==='Crédité avec succès');
+  const txs=getTxs().filter(x=>x.status==='Crédité avec succès'||x.status==='Payé');
   // Dépôt 1xBet : client envoie Waafi → reçoit 1xBet
   //   → Réserve 1xBet DIMINUE (on donne du 1xBet au client)
   //   → Réserve Waafi AUGMENTE (on reçoit du Waafi du client)
@@ -1552,7 +1552,7 @@ function renderRecentTx(){
 function renderAllTx(f,s){
   let t=getTxs();
   if(f==='attente') t=t.filter(x=>x.status==='En attente');
-  else if(f==='retrait-pret') t=t.filter(x=>x.type==='Retrait'&&x.status==='Paiement Reçu'&&(x.webhookStatus==='ok'||x.webhookStatus==='ok_retry_rt'));
+  else if(f==='retrait-pret') t=t.filter(x=>x.type==='Retrait'&&x.status==='Code Validé');
   else if(f==='fraude') t=t.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
   else if(f!=='tous') t=t.filter(x=>x.type===f||x.status===f);
   if(s) { var sl=s.toLowerCase(); t=t.filter(x=>
@@ -1574,10 +1574,12 @@ function renderAllTx(f,s){
 
 function friendlyStatus(t){
   const d=t.type==='Dépôt';
-  const isRetraitPret=!d && t.status==='Paiement Reçu' && (t.webhookStatus==='ok'||t.webhookStatus==='ok_retry_rt');
+  const isRetraitPret=!d && t.status==='Code Validé';
+  if(!d && t.status==='Payé') return '✅ Waafi envoyé';
   if(!d && t.status==='Crédité avec succès') return '✅ Waafi envoyé';
+  if(!d && t.status==='Code Invalide') return '❌ Code invalide';
   if(!d && t.status==='Paiement Non Reçu') return '❌ Retrait échoué';
-  if(isRetraitPret) return '⏳ 1xBet retiré — Waafi en cours';
+  if(isRetraitPret) return '⏳ Code validé — Paiement en cours';
   if(t.status==='Paiement Reçu' && d && (t.webhookStatus==='echec')) return '⚠️ Paiement reçu — crédit échoué';
   if(t.status==='Paiement Reçu' && d) return '💳 Paiement reçu — crédit en cours';
   if(t.status==='Crédité avec succès') return '✅ Crédité avec succès';
@@ -1588,8 +1590,8 @@ function friendlyStatus(t){
 function txHTML(t,showActions){
   const d=t.type==='Dépôt';
   const isFraude=!!(t.fraudType||(t.flagRaison&&t.flagRaison.toUpperCase().includes('FRAUDE')));
-  const isRetraitPret=!d && t.status==='Paiement Reçu' && (t.webhookStatus==='ok'||t.webhookStatus==='ok_retry_rt');
-  const sc=t.status==='Crédité avec succès'?'confirmed':(t.status==='Paiement Non Reçu'||t.status==='Annulé')?'rejected':'pending';
+  const isRetraitPret=!d && t.status==='Code Validé';
+  const sc=(t.status==='Crédité avec succès'||t.status==='Payé')?'confirmed':(t.status==='Paiement Non Reçu'||t.status==='Annulé'||t.status==='Code Invalide')?'rejected':'pending';
   const statusLabel=friendlyStatus(t);
   const details=d
     ?`<span>ID 1xBet: ${t.userId1xBet||t.id1x||'—'}</span><span>Transfer ID: ${t.waafitranfertID||t.hash||'—'}</span>`
@@ -1700,7 +1702,7 @@ function openOrderDetail(ref){
   // Actions
   var actDiv=document.getElementById('odm-actions');
   currentOdmRef=tx.ref;
-  var isRetraitEnCours = !isDepot && tx.status==='Paiement Reçu' && tx.webhookStatus==='ok';
+  var isRetraitEnCours = !isDepot && tx.status==='Code Validé';
   if(isRetraitEnCours){
     var waafiNum=(tx.waafiNumber||tx.tel||'').replace(/\s/g,'');
     var montantNum=Number(tx.montant||0);
@@ -1736,7 +1738,7 @@ async function terminerRetrait(ref){
   try{
     var tx=getTxs().find(function(t){ return t.ref===ref; });
     await updateTxFirebase(ref,{
-      status:'Crédité avec succès',
+      status:'Payé',
       finalisePar:'admin_web',
       finaliseAt:new Date()
     });
@@ -1885,7 +1887,7 @@ function exportPDF(){
   const t=getTxs();
   if(!t.length){showToast('⚠️ Aucune donnée','error');return;}
   const pending=t.filter(x=>x.status==='En attente').length;
-  const confirmed=t.filter(x=>x.status==='Crédité avec succès').length;
+  const confirmed=t.filter(x=>x.status==='Crédité avec succès'||x.status==='Payé').length;
   let h=`<html><head><title>Kaffi-Pay — Rapport</title>
   <style>body{font-family:sans-serif;padding:20px;color:#111;}h1{color:#07101e;border-bottom:3px solid #FFD700;padding-bottom:8px;}
   .summary{display:flex;gap:16px;margin:12px 0 20px;}.summary div{padding:10px 16px;border-radius:8px;font-size:13px;}
@@ -1949,7 +1951,9 @@ function showSuivi(ref, txData){
     }
     var isFinal = fresh.status === 'Paiement Non Reçu'
                || fresh.status === 'Annulé'
-               || fresh.status === 'Crédité avec succès';
+               || fresh.status === 'Crédité avec succès'
+               || fresh.status === 'Payé'
+               || fresh.status === 'Code Invalide';
     if(isFinal && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   }
   var _qDepot   = window.fsQuery(window.fsCollection(window.db,'depot_orders'),   window.fsWhere('orderId','==',ref), window.fsLimit(1));
@@ -2047,6 +2051,32 @@ function renderSuivi(){
     sdesc.textContent= 'Votre ordre a été annulé. Vous pouvez soumettre un nouvel ordre à tout moment.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,#555,#888)';
     if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+  } else if(status === 'Code Validé'){
+    card.style.borderColor = 'rgba(255,170,0,0.25)';
+    card.style.background  = 'linear-gradient(160deg,rgba(255,170,0,0.06),rgba(7,16,30,0.8))';
+    icon.textContent = '⏳';
+    stxt.textContent = 'Code validé — Paiement Waafi en cours';
+    stxt.style.color = 'var(--warning)';
+    sdesc.textContent= 'Votre code de retrait est valide. Notre équipe envoie le paiement sur votre numéro Waafi.';
+    prog.style.width = '70%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
+  } else if(status === 'Code Invalide'){
+    card.style.borderColor = 'rgba(255,64,96,0.2)';
+    card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
+    icon.textContent = '❌';
+    stxt.textContent = 'Code invalide';
+    stxt.style.color = 'var(--error)';
+    sdesc.textContent= tx.flagRaison ? tx.flagRaison + ' Contactez le support ou soumettez un nouvel ordre.' : 'Votre code de retrait est invalide. Contactez le support.';
+    prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+  } else if(status === 'Payé'){
+    card.style.borderColor = 'rgba(0,212,160,0.3)';
+    card.style.background  = 'linear-gradient(160deg,rgba(0,212,160,0.08),rgba(7,16,30,0.8))';
+    icon.textContent = '🎉';
+    stxt.textContent = 'Paiement envoyé ✅';
+    stxt.style.color = 'var(--success)';
+    sdesc.textContent= 'Votre paiement a été envoyé sur votre numéro Waafi. Vérifiez votre solde Waafi.';
+    prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   }
 
   // ── DÉTAILS ──
@@ -2082,26 +2112,14 @@ function renderSuivi(){
   }
 
   // ── TIMELINE 3 ÉTAPES ──
-  var isCredite    = status === 'Crédité avec succès';
-  var isRejete     = status === 'Paiement Non Reçu';
+  var isCredite      = status === 'Crédité avec succès';
+  var isRejete       = status === 'Paiement Non Reçu';
   var isPaiementRecu = status === 'Paiement Reçu';
-  var isPending    = status === 'En attente';
-  var isAnnule     = status === 'Annulé';
-
-  var s1done = !isPending && !isAnnule;
-  var s1act  = isPending;
-
-  var s2done = isCredite || isPaiementRecu;
-  var s2act  = false;
-  var s2fail = isRejete;
-  var s2title= isRejete ? 'Paiement non reçu' : 'Paiement reçu';
-  var s2desc = isRejete ? (tx.flagRaison || 'Paiement non reçu') : 'Paiement reçu';
-
-  var s3done  = isCredite;
-  var s3act   = isPaiementRecu && !wbFail;
-  var s3fail  = isPaiementRecu && wbFail;
-  var s3title = s3fail ? 'Crédit échoué' : (isDepot ? 'Crédité avec succès' : 'Retrait effectué');
-  var s3desc  = s3fail ? 'Contactez le support' : s3act ? 'Crédit en cours...' : (isDepot ? 'Votre ID 1xBet a été crédité' : 'Argent envoyé sur votre Waafi');
+  var isPending      = status === 'En attente';
+  var isAnnule       = status === 'Annulé';
+  var isCodeValide   = status === 'Code Validé';
+  var isCodeInvalide = status === 'Code Invalide';
+  var isPaye         = status === 'Payé';
 
   function tlStep(done, active, fail, title, desc){
     var em  = fail ? '❌' : done ? '✅' : active ? '⏳' : '○';
@@ -2120,7 +2138,36 @@ function renderSuivi(){
   if(isAnnule){
     tlHtml = tlStep(true,false,false,'Ordre soumis','Ordre enregistré')
            + tlStep(false,false,true,'Annulé','Ordre annulé par le client');
+  } else if(!isDepot){
+    // Retrait timeline: En attente → Code Validé | Code Invalide → Payé
+    var r1done = !isPending;
+    var r1act  = isPending;
+    var r2done = isPaye;
+    var r2act  = isCodeValide;
+    var r2fail = isCodeInvalide;
+    var r2title= isCodeInvalide ? 'Code invalide' : 'Code validé';
+    var r2desc = isCodeInvalide ? (tx.flagRaison || 'Code invalide') : 'Code de retrait vérifié sur 1xBet';
+    var r3done = isPaye;
+    var r3act  = false;
+    var r3title= 'Paiement Waafi';
+    var r3desc = isPaye ? 'Paiement envoyé sur votre Waafi' : 'En attente de validation admin';
+    tlHtml = tlStep(r1done, r1act, false, 'En attente', 'Ordre enregistré, vérification en cours')
+           + tlStep(r2done, r2act, r2fail, r2title, r2desc)
+           + tlStep(r3done, r3act, false, r3title, r3desc);
   } else {
+    // Dépôt timeline
+    var s1done = !isPending;
+    var s1act  = isPending;
+    var s2done = isCredite || isPaiementRecu;
+    var s2act  = false;
+    var s2fail = isRejete;
+    var s2title= isRejete ? 'Paiement non reçu' : 'Paiement reçu';
+    var s2desc = isRejete ? (tx.flagRaison || 'Paiement non reçu') : 'Paiement reçu';
+    var s3done  = isCredite;
+    var s3act   = isPaiementRecu && !wbFail;
+    var s3fail  = isPaiementRecu && wbFail;
+    var s3title = s3fail ? 'Crédit échoué' : 'Crédité avec succès';
+    var s3desc  = s3fail ? 'Contactez le support' : s3act ? 'Crédit en cours...' : 'Votre ID 1xBet a été crédité';
     tlHtml = tlStep(s1done, s1act,  false,  'En attente',  'Ordre enregistré, traitement en cours')
            + tlStep(s2done, s2act,  s2fail, s2title, s2desc)
            + tlStep(s3done, s3act,  s3fail, s3title, s3desc);
@@ -2779,7 +2826,7 @@ function initMainChart(p){
     const dl=d.toLocaleDateString('fr-FR');
     lb.push(d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}));
     dd.push(txs.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès'&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
-    rd.push(txs.filter(x=>x.type==='Retrait'&&x.status==='Crédité avec succès'&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
+    rd.push(txs.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès')&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
   }
   if(mChart)mChart.destroy();
   mChart=new Chart(ctx,{
