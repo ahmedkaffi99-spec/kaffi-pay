@@ -1534,7 +1534,8 @@ exports.supportClient = onRequest(
 
       // ── Numéro d'ordre détecté → chercher dans Firestore ──
       if (ordreId) {
-        const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get();
+        const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get()
+          .catch(() => db.collection("orders").where("orderId", "==", ordreId).limit(1).get());
         if (snap.empty) {
           await send(
             `❓ Ordre <b>#${ordreId}</b> introuvable.\n\n` +

@@ -1080,19 +1080,9 @@ var _agentsCache = [];
 var _reservesCache = {r1x:35000,rW:22000,r1x_base:35000,rW_base:22000};
 var _unsubTxs = null;
 
-function getTxs(){ 
+function getTxs(){
   return _txsCache.filter(function(t){
-    if(!t.type || !t.montant) return false;
-    if(t.type==='Dépôt'){
-      var id = t.userId1xBet||t.id1x||'';
-      var hash = t.waafitranfertID||t.hash||'';
-      return id && id!=='—' && id!=='-' && hash && hash!=='—' && hash!=='-';
-    }
-    if(t.type==='Retrait'||t.type==='Retrait 1xBet'){
-      var code = t.withdrawalCode||t.code||'';
-      var tel = t.waafiNumber||t.tel||'';
-      return code && code!=='—' && code!=='-' && tel && tel!=='—' && tel!=='-';
-    }
+    if(!t.type && !t.montant && !t.status && !t.orderId) return false;
     return true;
   });
 }
@@ -1888,11 +1878,7 @@ function showSuivi(ref, txData){
       var statusChanged  = fresh.status !== currentSuiviTx.status;
       var webhookChanged = (fresh.webhookStatus||'') !== (currentSuiviTx.webhookStatus||'');
       if(statusChanged || webhookChanged){
-        currentSuiviTx = Object.assign({}, currentSuiviTx, {
-          status:        fresh.status,
-          flagRaison:    fresh.flagRaison    || currentSuiviTx.flagRaison    || '',
-          webhookStatus: fresh.webhookStatus || currentSuiviTx.webhookStatus || ''
-        });
+        currentSuiviTx = Object.assign({}, currentSuiviTx, fresh);
         renderSuivi();
       }
     }
