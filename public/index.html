@@ -73,6 +73,7 @@ window.addEventListener('DOMContentLoaded', function(){
 setTimeout(function(){
   if(typeof loadAgentsFromFirestore === 'function') loadAgentsFromFirestore();
   if(typeof loadReservesFromFirestore === 'function') loadReservesFromFirestore();
+  if(typeof listenWaafiSms === 'function') listenWaafiSms();
 }, 2000);
 window._firebaseReady = true;
 window.firebaseReady = true;
@@ -630,7 +631,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <button class="nav-tab" onclick="goOrders()" id="ntab-orders"><span>📋</span>Ordres<div class="notif-dot" id="notif-dot"></div></button>
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
-    <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>🔔</span>Notifs<div class="notif-dot" id="notif-bell-dot"></div></button>
+    <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>📨</span>SMS Waafi<div class="notif-dot" id="notif-bell-dot"></div></button>
   </div>
 
   <!-- DASHBOARD -->
@@ -711,14 +712,13 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   <!-- NOTIFICATIONS -->
   <div class="page-section" id="page-notifs">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <div style="font-family:'Playfair Display',serif;font-size:0.9rem;font-weight:700;">🔔 Notifications système</div>
-      <button onclick="clearNotifs()" style="background:transparent;border:1px solid rgba(255,64,96,0.2);border-radius:999px;padding:5px 12px;font-size:0.65rem;color:var(--error);cursor:pointer;font-family:'DM Sans',sans-serif;">🗑 Effacer</button>
+      <div style="font-family:'Playfair Display',serif;font-size:0.9rem;font-weight:700;">📨 SMS Waafi reçus</div>
+      <div id="waafi-sms-count" style="font-size:0.65rem;color:var(--muted);"></div>
     </div>
-
-    <div id="notifs-list" style="display:flex;flex-direction:column;gap:7px;">
+    <div id="waafi-sms-list" style="display:flex;flex-direction:column;gap:7px;">
       <div style="text-align:center;padding:30px;color:var(--muted);font-size:0.78rem;">
-        <div style="font-size:1.8rem;margin-bottom:8px;">🔕</div>
-        Aucune notification
+        <div style="font-size:1.8rem;margin-bottom:8px;">📡</div>
+        Connexion au flux SMS...
       </div>
     </div>
   </div>
@@ -1799,7 +1799,7 @@ function showPage(p){
   if(p==='agents') renderAgents();
   if(p==='reserves') calcAndUpdateReserves();
   if(p==='dashboard'){ updateStats(); renderRecentTx(); }
-  if(p==='sms'||p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); renderNotifs(); }
+  if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); listenWaafiSms(); }
 }
 
 function initDashboard(){
@@ -2330,69 +2330,75 @@ function boutonPaiementRetrait(ref){
 // ══════════════════════════════════════════════════════════════════
 // MOTEUR NOTIFICATIONS SYSTÈME
 // ══════════════════════════════════════════════════════════════════
-var _notifsLog = [];
+// ── SMS Waafi live feed ──────────────────────────────────────────
+var _waafiSmsUnsub = null;
 
-var NOTIF_TYPES = {
-  depot_recu:    { icon:'💳', color:'var(--success)',  label:'Paiement reçu'       },
-  depot_confirme:{ icon:'✅', color:'var(--success)',  label:'Dépôt confirmé'       },
-  retrait_traite:{ icon:'💸', color:'#e91e8c',         label:'Retrait traité'        },
-  retrait_confirme:{ icon:'✅', color:'var(--success)',label:'Retrait confirmé'      },
-  ordre_rejete:  { icon:'❌', color:'var(--error)',    label:'Ordre rejeté'          },
-  nouvel_ordre:  { icon:'🔔', color:'var(--gold)',     label:'Nouvel ordre'          },
-  sms_recu:      { icon:'📩', color:'#5b9cff',         label:'SMS Waafi reçu'        },
-  sms_non_match: { icon:'⚠️', color:'var(--warning)', label:'SMS non matché'        },
-  reserve_faible:{ icon:'🚨', color:'var(--error)',    label:'Réserve critique'      },
-};
-
-function pushNotif(type, message, ordreRef, montant){
-  var cfg = NOTIF_TYPES[type] || { icon:'🔔', color:'var(--gold)', label:type };
-  var now = new Date();
-  var entry = {
-    id: Date.now(),
-    type: type,
-    icon: cfg.icon,
-    color: cfg.color,
-    label: cfg.label,
-    message: message,
-    ordreRef: ordreRef||null,
-    montant: montant||null,
-    date: now.toLocaleString('fr-FR'),
-    lu: false
-  };
-  _notifsLog.unshift(entry);
-  // Badge
-  var dot = document.getElementById('notif-bell-dot');
-  var notifPage = document.getElementById('page-notifs');
-  if(dot && !(notifPage && notifPage.classList.contains('active'))){
-    dot.classList.add('show');
-  }
-  renderNotifs();
+function listenWaafiSms(){
+  if(!window.db || !window.fsCollection || !window.fsOnSnapshot) return;
+  if(_waafiSmsUnsub) return;
+  var col = window.fsCollection(window.db,'waafi_notifications');
+  _waafiSmsUnsub = window.fsOnSnapshot(col, function(snap){
+    var docs = snap.docs.slice().sort(function(a,b){
+      var ta = (a.data().createdAt&&a.data().createdAt.seconds) ? a.data().createdAt.seconds : 0;
+      var tb = (b.data().createdAt&&b.data().createdAt.seconds) ? b.data().createdAt.seconds : 0;
+      return tb - ta;
+    });
+    renderWaafiSms(docs);
+    var page = document.getElementById('page-notifs');
+    var dot  = document.getElementById('notif-bell-dot');
+    if(dot && !(page && page.classList.contains('active'))){
+      var hasNew = docs.some(function(d){ var s=d.data().status; return s==='nouveau'||s==='new'; });
+      if(hasNew) dot.classList.add('show');
+    }
+  });
 }
 
-function renderNotifs(){
-  var el = document.getElementById('notifs-list');
+function renderWaafiSms(docs){
+  var el = document.getElementById('waafi-sms-list');
   if(!el) return;
-  if(_notifsLog.length === 0){
-    el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--muted);font-size:0.78rem;"><div style="font-size:2rem;margin-bottom:8px;">🔕</div>Aucune notification</div>';
+  var countEl = document.getElementById('waafi-sms-count');
+  if(countEl) countEl.textContent = docs.length ? docs.length+' SMS' : '';
+  if(!docs.length){
+    el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:0.78rem;"><div style="font-size:1.8rem;margin-bottom:8px;">📡</div>Aucun SMS reçu</div>';
     return;
   }
-  el.innerHTML = _notifsLog.map(function(n){
-    var montantHtml = n.montant ? '<div style="font-family:\'Playfair Display\',serif;font-size:1.05rem;font-weight:700;color:'+n.color+';margin-bottom:3px;">'+Number(n.montant).toLocaleString()+' DJF</div>' : '';
-    var refHtml = n.ordreRef ? '<div style="font-size:0.65rem;color:var(--muted);margin-top:2px;">→ Ordre #'+n.ordreRef+'</div>' : '';
+  var STATUS = {
+    'matché':        {icon:'✅', color:'var(--success)', label:'MATCHÉ'},
+    'confirme':      {icon:'✅', color:'var(--success)', label:'CONFIRMÉ'},
+    'credite':       {icon:'✅', color:'var(--success)', label:'CRÉDITÉ'},
+    'non_matché':    {icon:'⚠️', color:'var(--warning)', label:'NON MATCHÉ'},
+    'nouveau':       {icon:'📩', color:'#5b9cff',        label:'NOUVEAU'},
+    'new':           {icon:'📩', color:'#5b9cff',        label:'NOUVEAU'},
+    'en_cours':      {icon:'⏳', color:'#5b9cff',        label:'EN COURS'},
+    'ignoré_format': {icon:'➖', color:'var(--muted)',   label:'IGNORÉ'},
+    'pending':       {icon:'📩', color:'#5b9cff',        label:'EN ATTENTE'},
+  };
+  el.innerHTML = docs.map(function(d){
+    var n = d.data();
+    var cfg = STATUS[n.status] || {icon:'📩', color:'#5b9cff', label:(n.status||'REÇU').toUpperCase()};
+    var ts = '';
+    if(n.createdAt&&n.createdAt.seconds) ts = new Date(n.createdAt.seconds*1000).toLocaleTimeString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    var mtHtml  = n.montant  ? '<div style="font-family:\'Playfair Display\',serif;font-size:1.05rem;font-weight:700;color:'+cfg.color+';margin-bottom:3px;">'+Number(n.montant).toLocaleString()+' DJF</div>' : '';
+    var tidHtml = n.transferId ? '<div style="font-size:0.7rem;color:var(--muted);">Transfer-ID : <b style="color:var(--text);">'+n.transferId+'</b></div>' : '';
+    var numHtml = n.numClient  ? '<div style="font-size:0.7rem;color:var(--muted);">De : <b style="color:var(--text);">'+n.numClient+'</b></div>'  : '';
+    var ordHtml = n.ordreRef   ? '<div style="font-size:0.65rem;color:var(--success);margin-top:3px;">→ Ordre #'+n.ordreRef+'</div>' : '';
+    var srcHtml = (n.source&&n.source!=='macrodroid') ? '<div style="font-size:0.6rem;color:var(--muted);margin-top:2px;">'+n.source+'</div>' : '';
     return '<div style="border-radius:13px;padding:12px 14px;border:1px solid rgba(255,255,255,0.05);background:rgba(255,255,255,0.02);display:flex;gap:11px;align-items:flex-start;">'
-      + '<div style="font-size:1.3rem;flex-shrink:0;margin-top:2px;">'+n.icon+'</div>'
-      + '<div style="flex:1;min-width:0;">'
-      +   '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
-      +     '<span style="font-size:0.69rem;font-weight:700;color:'+n.color+';text-transform:uppercase;letter-spacing:0.5px;">'+n.label+'</span>'
-      +     '<span style="font-size:0.58rem;color:var(--muted);">'+n.date+'</span>'
-      +   '</div>'
-      +   montantHtml
-      +   '<div style="font-size:0.74rem;color:var(--text);line-height:1.5;">'+n.message+'</div>'
-      +   refHtml
-      + '</div>'
-      + '</div>';
+      +'<div style="font-size:1.3rem;flex-shrink:0;margin-top:2px;">'+cfg.icon+'</div>'
+      +'<div style="flex:1;min-width:0;">'
+      +  '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+      +    '<span style="font-size:0.69rem;font-weight:700;color:'+cfg.color+';text-transform:uppercase;letter-spacing:0.5px;">'+cfg.label+'</span>'
+      +    '<span style="font-size:0.58rem;color:var(--muted);">'+ts+'</span>'
+      +  '</div>'
+      +  mtHtml+tidHtml+numHtml+ordHtml+srcHtml
+      +'</div>'
+      +'</div>';
   }).join('');
 }
+
+function pushNotif(){ /* removed — Waafi SMS tab now reads directly from Firestore */ }
+function renderNotifs(){ /* removed */ }
+function clearNotifs(){ /* removed */ }
 
 // ══════════════════════════════════════════════════════════════════
 // MACRODROID HELPERS — Config & Test
@@ -2791,16 +2797,13 @@ function switchChart(p,el){
 // Expose all functions to window (required for type=module)
 try {
   if(typeof _checkPass!=="undefined") window._checkPass=_checkPass;
-  if(typeof clearNotifs!=="undefined") window.clearNotifs=clearNotifs;
+  if(typeof listenWaafiSms!=="undefined") window.listenWaafiSms=listenWaafiSms;
   if(typeof testMacroDroid!=="undefined") window.testMacroDroid=testMacroDroid;
   if(typeof copyMacroUrl!=="undefined") window.copyMacroUrl=copyMacroUrl;
   if(typeof copyMacroBody!=="undefined") window.copyMacroBody=copyMacroBody;
-  if(typeof renderNotifs!=="undefined") window.renderNotifs=renderNotifs;
-  if(typeof pushNotif!=="undefined") window.pushNotif=pushNotif;
   if(typeof startSmsListener!=="undefined") window.startSmsListener=startSmsListener;
   if(typeof saveTxFirebaseWithTimer!=="undefined") window.saveTxFirebaseWithTimer=saveTxFirebaseWithTimer;
   if(typeof demarrerTimerRejet!=="undefined") window.demarrerTimerRejet=demarrerTimerRejet;
-  if(typeof clearSmsLog!=="undefined") window.clearSmsLog=clearSmsLog;
   if(typeof addAgent!=="undefined") window.addAgent=addAgent;
   if(typeof adminCopy!=="undefined") window.adminCopy=adminCopy;
   if(typeof boutonPaiementRetrait!=="undefined") window.boutonPaiementRetrait=boutonPaiementRetrait;
