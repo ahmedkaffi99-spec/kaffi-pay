@@ -93,37 +93,6 @@ function analyserFraude(tx, transferId) {
   return { score_fraude: score, risque, raisons: raisons.length ? raisons : ["Aucune anomalie"], action };
 }
 
-// ══════════════════════════════════════════════════════════════════
-// SECTION 3 — RATE LIMITING
-// ══════════════════════════════════════════════════════════════════
-const MAX_PAR_HEURE = 3;
-
-async function verifierRateLimit(phone, type) {
-  if (!phone || phone === "—") return { autorise: true };
-  const cle      = `${phone}_${type}`;
-  const ref      = db.collection("rate_limits").doc(cle);
-  const fenetre  = 60 * 60 * 1000;
-  const maintenant = Date.now();
-
-  return db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) {
-      tx.set(ref, { compte: 1, debut: maintenant, phone, type, expiresAt: maintenant + fenetre });
-      return { autorise: true, restant: MAX_PAR_HEURE - 1 };
-    }
-    const d = snap.data();
-    if (maintenant - d.debut > fenetre) {
-      tx.set(ref, { compte: 1, debut: maintenant, phone, type, expiresAt: maintenant + fenetre });
-      return { autorise: true, restant: MAX_PAR_HEURE - 1 };
-    }
-    if (d.compte >= MAX_PAR_HEURE) {
-      return { autorise: false, restant: 0, resetDans: Math.ceil((d.debut + fenetre - maintenant) / 60000) };
-    }
-    tx.update(ref, { compte: FieldValue.increment(1) });
-    return { autorise: true, restant: MAX_PAR_HEURE - d.compte - 1 };
-  });
-}
-
 
 
 
