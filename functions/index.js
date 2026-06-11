@@ -1323,10 +1323,28 @@ exports.waRecap = onRequest(
     if (!phone) { res.status(400).json({ ok: false, reason: "Aucun numéro WhatsApp" }); return; }
 
     const montantStr = Number(o.montant || 0).toLocaleString();
-    const isDepot    = o.type === "Dépôt";
-    const statut     = o.status || "En attente";
+    const isRetrait  = o.type === "Retrait";
+    const wbOk       = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
+    const wbFail     = o.webhookStatus === "echec";
 
-    const msg = isDepot
+    // Unified friendly status — same labels as support bot, admin bot, and client suivi
+    let statut;
+    if (o.status === "Crédité avec succès")
+      statut = isRetrait ? "✅ Waafi envoyé" : "✅ Crédité avec succès";
+    else if (o.status === "Paiement Reçu" && isRetrait)
+      statut = "⏳ 1xBet retiré — Waafi en cours";
+    else if (o.status === "Paiement Reçu" && wbFail)
+      statut = "⚠️ Paiement reçu — crédit échoué (équipe en cours d'intervention)";
+    else if (o.status === "Paiement Reçu")
+      statut = "💳 Paiement reçu — crédit 1xBet en cours...";
+    else if (o.status === "Paiement Non Reçu")
+      statut = isRetrait ? "❌ Retrait échoué" : `❌ Paiement non reçu — ${o.flagRaison || "contactez le support"}`;
+    else if (o.status === "Annulé")
+      statut = "🚫 Annulé";
+    else
+      statut = o.status || "⏳ En attente";
+
+    const msg = !isRetrait
       ? `🧾 *Kaffi-Pay — Récapitulatif Dépôt*\n\n` +
         `N° Ordre : *#${ordreId}*\n` +
         `Montant : ${montantStr} DJF\n` +
