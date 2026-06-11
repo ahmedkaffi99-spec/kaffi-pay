@@ -1393,37 +1393,42 @@ exports.supportClient = onRequest(
     // ── Contenus FAQ ─────────────────────────────────────────────
     const FAQ = {
       depot:
-        `📥 <b>Dépôt 1xBet — simple et rapide</b>\n\n` +
+        `📥 <b>Comment effectuer un dépôt 1xBet</b>\n\n` +
         `1️⃣ Allez sur <b>kaffi-pay.com</b> → onglet <b>Dépôt</b>\n` +
-        `2️⃣ Entrez : montant, votre ID 1xBet et numéro WhatsApp\n` +
+        `2️⃣ Remplissez le formulaire :\n` +
+        `   • <b>Montant</b> à déposer\n` +
+        `   • <b>ID 1xBet</b> (votre identifiant de compte)\n` +
+        `   • <b>Numéro Waafi expéditeur</b> (le numéro depuis lequel vous payez)\n` +
+        `   • <b>Numéro de transfert Waafi</b> (reçu par SMS après le paiement)\n` +
+        `   • <b>Numéro WhatsApp</b> (pour recevoir les confirmations)\n` +
         `3️⃣ Payez via Waafi Mobile au numéro <code>77 27 55 72</code>\n` +
-        `4️⃣ Copiez le numéro de transfert reçu par SMS\n` +
-        `5️⃣ Collez-le dans le formulaire et validez\n\n` +
+        `4️⃣ Validez le formulaire\n\n` +
         `✅ Votre compte 1xBet est crédité <b>rapidement</b> après la validation de votre paiement.`,
 
       retrait:
-        `📤 <b>Retrait 1xBet — simple et rapide</b>\n\n` +
+        `📤 <b>Comment effectuer un retrait 1xBet</b>\n\n` +
         `1️⃣ Sur 1xBet → <b>Finances → Retirer des fonds</b>\n` +
-        `2️⃣ Sélectionnez <b>"Code de retrait"</b> et saisissez le montant\n` +
-        `3️⃣ Copiez le code de retrait généré\n` +
-        `4️⃣ Allez sur <b>kaffi-pay.com</b> → onglet <b>Retrait</b>\n` +
-        `5️⃣ Entrez le code + votre numéro Waafi et validez\n\n` +
-        `✅ L'argent est envoyé sur votre Waafi <b>rapidement</b> après validation.\n\n` +
+        `2️⃣ Sélectionnez <b>"Code de retrait"</b>, saisissez le montant et copiez le code\n` +
+        `3️⃣ Allez sur <b>kaffi-pay.com</b> → onglet <b>Retrait</b>\n` +
+        `4️⃣ Remplissez le formulaire :\n` +
+        `   • <b>ID 1xBet</b> (votre identifiant de compte)\n` +
+        `   • <b>Code de retrait</b> (généré sur 1xBet)\n` +
+        `   • <b>Numéro Waafi</b> (pour recevoir l'argent)\n` +
+        `   • <b>Numéro WhatsApp</b> (pour recevoir les confirmations)\n` +
+        `5️⃣ Validez — l'argent arrive sur votre Waafi <b>rapidement</b>.\n\n` +
         `⚠️ Le code de retrait expire en <b>24 heures</b> — ne tardez pas.`,
 
       delais:
         `⚡ <b>Délais de traitement</b>\n\n` +
         `Notre système est <b>100% automatique</b> — aucune validation manuelle, aucune attente d'un agent.\n\n` +
         `Vos ordres sont traités <b>dès réception</b>, que ce soit un dépôt ou un retrait.\n\n` +
-        `⏰ Service opérationnel <b>24h/24 — 7j/7</b>, jours fériés inclus.\n\n` +
-        `Si votre ordre n'est pas encore confirmé, envoyez votre <b>numéro d'ordre</b> ici.`,
+        `⏰ Service opérationnel <b>24h/24 — 7j/7</b>, jours fériés inclus.`,
 
       tarifs:
         `💰 <b>Tarifs — aucun frais caché</b>\n\n` +
         `• Dépôt minimum : <b>50 DJF</b>\n` +
         `• Retrait minimum : <b>250 DJF</b>\n` +
-        `• Commission : <b>0 DJF</b> — vous recevez exactement ce que vous envoyez\n` +
-        `• Montant maximum : <b>500 000 DJF</b>\n\n` +
+        `• Commission : <b>0 DJF</b> — vous recevez exactement ce que vous envoyez\n\n` +
         `📱 Numéro Waafi pour payer : <code>77 27 55 72</code>`,
 
       securite:
@@ -1453,7 +1458,7 @@ exports.supportClient = onRequest(
         const cbName    = (cbq.from || {}).first_name || "Client";
 
         if (cbData === "sc_menu") {
-          await replyKb(cbChatId, `Comment puis-je vous aider ?`, MAIN_KB);
+          await replyKb(cbChatId, `👋 <b>${cbName}</b>, comment puis-je vous aider ?`, MAIN_KB);
         } else if (cbData === "sc_depot") {
           await replyKb(cbChatId, FAQ.depot, BACK_KB);
         } else if (cbData === "sc_retrait") {
@@ -1508,9 +1513,8 @@ exports.supportClient = onRequest(
       if (t === "/start" || t === "start") {
         await replyKb(chatId,
           `👋 <b>Bienvenue chez Kaffi-Pay, ${firstName} !</b>\n\n` +
-          `Rechargement et retrait 1xBet — service disponible <b>24h/24</b>.\n\n` +
-          `💡 Envoyez votre <b>numéro d'ordre</b> pour le suivi en temps réel.\n` +
-          `Exemple : <code>#06111</code>\n\nOu choisissez une option :`,
+          `Je suis votre assistant — service disponible <b>24h/24</b>.\n\n` +
+          `Comment puis-je vous aider ?`,
           MAIN_KB
         );
         return;
@@ -1519,9 +1523,7 @@ exports.supportClient = onRequest(
       // ── Salutations (Français + Somali + Arabe) ──
       if (/^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj|nabad|marhaba|ahlan|asalam|salaamu|wa calaykum|صباح|مرحبا|السلام|haye|hey|yo)\b/i.test(t)) {
         await replyKb(chatId,
-          `👋 Bonjour <b>${firstName}</b> !\n\n` +
-          `💡 Envoyez votre <b>numéro d'ordre</b> pour voir son statut.\n` +
-          `Exemple : <code>#06111</code>`,
+          `👋 Bonjour <b>${firstName}</b> !\n\nJe suis votre assistant Kaffi-Pay.\nComment puis-je vous aider ?`,
           MAIN_KB
         );
         return;
@@ -1529,7 +1531,7 @@ exports.supportClient = onRequest(
 
       // ── Aide ──
       if (/^(aide|help|menu|\?+$)/.test(t) || t === "/aide" || t === "/help" || /que.*faire|quoi.*faire|option/.test(t)) {
-        await replyKb(chatId, `📋 <b>Que souhaitez-vous faire ?</b>`, MAIN_KB);
+        await replyKb(chatId, `Comment puis-je vous aider ?`, MAIN_KB);
         return;
       }
 
@@ -1572,11 +1574,8 @@ exports.supportClient = onRequest(
       // ── Problème général ──
       if (/pas.*reçu|non.*crédit|pas.*crédit|toujours.*pas|n'a pas|pas.*arrivé|problem|problème|erreur|bloqué|coincé/.test(t)) {
         await replyKb(chatId,
-          `⚠️ <b>Problème avec votre ordre ?</b>\n\n` +
-          `Envoyez votre <b>numéro d'ordre</b> et je vérifie immédiatement.\n` +
-          `Exemple : <code>#06111</code>\n\n` +
-          `Votre numéro se trouve dans l'historique sur <b>kaffi-pay.com</b>.`,
-          AGENT_KB
+          `⚠️ <b>Problème avec votre ordre ?</b>\n\nEnvoyez votre <b>numéro d'ordre</b> et je vérifie immédiatement.\nVotre numéro se trouve dans l'historique sur <b>kaffi-pay.com</b>.`,
+          [[{ text: "👤 Contacter un agent", callback_data: "sc_agent" }]]
         );
         return;
       }
@@ -1586,8 +1585,8 @@ exports.supportClient = onRequest(
         const adminTok2 = TELEGRAM_TOKEN.value();
         const adminId3  = TELEGRAM_ADMIN_ID.value();
         await replyKb(chatId,
-          `👤 <b>Un agent va vous répondre</b>\n\nVotre demande est transmise à notre équipe.\nUn agent vous répondra dans les plus brefs délais.\n\nPour accélérer, envoyez votre <b>numéro d'ordre</b>.`,
-          [[{ text: "📋 Suivre mon ordre", callback_data: "sc_ordre" }]]
+          `👤 <b>Un agent va vous répondre</b>\n\nVotre demande est transmise à notre équipe.\nUn agent vous répondra dans les plus brefs délais.`,
+          BACK_KB
         );
         await sendTelegram(adminTok2, adminId3,
           `🆘 <b>Demande agent</b> — Support Bot\n👤 ${firstName} (chat: <code>${chatId}</code>)\nMsg : <i>${text.substring(0, 200)}</i>`
