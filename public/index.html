@@ -538,6 +538,14 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div class="field">
+        <label>👤 Votre ID 1xBet</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="retrait-id1xbet" placeholder="Ex: 123456789" inputmode="numeric" style="flex:1;">
+          <button onclick="pasteField('retrait-id1xbet')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
+        </div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Votre identifiant numérique 1xBet · obligatoire</div>
+      </div>
+      <div class="field">
         <label data-i18n="label-code-retrait">🔑 Code de retrait 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" id="retrait-code" placeholder="Ex: jK7o" maxlength="4" style="flex:1;">
@@ -1371,10 +1379,12 @@ async function submitDepot(){
 
 async function submitRetrait(){
   if(!_tsRetraitOk){ showToast('⚠️ Cochez la vérification avant de soumettre','error'); return; }
+  const id1x=document.getElementById('retrait-id1xbet').value.trim();
   const c=document.getElementById('retrait-code').value.trim();
   const t=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
   const whatsapp=document.getElementById('retrait-whatsapp').value.trim();
+  if(!id1x||id1x.length<3){showToast('⚠️ ID 1xBet requis','error');return;}
   if(!c||c.length<2){showToast('⚠️ Code retrait requis','error');return;}
   if(!t||t.length!==8||!t.startsWith('77')){showToast('⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)','error');return;}
   if(!m||Number(m)<250){showToast('⚠️ Minimum 250 DJF','error');return;}
@@ -1387,6 +1397,7 @@ async function submitRetrait(){
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
       orderId:orderId,
+      userId1xBet:id1x,
       withdrawalCode:c,
       waafiNumber:t,
       montant:Number(m),
@@ -1400,6 +1411,7 @@ async function submitRetrait(){
       ts:now.getTime(),
       ref:orderId
     };
+    document.getElementById('retrait-id1xbet').value='';
     document.getElementById('retrait-code').value='';
     document.getElementById('retrait-tel').value='';
     document.getElementById('retrait-montant').value='';
@@ -2092,6 +2104,7 @@ function renderSuivi(){
     ['Type','📤 Retrait 1xBet'],
     ['N° Commande', tx.orderId||tx.ref||'—'],
     ['Montant', tx.amount||Number(tx.montant).toLocaleString()+' DJF'],
+    ['ID 1xBet', tx.userId1xBet||tx.id1x||'—'],
     ['Code retrait', tx.withdrawalCode||tx.code||'—'],
     ['Numéro Waafi', tx.waafiNumber||tx.tel||'—'],
     ['Date', tx.date||'—']

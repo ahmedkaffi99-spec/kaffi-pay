@@ -129,10 +129,12 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
     .update(`hash=${hash}&lng=${lng}&userid=${userId}`)
     .digest("hex");
 
-  // Signature step 2 : MD5(summa + cashierpass + cashdeskId) — identique pour Dépôt et Retrait
-  const part2 = crypto.createHash("md5")
-    .update(`summa=${montant}&cashierpass=${cashierpass}&cashdeskid=${cashdeskId}`)
-    .digest("hex");
+  // Signature step 2 : MD5 selon type (doc API MobCash)
+  // Dépôt (Reception) : MD5(summa=X&cashierpass=P&cashdeskid=C)
+  // Retrait (Pay)     : MD5(code=X&cashierpass=P&cashdeskid=C)
+  const part2 = isDepot
+    ? crypto.createHash("md5").update(`summa=${montant}&cashierpass=${cashierpass}&cashdeskid=${cashdeskId}`).digest("hex")
+    : crypto.createHash("md5").update(`code=${withdrawalCode}&cashierpass=${cashierpass}&cashdeskid=${cashdeskId}`).digest("hex");
 
   // Signature step 3 : SHA256(part1 + part2) → header "sign"
   const sign = crypto.createHash("sha256").update(part1 + part2).digest("hex");
@@ -142,7 +144,7 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
 
   const body = isDepot
     ? { cashdeskid: Number(cashdeskId), lng, summa: montant, confirm }
-    : { cashdeskid: Number(cashdeskId), lng, summa: montant, code: String(withdrawalCode || ""), confirm };
+    : { cashdeskId: Number(cashdeskId), lng, code: String(withdrawalCode || ""), confirm };
 
   const resp = await fetch(`${MOBCASH_BASE}/Deposit/${userId}/${endpoint}`, {
     method: "POST",
@@ -734,10 +736,15 @@ exports.onNouvelRetrait = onDocumentCreated(
       return;
     }
 
-    const cashdeskIdForPayout = MOBCASH_CASHDESKID.value() || "0";
+    const userId1xBet = (tx.userId1xBet || tx.id1x || "").trim();
+    if (!userId1xBet) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>Retrait sans ID 1xBet</b> — #${ordreId}\nID 1xBet manquant, intervention manuelle requise.`);
+      return;
+    }
 
     try {
-      const mobcashData    = await callMobcash("Retrait", cashdeskIdForPayout, montantVal, tidRetrait);
+      const mobcashData    = await callMobcash("Retrait", userId1xBet, montantVal, tidRetrait);
       const montantMobcash = Number(
         mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
       );
