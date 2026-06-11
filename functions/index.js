@@ -390,18 +390,22 @@ function statutOrdreMsg(ordreId, o) {
   let statut = "";
   if (o.status === "Crédité avec succès")
     statut = isRetrait
-      ? "✅ <b>Retrait effectué</b> — votre argent a été envoyé sur votre Waafi."
+      ? "✅ <b>Waafi envoyé</b> — votre argent a été viré sur votre numéro Waafi."
       : "✅ <b>Crédité avec succès</b> — votre compte 1xBet a été rechargé.";
   else if (o.status === "En attente")
-    statut = "⏳ <b>En attente</b> — traitement en cours.";
+    statut = isRetrait
+      ? "⏳ <b>En attente</b> — votre demande de retrait est en cours de traitement."
+      : "⏳ <b>En attente</b> — traitement en cours.";
   else if (o.status === "Paiement Reçu" && isRetrait)
-    statut = "⏳ <b>Retrait accepté</b> — paiement Waafi en cours de traitement.";
+    statut = "⏳ <b>1xBet retiré</b> — virement Waafi en cours de traitement par notre équipe.";
   else if (o.status === "Paiement Reçu" && wbFail)
     statut = "⚠️ <b>Paiement reçu — crédit échoué</b> — notre équipe va intervenir.";
   else if (o.status === "Paiement Reçu")
     statut = "💳 <b>Paiement reçu</b> — crédit 1xBet en cours...";
   else if (o.status === "Paiement Non Reçu")
-    statut = `❌ <b>Paiement non reçu</b> — ${o.flagRaison || "Paiement non reçu."}`;
+    statut = isRetrait
+      ? `❌ <b>Retrait échoué</b> — ${o.flagRaison || "Contactez le support."}`
+      : `❌ <b>Paiement non reçu</b> — ${o.flagRaison || "Paiement non reçu."}`;
   else if (o.status === "Annulé")
     statut = "🚫 <b>Annulé.</b>";
   else
@@ -873,13 +877,13 @@ exports.onNouvelOrdre = onDocumentCreated(
         montantMobcash,
       });
 
-      // ── WhatsApp 2/3 — retrait accepté ──
+      // ── WhatsApp 2/3 — retrait 1xBet validé, envoi Waafi en cours ──
       if (tx.whatsapp) {
         await sendWhatsApp(tx.whatsapp,
-          `⏳ *Kaffi-Pay — Retrait accepté* 💳\n\n` +
-          `Votre retrait *#${ordreId}* de *${montantMobcash.toLocaleString()} DJF* a été validé par 1xBet.\n\n` +
-          `Statut : ⏳ *Retrait accepté — Paiement Waafi en cours*\n\n` +
-          `Vous recevrez votre argent sur votre Waafi sous peu.\n` +
+          `⏳ *Kaffi-Pay — Retrait 1xBet validé* ✅\n\n` +
+          `Votre retrait *#${ordreId}* de *${montantMobcash.toLocaleString()} DJF* a bien été retiré de votre compte 1xBet.\n\n` +
+          `Statut : ⏳ *1xBet retiré — Waafi en cours*\n\n` +
+          `Notre équipe envoie le virement sur votre Waafi. Vous recevrez votre argent sous peu.\n` +
           `📲 kaffi-pay.com/#suivi-${ordreId}`
         );
       }
@@ -957,10 +961,15 @@ exports.onOrdreUpdated = onDocumentUpdated(
     // Ici on gère uniquement les états finaux : Crédité avec succès + Paiement Non Reçu.
     if (after.status === "Crédité avec succès" || after.status === "Paiement Non Reçu") {
       let msg = "";
+      const isRetrait = after.type === "Retrait";
       if (after.status === "Crédité avec succès")
-        msg = `✅ <b>${type} — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`;
+        msg = isRetrait
+          ? `✅ <b>Retrait — Waafi envoyé</b>\n#${ordreId} — ${montant} DJF`
+          : `✅ <b>Dépôt — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`;
       else if (after.status === "Paiement Non Reçu")
-        msg = `❌ <b>${type} — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
+        msg = isRetrait
+          ? `❌ <b>Retrait échoué</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`
+          : `❌ <b>Dépôt — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
 
       if (msg) await sendTelegram(token, adminId, msg);
 
@@ -973,10 +982,10 @@ exports.onOrdreUpdated = onDocumentUpdated(
               `Votre dépôt *#${ordreId}* de *${montant} DJF* a été traité avec succès.\n\n` +
               `✅ *Crédité avec succès*\n\n` +
               `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
-            : `🎉 *Kaffi-Pay — Retrait effectué !*\n\n` +
-              `Votre retrait *#${ordreId}* de *${montant} DJF* a été traité.\n\n` +
-              `✅ *Crédité avec succès*\n\n` +
-              `Votre argent a été envoyé sur votre numéro Waafi.`;
+            : `🎉 *Kaffi-Pay — Waafi envoyé !*\n\n` +
+              `Votre retrait *#${ordreId}* de *${montant} DJF* a été effectué.\n\n` +
+              `✅ *Waafi envoyé*\n\n` +
+              `L'argent a été viré sur votre numéro Waafi. Vérifiez votre solde.`;
         } else if (after.status === "Paiement Non Reçu") {
           waMsg = `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
                   `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +

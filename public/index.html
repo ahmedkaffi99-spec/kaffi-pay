@@ -1553,7 +1553,10 @@ function txHTML(t,showActions){
   const d=t.type==='Dépôt';
   const isRetraitPret=!d && t.status==='Paiement Reçu' && (t.webhookStatus==='ok'||t.webhookStatus==='ok_retry_rt');
   const sc=t.status==='Crédité avec succès'?'confirmed':(t.status==='Paiement Non Reçu'||t.status==='Annulé')?'rejected':isRetraitPret?'pending':'pending';
-  const statusLabel=isRetraitPret?'⏳ Retrait — Payer Waafi':(t.status||'En attente');
+  const statusLabel= !d && t.status==='Crédité avec succès' ? '✅ Waafi envoyé'
+    : !d && t.status==='Paiement Non Reçu' ? '❌ Retrait échoué'
+    : isRetraitPret ? '⏳ 1xBet retiré — Waafi en cours'
+    : (t.status||'En attente');
   const details=d
     ?`<span>ID 1xBet: ${t.userId1xBet||t.id1x||'—'}</span><span>Transfer ID: ${t.waafitranfertID||t.hash||'—'}</span>`
     :`<span>Code: ${(t.withdrawalCode||t.code||'—').substring(0,16)}</span><span>Waafi: ${t.waafiNumber||t.tel||'—'}</span>`;
@@ -1926,16 +1929,18 @@ function renderSuivi(){
     icon.textContent = '⏳';
     stxt.textContent = 'En attente';
     stxt.style.color = 'var(--warning)';
-    sdesc.textContent= 'Votre ordre est en cours de traitement. Vous serez crédité très rapidement.';
+    sdesc.textContent= isDepot
+      ? 'Votre ordre est en cours de traitement. Vous serez crédité très rapidement.'
+      : 'Votre demande de retrait est en cours de traitement.';
     prog.style.width = '20%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
     if(cancelBtnEl) cancelBtnEl.style.display = 'block';
   } else if(status === 'Paiement Reçu' && !isDepot && !wbFail){
     card.style.borderColor = 'rgba(255,170,0,0.25)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,170,0,0.06),rgba(7,16,30,0.8))';
     icon.textContent = '⏳';
-    stxt.textContent = 'Retrait accepté — Paiement Waafi en cours';
+    stxt.textContent = '1xBet retiré — Waafi en cours';
     stxt.style.color = 'var(--warning)';
-    sdesc.textContent= 'Votre retrait a été accepté par 1xBet. Le paiement sur votre numéro Waafi est en cours de traitement.';
+    sdesc.textContent= 'Votre retrait 1xBet a été effectué avec succès. Notre équipe envoie le virement sur votre numéro Waafi.';
     prog.style.width = '70%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
   } else if(status === 'Paiement Reçu' && isDepot && !wbFail){
     card.style.borderColor = 'rgba(91,156,255,0.2)';
@@ -1949,28 +1954,32 @@ function renderSuivi(){
     card.style.borderColor = 'rgba(255,64,96,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
     icon.textContent = '❌';
-    stxt.textContent = 'Crédit échoué — Contactez le support';
+    stxt.textContent = isDepot ? 'Crédit échoué — Contactez le support' : 'Envoi Waafi échoué — Contactez le support';
     stxt.style.color = 'var(--error)';
-    sdesc.textContent= 'Le crédit de votre compte a échoué. Contactez le support avec votre numéro d\'ordre.';
+    sdesc.textContent= isDepot
+      ? 'Le crédit de votre compte 1xBet a échoué. Contactez le support avec votre numéro d\'ordre.'
+      : 'L\'envoi Waafi a échoué. Contactez le support avec votre numéro d\'ordre.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
   } else if(status === 'Crédité avec succès'){
     card.style.borderColor = 'rgba(0,212,160,0.3)';
     card.style.background  = 'linear-gradient(160deg,rgba(0,212,160,0.08),rgba(7,16,30,0.8))';
     icon.textContent = '🎉';
-    stxt.textContent = isDepot ? 'Crédité avec succès !' : 'Retrait effectué !';
+    stxt.textContent = isDepot ? 'Crédité avec succès !' : 'Waafi envoyé ✅';
     stxt.style.color = 'var(--success)';
-    sdesc.textContent= isDepot ? 'Votre ID 1xBet a été crédité. Vous pouvez maintenant jouer !' : 'Votre argent a été envoyé sur votre numéro Waafi.';
+    sdesc.textContent= isDepot
+      ? 'Votre compte 1xBet a été crédité. Vous pouvez maintenant jouer !'
+      : 'Votre argent a été envoyé sur votre numéro Waafi. Vérifiez votre solde Waafi.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
     if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   } else if(status === 'Paiement Non Reçu'){
     card.style.borderColor = 'rgba(255,64,96,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
     icon.textContent = '❌';
-    stxt.textContent = 'Paiement non reçu';
+    stxt.textContent = isDepot ? 'Paiement non reçu' : 'Retrait échoué';
     stxt.style.color = 'var(--error)';
-    sdesc.textContent= tx.flagRaison
-      ? tx.flagRaison + '. Soumettez un nouvel ordre si le problème est résolu.'
-      : 'Votre paiement n\'a pas été reçu. Vérifiez votre Transfer ID et contactez le support.';
+    sdesc.textContent= isDepot
+      ? (tx.flagRaison ? tx.flagRaison + '. Soumettez un nouvel ordre si le problème est résolu.' : 'Votre paiement n\'a pas été reçu. Vérifiez votre Transfer ID et contactez le support.')
+      : (tx.flagRaison ? tx.flagRaison + '. Contactez le support si besoin.' : 'Votre retrait n\'a pas pu être traité. Contactez le support avec votre numéro d\'ordre.');
     prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
     if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   } else if(status === 'Annulé'){
