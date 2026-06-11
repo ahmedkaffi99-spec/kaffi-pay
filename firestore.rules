@@ -2,7 +2,23 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Ordres — clients créent et lisent, admin met à jour
+    // Ordres dépôt — clients créent et lisent, admin met à jour
+    match /depot_orders/{docId} {
+      allow read: if true;
+      allow create: if validOrder();
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Ordres retrait — clients créent et lisent, admin met à jour
+    match /retrait_orders/{docId} {
+      allow read: if true;
+      allow create: if validOrder();
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Ancienne collection orders (rétrocompatibilité)
     match /orders/{docId} {
       allow read: if true;
       allow create: if validOrder();
@@ -10,7 +26,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // SMS Waafi — lecture admin, écriture Cloud Functions uniquement
+    // Ordres traités (archivage admin)
+    match /ordre_traite/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Ordres confirmés (archivage admin)
+    match /ordre_confirme/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // SMS Waafi — lecture publique, écriture Cloud Functions uniquement
     match /waafi_notifications/{docId} {
       allow read: if true;
       allow write: if false;
