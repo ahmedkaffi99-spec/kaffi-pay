@@ -1458,7 +1458,7 @@ exports.supportClient = onRequest(
         const cbName    = (cbq.from || {}).first_name || "Client";
 
         if (cbData === "sc_menu") {
-          await replyKb(cbChatId, `👋 <b>${cbName}</b>, comment puis-je vous aider ?`, MAIN_KB);
+          await replyKb(cbChatId, `👋 Comment puis-je vous aider ?`, MAIN_KB);
         } else if (cbData === "sc_depot") {
           await replyKb(cbChatId, FAQ.depot, BACK_KB);
         } else if (cbData === "sc_retrait") {
@@ -1512,7 +1512,7 @@ exports.supportClient = onRequest(
       // ── /start ──
       if (t === "/start" || t === "start") {
         await replyKb(chatId,
-          `👋 <b>Bienvenue chez Kaffi-Pay, ${firstName} !</b>\n\n` +
+          `👋 <b>Bienvenue chez Kaffi-Pay !</b>\n\n` +
           `Je suis votre assistant — service disponible <b>24h/24</b>.\n\n` +
           `Comment puis-je vous aider ?`,
           MAIN_KB
@@ -1523,7 +1523,7 @@ exports.supportClient = onRequest(
       // ── Salutations (Français + Somali + Arabe) ──
       if (/^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj|nabad|marhaba|ahlan|asalam|salaamu|wa calaykum|صباح|مرحبا|السلام|haye|hey|yo)\b/i.test(t)) {
         await replyKb(chatId,
-          `👋 Bonjour <b>${firstName}</b> !\n\nJe suis votre assistant Kaffi-Pay.\nComment puis-je vous aider ?`,
+          `👋 Bonjour !\n\nJe suis votre assistant Kaffi-Pay.\nComment puis-je vous aider ?`,
           MAIN_KB
         );
         return;
