@@ -2,73 +2,35 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── ORDERS ─────────────────────────────────────────────────────
-    // Clients : créer (validé) + lire
-    // Admin panel : lire tout + mettre à jour (clé admin requise)
+    // Ordres — clients créent et lisent, admin met à jour
     match /orders/{docId} {
       allow read: if true;
       allow create: if validOrder();
-      allow update: if isAdminWrite();
+      allow update: if isAdmin();
       allow delete: if false;
     }
 
-    // ── WAAFI NOTIFICATIONS ─────────────────────────────────────────
-    // Admin panel lit et met à jour le statut (clé admin requise)
-    // Cloud Functions créent (Admin SDK, hors règles)
+    // SMS Waafi — lecture admin, écriture Cloud Functions uniquement
     match /waafi_notifications/{docId} {
       allow read: if true;
-      allow update: if isAdminWrite();
-      allow create, delete: if false;
+      allow write: if false;
     }
 
-    // ── CONFIG (agents, reserves) ───────────────────────────────────
-    // Admin panel lit librement, écrit avec clé admin
+    // Config (taux, agents) — lecture publique, écriture admin
     match /config/{docId} {
       allow read: if true;
-      allow write: if isAdminWrite();
+      allow write: if isAdmin();
     }
 
-    // ── COLLECTIONS SENSIBLES — Cloud Functions uniquement ──────────
-    // L'Admin SDK contourne ces règles → les fonctions fonctionnent normalement
-    // Aucun accès direct depuis le navigateur
-
-    match /ordre_traite/{docId} {
-      allow read, write: if false;
-    }
-    match /support_sessions/{docId} {
-      allow read, write: if false;
-    }
-    match /system_locks/{docId} {
-      allow read, write: if false;
-    }
-    match /circuit_breakers/{docId} {
-      allow read, write: if false;
-    }
-    match /audit_log/{docId} {
-      allow read, write: if false;
-    }
-    match /rate_limits/{docId} {
-      allow read, write: if false;
-    }
-    match /macro_jobs/{docId} {
-      allow read, write: if false;
-    }
-
-    // ── TOUT LE RESTE : BLOQUÉ ──────────────────────────────────────
+    // Tout le reste — Cloud Functions uniquement (Admin SDK bypasse les règles)
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // ── CLÉ ADMIN ───────────────────────────────────────────────────
-    // Clé stockée dans localStorage de l'admin uniquement (pas dans le code source)
-    // L'admin doit exécuter une fois dans sa console :
-    //   localStorage.setItem('kp_admin_key', 'kp2026_9f3aXmQ7')
-    function isAdminWrite() {
-      return request.resource.data.keys().hasAny(['_ak'])
-          && request.resource.data._ak == 'kp2026_9f3aXmQ7';
+    function isAdmin() {
+      return request.resource.data.get('_ak', '') == 'kp2026_9f3aXmQ7';
     }
 
-    // ── VALIDATION ORDRE ────────────────────────────────────────────
     function validOrder() {
       let d = request.resource.data;
       return d.keys().hasAll(['orderId', 'type', 'montant', 'status'])
