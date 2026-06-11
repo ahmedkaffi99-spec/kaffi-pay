@@ -1,4 +1,4 @@
-name: Deploy Firebase Functions
+name: Deploy Firebase (Functions + Hosting)
 
 on:
   push:
@@ -29,4 +29,4 @@ jobs:
           credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
 
       - name: Deploy to Firebase
-        run: npx firebase-tools@latest deploy --only functions --project kaffi-pay
+        run: npx firebase-tools@latest deploy --only functions,hosting --project kaffi-pay
