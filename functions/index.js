@@ -809,39 +809,10 @@ exports.onNouvelOrdre = onDocumentCreated(
     }
 
     // ════════════════════════════════════════════════════════════
-    //  RETRAIT — Appel immédiat MobCash Payout + USSD admin
-    //  Flow : soumission → MobCash → USSD admin → Terminer → crédité
+    //  RETRAIT — MobCash Payout → vérif montant → USSD admin → Terminer
+    //  Pas d'analyse fraude : on se fie au résultat MobCash uniquement.
     // ════════════════════════════════════════════════════════════
     const tidRetrait = (tx.withdrawalCode || "").trim();
-    const fraud = analyserFraude(tx, tidRetrait);
-    await db.collection("orders").doc(docId).update({
-      score_fraude: fraud.score_fraude, risque_fraude: fraud.risque,
-      raisons_fraude: fraud.raisons, action_fraude: fraud.action,
-      fraudeAnalysedAt: FieldValue.serverTimestamp(),
-    });
-
-    if (fraud.action === "rejeter" || fraud.risque === "élevé") {
-      const raisonFraude = "Fraude: " + fraud.raisons.join(", ");
-      await db.collection("orders").doc(docId).update({
-        status: "Paiement Non Reçu", flagRaison: raisonFraude,
-      });
-      await sendTelegram(token, adminId,
-        `🚨 <b>Retrait rejeté — Fraude (score ${fraud.score_fraude}/100)</b>\n` +
-        `Ordre: <code>#${ordreId}</code> | ${fraud.raisons.join(", ")}`
-      );
-      if (tx.whatsapp) {
-        await sendWhatsApp(tx.whatsapp,
-          `❌ *Kaffi-Pay — Retrait refusé*\n\n` +
-          `Votre demande de retrait *#${ordreId}* a été refusée.\n` +
-          `Raison : ${raisonFraude}\n\n` +
-          `Contactez le support si besoin.`
-        );
-      }
-      logAudit("ordre_rejete_fraude", { ordreId, score: fraud.score_fraude });
-      return;
-    }
-
-    // ── Appel MobCash Payout immédiat ──
     const id1xbet    = tx.userId1xBet || tx.id1x || "";
     const montantVal = Number(tx.montant || 0);
     const waafiNum   = (tx.waafiNumber || tx.tel || "").replace(/\s/g, "");
@@ -853,53 +824,84 @@ exports.onNouvelOrdre = onDocumentCreated(
     }
 
     try {
-      await callMobcash("Retrait", id1xbet, montantVal, tidRetrait);
+      // ── Appel MobCash Payout — retourne le montant réel traité ──
+      const mobcashData  = await callMobcash("Retrait", id1xbet, montantVal, tidRetrait);
+      const montantMobcash = Number(
+        mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
+      );
 
-      // Stocker dans ordre_traite (retrait traité par MobCash)
+      // ── Vérification montant : MobCash vs client ──
+      if (montantMobcash !== montantVal) {
+        await db.collection("orders").doc(docId).update({
+          status: "Paiement Non Reçu",
+          flagRaison: `Montant incorrect — MobCash: ${montantMobcash.toLocaleString()} DJF, Soumis: ${montantVal.toLocaleString()} DJF`,
+          montantMobcash,
+          flaggedAt: FieldValue.serverTimestamp(),
+        });
+        await sendTelegram(token, adminId,
+          `⚠️ <b>Retrait rejeté — Montant incorrect</b>\n\n` +
+          `Ordre : <code>#${ordreId}</code>\n` +
+          `Montant soumis : <b>${montantVal.toLocaleString()} DJF</b>\n` +
+          `Montant MobCash : <b>${montantMobcash.toLocaleString()} DJF</b>\n\n` +
+          `<i>Intervention manuelle requise.</i>`
+        );
+        if (tx.whatsapp) {
+          await sendWhatsApp(tx.whatsapp,
+            `⚠️ *Kaffi-Pay — Montant incorrect*\n\n` +
+            `Votre retrait *#${ordreId}* : le montant traité par 1xBet (${montantMobcash.toLocaleString()} DJF) ` +
+            `diffère du montant soumis (${montantVal.toLocaleString()} DJF).\n\n` +
+            `Notre équipe intervient manuellement. Contactez le support si besoin.`
+          );
+        }
+        logAudit("retrait_montant_incorrect", { ordreId, montantVal, montantMobcash });
+        return;
+      }
+
+      // ── Montants identiques → stocker et préparer USSD ──
       await db.collection("ordre_traite").add({
         ordreId, type: "Retrait",
-        id1xbet, montant: montantVal, withdrawalCode: tidRetrait,
+        id1xbet, montant: montantMobcash, withdrawalCode: tidRetrait,
         mobcashAt: FieldValue.serverTimestamp(),
         status: "retrait_en_cours",
       });
 
       await db.collection("orders").doc(docId).update({
         status: "Paiement Reçu",
-        webhookStatus: "ok",        // empêche onOrdreUpdated de rappeler MobCash
+        webhookStatus: "ok",
         webhookAt: FieldValue.serverTimestamp(),
         mobcashRetraitAt: FieldValue.serverTimestamp(),
+        montantMobcash,
       });
 
-      // ── WhatsApp 2/3 — retrait en cours ──
+      // ── WhatsApp 2/3 — retrait accepté ──
       if (tx.whatsapp) {
         await sendWhatsApp(tx.whatsapp,
-          `⏳ *Kaffi-Pay — Retrait en cours* 💳\n\n` +
-          `Votre retrait *#${ordreId}* de *${montantVal.toLocaleString()} DJF* a été accepté.\n\n` +
-          `Statut : ⏳ *Retrait en cours*\n\n` +
-          `Vous recevrez votre argent sur Waafi sous peu.\n` +
+          `⏳ *Kaffi-Pay — Retrait accepté* 💳\n\n` +
+          `Votre retrait *#${ordreId}* de *${montantMobcash.toLocaleString()} DJF* a été validé par 1xBet.\n\n` +
+          `Statut : ⏳ *Retrait accepté — Paiement Waafi en cours*\n\n` +
+          `Vous recevrez votre argent sur votre Waafi sous peu.\n` +
           `📲 kaffi-pay.com/#suivi-${ordreId}`
         );
       }
 
-      // ── Telegram admin — USSD + bouton Terminer ──
-      const ussd = `*200*${waafiNum}*${montantVal}#`;
+      // ── Telegram admin — USSD avec montant MobCash + bouton Terminer ──
+      const ussd    = `*200*${waafiNum}*${montantMobcash}#`;
       const ussdUrl = `tel:${ussd.replace(/#/g, "%23")}`;
       await sendTelegramKeyboard(token, adminId,
         `📤 <b>Retrait à payer — #${ordreId}</b>\n\n` +
-        `Montant : <b>${montantVal.toLocaleString()} DJF</b>\n` +
+        `Montant MobCash : <b>${montantMobcash.toLocaleString()} DJF</b>\n` +
         `N° Waafi client : <code>${waafiNum}</code>\n` +
         `Code retrait 1xBet : <code>${tidRetrait}</code>\n\n` +
         `📱 <b>USSD à composer :</b>\n<code>${ussd}</code>\n\n` +
-        (doublon ? "⚠️ <i>Doublon possible</i>\n\n" : "") +
-        `<i>Composez le code USSD sur votre téléphone puis cliquez Terminer.</i>`,
+        `<i>1. Composez le USSD → 2. Confirmez le paiement → 3. Cliquez Terminer.</i>`,
         [
-          [{ text: `📞 Composer ${ussd}`, url: ussdUrl }],
+          [{ text: `📞 ${ussd}`, url: ussdUrl }],
           [{ text: "🌐 Voir l'ordre sur kaffi-pay.com", url: "https://kaffi-pay.com" }],
           [{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }],
         ]
       );
 
-      logAudit("retrait_mobcash_ok", { ordreId, id1xbet, montantVal });
+      logAudit("retrait_mobcash_ok", { ordreId, id1xbet, montantMobcash });
 
     } catch (e) {
       await db.collection("orders").doc(docId).update({
