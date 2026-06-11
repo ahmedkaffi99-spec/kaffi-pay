@@ -642,7 +642,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div class="stats-grid">
       <div class="stat-card green"><div class="stat-label">Total Dépôts</div><div class="stat-value" id="stat-depot">0</div><div class="stat-sub" id="stat-depot-sub">0 confirmés</div></div>
       <div class="stat-card red"><div class="stat-label">Total Retraits</div><div class="stat-value" id="stat-retrait">0</div><div class="stat-sub" id="stat-retrait-sub">0 confirmés</div></div>
-      <div class="stat-card orange"><div class="stat-label">En Attente</div><div class="stat-value" id="stat-pending">0</div><div class="stat-sub">à traiter</div></div>
+      <div class="stat-card orange"><div class="stat-label">En Attente</div><div class="stat-value" id="stat-pending">0</div><div class="stat-sub" id="stat-pending-sub">à traiter</div></div>
       <div class="stat-card blue"><div class="stat-label">Aujourd'hui</div><div class="stat-value" id="stat-today">0</div><div class="stat-sub">DJF confirmés</div></div>
     </div>
     <div class="chart-card">
@@ -673,6 +673,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="filter-chip" onclick="filterTx('Retrait',this)">📤 Retraits</div>
       <div class="filter-chip" onclick="filterTx('Crédité avec succès',this)">✅ Crédités</div>
       <div class="filter-chip" onclick="filterTx('Paiement Non Reçu',this)">❌ Rejetés</div>
+      <div class="filter-chip" onclick="filterTx('fraude',this)">🚨 Fraudes</div>
     </div>
     <div class="search-wrap">
       <span class="search-icon">🔍</span>
@@ -1420,7 +1421,9 @@ function updateStats(){
   document.getElementById('stat-depot-sub').textContent=dep.length+' crédités';
   document.getElementById('stat-retrait').textContent=ret.reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
   document.getElementById('stat-retrait-sub').textContent=ret.length+' effectués';
+  const fraudes=t.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
   document.getElementById('stat-pending').textContent=pending.length;
+  document.getElementById('stat-pending-sub').textContent=fraudes.length?'à traiter · '+fraudes.length+' fraudes':'à traiter';
   const today=new Date().toLocaleDateString('fr-FR');
   document.getElementById('stat-today').textContent=
     t.filter(x=>x.date&&x.date.startsWith(today)&&x.status==='Crédité avec succès').reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
@@ -1529,39 +1532,62 @@ function renderAllTx(f,s){
   let t=getTxs();
   if(f==='attente') t=t.filter(x=>x.status==='En attente');
   else if(f==='retrait-pret') t=t.filter(x=>x.type==='Retrait'&&x.status==='Paiement Reçu'&&(x.webhookStatus==='ok'||x.webhookStatus==='ok_retry_rt'));
+  else if(f==='fraude') t=t.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
   else if(f!=='tous') t=t.filter(x=>x.type===f||x.status===f);
-  if(s) t=t.filter(x=>
-    (x.ref||'').toLowerCase().includes(s.toLowerCase())||
-    (x.id1x||'').toLowerCase().includes(s.toLowerCase())||
-    (x.tel||'').toLowerCase().includes(s.toLowerCase())||
-    (x.code||'').toLowerCase().includes(s.toLowerCase())
-  );
+  if(s) { var sl=s.toLowerCase(); t=t.filter(x=>
+    (x.ref||'').toLowerCase().includes(sl)||
+    (x.orderId||'').toLowerCase().includes(sl)||
+    (x.id1x||'').toLowerCase().includes(sl)||
+    (x.userId1xBet||'').toLowerCase().includes(sl)||
+    (x.tel||'').toLowerCase().includes(sl)||
+    (x.waafiNumber||'').toLowerCase().includes(sl)||
+    (x.code||'').toLowerCase().includes(sl)||
+    (x.withdrawalCode||'').toLowerCase().includes(sl)||
+    (x.numeroPayment||'').toLowerCase().includes(sl)||
+    (x.whatsapp||'').toLowerCase().includes(sl)||
+    (x.waafitranfertID||'').toLowerCase().includes(sl)||
+    (x.hash||'').toLowerCase().includes(sl)
+  ); }
   document.getElementById('all-tx-list').innerHTML=t.map(t=>txHTML(t,true)).join('')||emptyState();
+}
+
+function friendlyStatus(t){
+  const d=t.type==='Dépôt';
+  const isRetraitPret=!d && t.status==='Paiement Reçu' && (t.webhookStatus==='ok'||t.webhookStatus==='ok_retry_rt');
+  if(!d && t.status==='Crédité avec succès') return '✅ Waafi envoyé';
+  if(!d && t.status==='Paiement Non Reçu') return '❌ Retrait échoué';
+  if(isRetraitPret) return '⏳ 1xBet retiré — Waafi en cours';
+  if(t.status==='Paiement Reçu' && d && (t.webhookStatus==='echec')) return '⚠️ Paiement reçu — crédit échoué';
+  if(t.status==='Paiement Reçu' && d) return '💳 Paiement reçu — crédit en cours';
+  if(t.status==='Crédité avec succès') return '✅ Crédité avec succès';
+  if(t.status==='Paiement Non Reçu') return '❌ Paiement non reçu';
+  return t.status||'En attente';
 }
 
 function txHTML(t,showActions){
   const d=t.type==='Dépôt';
+  const isFraude=!!(t.fraudType||(t.flagRaison&&t.flagRaison.toUpperCase().includes('FRAUDE')));
   const isRetraitPret=!d && t.status==='Paiement Reçu' && (t.webhookStatus==='ok'||t.webhookStatus==='ok_retry_rt');
-  const sc=t.status==='Crédité avec succès'?'confirmed':(t.status==='Paiement Non Reçu'||t.status==='Annulé')?'rejected':isRetraitPret?'pending':'pending';
-  const statusLabel= !d && t.status==='Crédité avec succès' ? '✅ Waafi envoyé'
-    : !d && t.status==='Paiement Non Reçu' ? '❌ Retrait échoué'
-    : isRetraitPret ? '⏳ 1xBet retiré — Waafi en cours'
-    : (t.status||'En attente');
+  const sc=t.status==='Crédité avec succès'?'confirmed':(t.status==='Paiement Non Reçu'||t.status==='Annulé')?'rejected':'pending';
+  const statusLabel=friendlyStatus(t);
   const details=d
     ?`<span>ID 1xBet: ${t.userId1xBet||t.id1x||'—'}</span><span>Transfer ID: ${t.waafitranfertID||t.hash||'—'}</span>`
     :`<span>Code: ${(t.withdrawalCode||t.code||'—').substring(0,16)}</span><span>Waafi: ${t.waafiNumber||t.tel||'—'}</span>`;
   const terminerBtn=isRetraitPret
     ?`<button onclick="event.stopPropagation();terminerRetrait('${t.ref}')" style="background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:5px 12px;font-size:0.68rem;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Terminer</button>`
     :'';
-  return `<div class="tx-item" onclick="openOrderDetail('${t.ref}')" style="cursor:pointer;">
+  const fraudBadge=isFraude?'<span style="color:#ff4040;font-size:0.62rem;font-weight:700;margin-left:6px;">🚨 FRAUDE</span>':'';
+  const flagLine=t.flagRaison?`<div style="font-size:0.63rem;color:#ffb347;margin-top:4px;word-break:break-word;">⚠️ ${t.flagRaison}</div>`:'';
+  const numLine=(t.numeroPayment)?`<div style="font-size:0.63rem;color:var(--muted);margin-top:2px;">📱 ${t.numeroPayment}</div>`:'';
+  return `<div class="tx-item" onclick="openOrderDetail('${t.ref}')" style="cursor:pointer;${isFraude?'border-left:3px solid #ff4040;':''}">
     <div class="tx-top">
       <div class="tx-icon ${d?'depot':'retrait'}">${d?'📥':'📤'}</div>
       <div class="tx-info">
-        <div class="tx-ref">#${t.orderId||t.ref||'N/A'}</div>
+        <div class="tx-ref">#${t.orderId||t.ref||'N/A'}${fraudBadge}</div>
         <div class="tx-meta">${t.date||''}</div>
       </div>
       <div class="tx-right">
-        <div class="tx-amount ${d?'depot':'retrait'}">${d?'+':'-'}${Number(t.montant).toLocaleString()} DJF</div>
+        <div class="tx-amount ${d?'depot':'retrait'}">${d?'+':'-'}${Number(t.montant||0).toLocaleString()} DJF</div>
       </div>
     </div>
     <div class="tx-bottom">
@@ -1569,6 +1595,7 @@ function txHTML(t,showActions){
       ${terminerBtn}
     </div>
     <div class="tx-detail">${details}</div>
+    ${numLine}${flagLine}
   </div>`;
 }
 
@@ -1603,26 +1630,49 @@ function openOrderDetail(ref){
   document.getElementById('odm-ref').textContent='#'+(tx.orderId||tx.ref||'—');
   document.getElementById('odm-date').textContent=tx.date||'';
 
-  // Rows
+  // Rows — base champs
   var rows=isDepot?[
     {l:'N° Commande', v:tx.orderId||tx.ref||'—', c:tx.orderId||tx.ref||''},
-    {l:'Montant', v:tx.amount||Number(tx.montant).toLocaleString()+' DJF', c:''},
+    {l:'Montant soumis', v:Number(tx.montant||0).toLocaleString()+' DJF', c:''},
     {l:'ID 1xBet', v:tx.userId1xBet||tx.id1x||'—', c:tx.userId1xBet||tx.id1x||''},
     {l:'Transfer ID', v:tx.waafitranfertID||tx.hash||'—', c:tx.waafitranfertID||tx.hash||''},
     {l:'N° Expéditeur', v:tx.numeroPayment||'—', c:tx.numeroPayment||''},
     {l:'WhatsApp', v:tx.whatsapp||'—', c:tx.whatsapp||''},
-    {l:'Statut', v:tx.status||'En attente', c:''}
+    {l:'Statut', v:friendlyStatus(tx), c:''}
   ]:[
     {l:'N° Commande', v:tx.orderId||tx.ref||'—', c:tx.orderId||tx.ref||''},
-    {l:'Montant', v:tx.amount||Number(tx.montant).toLocaleString()+' DJF', c:''},
+    {l:'Montant soumis', v:Number(tx.montant||0).toLocaleString()+' DJF', c:''},
     {l:'Code retrait', v:tx.withdrawalCode||tx.code||'—', c:tx.withdrawalCode||tx.code||''},
     {l:'Numéro Waafi', v:tx.waafiNumber||tx.tel||'—', c:tx.waafiNumber||tx.tel||''},
-    {l:'Statut', v:tx.status||'En attente', c:''}
+    {l:'WhatsApp', v:tx.whatsapp||'—', c:tx.whatsapp||''},
+    {l:'Statut', v:friendlyStatus(tx), c:''}
   ];
+  // Champs dynamiques selon données disponibles
+  if(isDepot && tx.montantRecu && Number(tx.montantRecu)!==Number(tx.montant))
+    rows.push({l:'Montant reçu (Waafi)', v:Number(tx.montantRecu).toLocaleString()+' DJF ⚠️', c:''});
+  if(isDepot && tx.expediteurRecu)
+    rows.push({l:'Expéditeur Waafi', v:tx.expediteurRecu, c:tx.expediteurRecu});
+  if(!isDepot && tx.montantMobcash)
+    rows.push({l:'Montant MobCash', v:Number(tx.montantMobcash).toLocaleString()+' DJF', c:''});
+  if(tx.flagRaison)
+    rows.push({l:'⚠️ Raison', v:tx.flagRaison, c:'', warn:true});
+  if(tx.fraudType)
+    rows.push({l:'🚨 Type fraude', v:tx.fraudType, c:'', warn:true});
+  if(tx.doublon_suspect)
+    rows.push({l:'🔁 Doublon suspect', v:'#'+tx.doublon_suspect, c:''});
+  if(tx.confirmedBy)
+    rows.push({l:'Confirmé par', v:tx.confirmedBy, c:''});
+  if(tx.confirmedAt){
+    var cat=tx.confirmedAt&&tx.confirmedAt.toDate?tx.confirmedAt.toDate().toLocaleString('fr-FR'):new Date(tx.confirmedAt).toLocaleString('fr-FR');
+    rows.push({l:'Confirmé le', v:cat, c:''});
+  }
+  if(tx.rejectedBy)
+    rows.push({l:'Rejeté par', v:tx.rejectedBy, c:''});
 
   document.getElementById('odm-rows').innerHTML=rows.map(function(r){
     var copyBtn=r.c?('<button class="odm-copy" data-v="'+r.c+'" onclick="adminCopy(this)">📋</button>'):'';
-    var val=r.link?('<a href="'+r.link+'" target="_blank" style="color:var(--gold);text-decoration:none;">'+r.v+'</a>'):('<span class="odm-val">'+r.v+'</span>');
+    var valStyle=r.warn?'color:#ffb347;word-break:break-word;':'';
+    var val=r.link?('<a href="'+r.link+'" target="_blank" style="color:var(--gold);text-decoration:none;">'+r.v+'</a>'):('<span class="odm-val" style="'+valStyle+'">'+r.v+'</span>');
     return '<div class="odm-row"><span class="odm-label">'+r.l+'</span><div class="odm-val-wrap">'+val+copyBtn+'</div></div>';
   }).join('');
 
