@@ -1185,7 +1185,7 @@ exports.ordresBloques = onSchedule(
 // confirme directement (ordre soumis avant l'arrivée du SMS).
 // ══════════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
-  { region: REGION, secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
+  { region: REGION, invoker: "public", secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1267,7 +1267,7 @@ exports.smsWebhook = onRequest(
 // HTTP — HEALTH CHECK
 // ══════════════════════════════════════════════════════════════════
 exports.healthCheck = onRequest(
-  { region: REGION, secrets: [] },
+  { region: REGION, invoker: "public", secrets: [] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1293,7 +1293,7 @@ exports.healthCheck = onRequest(
 // Envoie automatiquement via UltraMsg — pas de wa.me manuel.
 // ══════════════════════════════════════════════════════════════════
 exports.waRecap = onRequest(
-  { region: REGION, secrets: [ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
+  { region: REGION, invoker: "public", secrets: [ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1345,7 +1345,7 @@ exports.waRecap = onRequest(
 // Flux simple : client donne numéro d'ordre → Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
 exports.supportClient = onRequest(
-  { region: REGION, secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+  { region: REGION, invoker: "public", secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
                               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
@@ -1620,7 +1620,7 @@ exports.supportClient = onRequest(
 // HTTP — ADMIN BOT
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
-  { region: REGION, secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_SECRET,
+  { region: REGION, invoker: "public", secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_SECRET,
                               ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
                               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
