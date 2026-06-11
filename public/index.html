@@ -538,12 +538,20 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div class="field">
+        <label>🎯 ID Compte 1xBet</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="tel" id="retrait-id1x" placeholder="Ex: 1234567890" inputmode="numeric" maxlength="12" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+          <button onclick="pasteField('retrait-id1x')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
+        </div>
+      </div>
+
+      <div class="field">
         <label data-i18n="label-code-retrait">🔑 Code de retrait 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="text" id="retrait-code" placeholder="Ex: jK7o" maxlength="4" style="flex:1;">
+          <input type="text" id="retrait-code" placeholder="Ex: jK7o" maxlength="8" style="flex:1;">
           <button onclick="pasteField('retrait-code')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
         </div>
-        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-code-retrait">Lettres et chiffres · 4 caractères</div>
+        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-code-retrait">Lettres et chiffres</div>
       </div>
       <div class="method-display">
         <div class="method-logo" style="background:transparent;padding:0;overflow:hidden;"><img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCABxAHgDASIAAhEBAxEB/8QAGwABAAIDAQEAAAAAAAAAAAAAAAUGAwQHAQL/xAA6EAABAwMBBQUFBwIHAAAAAAABAAIDBAURIQYSMUFhEyJRcbEUMoHB0TVCUnKRoeEkMwcVIyU0Y9L/xAAaAQACAwEBAAAAAAAAAAAAAAAAAwEEBQIG/8QAKBEAAgICAQMDAwUAAAAAAAAAAAECAwQREiExQQUTURUiI2FxofDx/9oADAMBAAIRAxEAPwDvqIiACKobQbXPpKt9Dbw3tIziSVwyAfAD5qKpdpbs2QOdVF/i17QQqdudXU9PqJ9+HLijoiKPtN0bc6Yv3dyVmj2/MdFIKzXZGyKnF9GO7hEWjXXeht+lRUNa/wDANXfoFMpRityeiG0u5vIqjVbZk5bR0uB+OU/IfVRct/ulQe9VuYPCMBqpWeo0w7dRbuj4OhIuae11Lzl1TMT1kK2qe6V1OQY6qXyc7eH7qv8AVob6xZKs2dBRQtovra1wgqAGTn3SOD/oVNLSpuhdHlB9BiewiImgEREAcanD23CpEme0Ez97PjvFbcHJXO+7IsuNS6spJGxVDvfa4d158ehUFJs/UW2Ptq+opqeIfeL94noABklYWVjWJvS2Z0aZVye+xNbJh3tE5+72YB88qWud/oLUC2aXfm5RR6u+Ph8VSJL/ACx0xpLZvQQk9+Y/3JP/ACOgUY1oyXHLnE5JOuV1VkPHpVcerGyyemoE5X7UXG4Esg/poTyYe8fN30UU2BziS52p48yjePFZ2qjbdOb3Ji1uT3I9ZTs55KztpozyP6r5as7FUlJj4xRjNGcZY7PQrGAQcEYIW+1fNRCHs32+839wl8/DG8Om0a7HFrg5pII1BHJXq11nt1AyU++O6/zCojSPFWPZeU9pUQ50IDx6LS9MucL+HiRMSyIiL0x2ERVfbS43KhomNpGFlPJpLUNPeb06Z8VzOahHkziyahFyZlv21lNay6npg2erGhGe6zzPj0VasM5vO1EL7m/2gkOLQ/3QQMgAcMdFWWqQtVT7Hc6Wo5RyNJ8s6/ssqeRKc05dtmY75TmnLsXLbO2wso4ayGJjHNfuPLW4yDwz8fVU9gLiABkk4AXTL/T+12KrjAyez32+Y1+Somz1N7Xe6VmMtDu0d5DX6KM2rdyS8li6H5FryX23WiloqGOHsI3O3Rvuc0EuPNVG+0DKC6OZE3die0PYPDxH6q41twbR1NHCcZqJNzyGPrhRG1tNvU8FSBqxxYfI/wAhOzaoOhqK6xLM4rj08ELZaVtXdIYnjLPecPEBWLaGnp2UDHtjY2QPAaWjGnMLQ2Sh3qionI91oYPjr8ln2mnzLBAOQLz6D5qlCMYYMptdX/gQWomxYKOB9EZnxNe9ziMuGcAKQkfboXlkgp2uHEFoWts99lj87lG3g/7pJ5N9E2VqxsOFkYpt6GxRKGoszXYJpAfDdC+6aW3S1X9J2RlDDkxjAxnmqdVYE/Hi0Kd2Xi/5E3kweq4xM+V9sYcEtkedFiREW6SF8SxMmidFKxr2OGHNcMghfaIA5vtJss+1OdVUgL6InUcTF59OqrzfBdoc0OaWuALSMEEaEKhbR7LGic6toGE03F8Q1MfUdPRZuVja+6HYzr8bj90Oxb7LUCvsVLK7XfiDX+Y0PooHZG3mC43CR4/suMDf119As2w1T2lsnpidYpMjycPqCrFDTxUvbvbp2jzK89cD6J8Iq1QsfgtQXNRl8ELfLTX3C4QzU7omshaN3ecQd7OfDyUndac1VoniIG/ubwHUaqsu2yrDI7cp6fcyd3O9nHLmrFZLm660JlkaxsjXlrmt4dEqqyi2coxfWRMZQk3rya+zEPZ2gSY1leXfDgPRQl4n7e7TkcGncHwVtDY6CgIbpHCwkfDVUTeL3F7uLjkqj6j+Kiuk6fRJFu2e+yx+dy2p62jhmMcz2h445blauz32WPzuUbePtSTyb6J1mRLHwq5xSfbv+wyK2Sb7vamuLXSsyP8ArP0W5TMhEW/AwMZL38YxnPPCpdDTm4XNsf3XOy4+DQr0AAAAMAJ2BfZkJzmktfBCewiItIkIiIAJxREARFNaY7XdpKylAbTzMxLFyYeIcOnHTqvm/wB4pqe1SsiqI3zStLGNY4E68Tp0Uyqrf9mRIX1lvYA/jJC0e91HXoqt8ZwrftL+/oJmnGL4IqTVZNlrhHSVUsMzwyOUDBPAOCrbdCs7VgV2uqamvBWrensu9/uUDLe+COVrpJdMNOcDmVVmrXYthqXl5Er58n0LKlyey0WGtp46IwyStY9rie8cZBUXeKpktVNLGctOGtPjotFq2KGjNzuLYiD2EXekPyU+/ZkQhjJdhu9Imdm6H2ekNS8Ykm4Z5N/lTa8AAAAGANAF6vT0VKmtQXgEtBERNJCIiACIiACIiAK7fdnm1e9V0bQ2o4vYNBJ/PqqkGlri1wIcDgg8QunqFvViZXgzwAMqQNfB/n16rLzcHn99ff4Ezq8op7VsNWEsfFIWPaWvacFp4grK1efmcxMzd8lrI2l0jzusaOZVwtdvbbqNsQO9Ie9I78Tlo2O2GForJ24lcMRtP3W+PmVNrf8ATMP2o+5Pu/4Q5fIREWqdBERAEbfb1TWC1SV9SHOa0hrWN4vceACqlL/iDVx1cP8Am9mNJRzODRM2TeMeTgbw5fsVO7Y2Oa/WI09K5oqYpWzRBxwHEcs8sgnVc/g2Vvl2qm0UlrloaYOAfPM5ujN4ucCQP9Q5OhOSMcUAdgReNaGMDRwAwF6gAiIgAiIgCLu1njuDO0ZhlQ0aO5O6FaFnsjxJ29ZHuhh7sZ5kcz0VjRVJ4VU7Va11I4rewiIrZIREQAREQAXg4oiAPUREAEREAEREAEREAEREAEREAEREAf/Z" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"></div>
@@ -701,6 +709,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;">
       <div style="font-weight:700;font-size:0.85rem;color:#e91e8c;margin-bottom:12px;">📤 Test Retrait (Payout)</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
+        <input type="tel" id="test-retrait-userid" placeholder="ID 1xBet du joueur (ex: 1234567890)" inputmode="numeric" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         <input type="text" id="test-retrait-code" placeholder="Code retrait 1xBet (ex: Ab3c)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="number" id="test-retrait-montant" placeholder="Montant (ex: 250)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <button onclick="testMobcashAPI('retrait')" style="background:linear-gradient(135deg,#e91e8c,#c2185b);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">▶ Tester Retrait</button>
@@ -1397,10 +1406,12 @@ async function submitDepot(){
 
 async function submitRetrait(){
   if(!_tsRetraitOk){ showToast('⚠️ Cochez la vérification avant de soumettre','error'); return; }
+  const id1x=document.getElementById('retrait-id1x').value.trim();
   const c=document.getElementById('retrait-code').value.trim();
   const t=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
   const whatsapp=document.getElementById('retrait-whatsapp').value.trim();
+  if(!id1x){showToast('⚠️ ID 1xBet requis','error');return;}
   if(!c||c.length<2){showToast('⚠️ Code retrait requis','error');return;}
   if(!t||t.length!==8||!t.startsWith('77')){showToast('⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)','error');return;}
   if(!m||Number(m)<250){showToast('⚠️ Minimum 250 DJF','error');return;}
@@ -1413,6 +1424,7 @@ async function submitRetrait(){
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
       orderId:orderId,
+      userId1xBet:id1x,
       withdrawalCode:c,
       waafiNumber:t,
       montant:Number(m),
@@ -1426,6 +1438,7 @@ async function submitRetrait(){
       ts:now.getTime(),
       ref:orderId
     };
+    document.getElementById('retrait-id1x').value='';
     document.getElementById('retrait-code').value='';
     document.getElementById('retrait-tel').value='';
     document.getElementById('retrait-montant').value='';

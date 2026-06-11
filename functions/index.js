@@ -746,10 +746,15 @@ exports.onNouvelRetrait = onDocumentCreated(
       return;
     }
 
-    const cashdeskIdVal = MOBCASH_CASHDESKID.value() || "0";
+    const userId1xBetVal = (tx.userId1xBet || tx.id1x || "").trim();
+    if (!userId1xBetVal) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>Retrait sans ID 1xBet</b> — #${ordreId}\nID compte 1xBet manquant, intervention manuelle requise.`);
+      return;
+    }
 
     try {
-      const mobcashData    = await callMobcash("Retrait", cashdeskIdVal, montantVal, tidRetrait);
+      const mobcashData    = await callMobcash("Retrait", userId1xBetVal, montantVal, tidRetrait);
       const montantMobcash = Number(
         mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
       );
@@ -1256,10 +1261,7 @@ exports.testMobcash = onRequest(
     const type      = (body.type || "depot").toLowerCase();
     const montant   = Number(body.montant || 0);
     const code      = (body.code || "").trim();
-    // Pour le retrait, userId = cashdeskId (fixe). Pour le dépôt = ID 1xBet du joueur.
-    const userId    = type === "retrait"
-      ? MOBCASH_CASHDESKID.value()
-      : (body.userId || "0").trim();
+    const userId    = (body.userId || "0").trim();
 
     try {
       const data = type === "retrait"
