@@ -135,8 +135,9 @@ async function detecterDoublon(phone, montant, type, excluId) {
   const montantMax = montant * 1.05;
 
   try {
-    const snap = await db.collection("orders")
-      .where("numeroPayment", "==", phone).where("type", "==", type)
+    const colName2 = type === "Retrait" ? "retrait_orders" : "depot_orders";
+    const snap = await db.collection(colName2)
+      .where("numeroPayment", "==", phone)
       .where("status", "in", ["En attente", "Crédité avec succès"]).get();
 
     for (const doc of snap.docs) {
@@ -279,6 +280,17 @@ function mismatchToRaison(mismatches) {
 // waafiDoc = document waafi_notifications correspondant
 // ordreDoc = document orders à confirmer
 // ══════════════════════════════════════════════════════════════════
+// ── Recherche un ordre dans les deux collections ──
+async function findOrder(ordreId) {
+  const [depotSnap, retraitSnap] = await Promise.all([
+    db.collection("depot_orders").where("orderId", "==", ordreId).limit(1).get(),
+    db.collection("retrait_orders").where("orderId", "==", ordreId).limit(1).get(),
+  ]);
+  if (!depotSnap.empty) return depotSnap.docs[0];
+  if (!retraitSnap.empty) return retraitSnap.docs[0];
+  return null;
+}
+
 async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
   const ordre        = ordreDoc.data();
   const notif        = waafiDoc.data();
@@ -617,8 +629,8 @@ function extractNumClient(text, own = "77275572") {
 // ══════════════════════════════════════════════════════════════════
 exports.onNouvelDepot = onDocumentCreated(
   {
-    document: "orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_SECRET, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+    document: "depot_orders/{docId}", region: REGION,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
@@ -655,7 +667,7 @@ exports.onNouvelDepot = onDocumentCreated(
     // ── FRAUDE : Transfer ID déjà utilisé pour un autre ordre ──
     if (transferId) {
       const [confirmeSnap, ordreTraiteSnap] = await Promise.all([
-        db.collection("orders")
+        db.collection("depot_orders")
           .where("waafitranfertID", "==", transferId)
           .where("status", "==", "Crédité avec succès").limit(1).get(),
         db.collection("ordre_traite")
@@ -670,7 +682,7 @@ exports.onNouvelDepot = onDocumentCreated(
         if (srcConfirme) ancienRef = srcConfirme.data().orderId || srcConfirme.id;
         else if (srcMatch) ancienRef = srcMatch.data().ordreId || srcMatch.id;
 
-        await db.collection("orders").doc(docId).update({
+        await db.collection("depot_orders").doc(docId).update({
           status: "Paiement Non Reçu",
           flagRaison: `FRAUDE — Paiement Waafi TID ${transferId} déjà utilisé pour l'ordre #${ancienRef}`,
           flaggedAt: FieldValue.serverTimestamp(),
@@ -693,7 +705,7 @@ exports.onNouvelDepot = onDocumentCreated(
     // ── DOUBLON ──
     const doublon = await detecterDoublon(phone, Number(tx.montant), tx.type, docId);
     if (doublon) {
-      await db.collection("orders").doc(docId).update({
+      await db.collection("depot_orders").doc(docId).update({
         doublon_suspect: doublon.ordreId, doublon_alerte: true,
         doublon_at: FieldValue.serverTimestamp(),
       });
@@ -704,7 +716,7 @@ exports.onNouvelDepot = onDocumentCreated(
     }
 
     if (!transferId) {
-      await db.collection("orders").doc(docId).update({
+      await db.collection("depot_orders").doc(docId).update({
         status: "Paiement Non Reçu",
         flagRaison: "Transfer ID manquant",
         flaggedAt: FieldValue.serverTimestamp(),
@@ -742,7 +754,7 @@ exports.onNouvelDepot = onDocumentCreated(
     }
 
     if (waafiDoc) {
-      const ordreSnap = await db.collection("orders").doc(docId).get();
+      const ordreSnap = await db.collection("depot_orders").doc(docId).get();
       const { score, mismatches, decision } = scorerCorrespondance(tx, waafiDoc.data());
 
       if (decision === "confirmer") {
@@ -751,7 +763,7 @@ exports.onNouvelDepot = onDocumentCreated(
       }
 
       const raison = mismatchToRaison(mismatches);
-      await db.collection("orders").doc(docId).update({
+      await db.collection("depot_orders").doc(docId).update({
         status: "Paiement Non Reçu",
         flagRaison: raison,
         flaggedAt: FieldValue.serverTimestamp(),
@@ -765,7 +777,7 @@ exports.onNouvelDepot = onDocumentCreated(
     }
 
     // Aucune notification trouvée → Transfer ID invalide/frauduleux
-    await db.collection("orders").doc(docId).update({
+    await db.collection("depot_orders").doc(docId).update({
       status: "Paiement Non Reçu",
       flagRaison: `Paiement non reçu — Transfer ID ${transferId} introuvable dans notre système`,
       flaggedAt: FieldValue.serverTimestamp(),
@@ -793,7 +805,7 @@ exports.onNouvelDepot = onDocumentCreated(
 // ══════════════════════════════════════════════════════════════════
 exports.onNouvelRetrait = onDocumentCreated(
   {
-    document: "orders/{docId}", region: REGION,
+    document: "retrait_orders/{docId}", region: REGION,
     secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
@@ -849,7 +861,7 @@ exports.onNouvelRetrait = onDocumentCreated(
       );
 
       if (montantMobcash !== montantVal) {
-        await db.collection("orders").doc(docId).update({
+        await db.collection("retrait_orders").doc(docId).update({
           status: "Paiement Non Reçu",
           flagRaison: `Montant incorrect — MobCash: ${montantMobcash.toLocaleString()} DJF, Soumis: ${montantVal.toLocaleString()} DJF`,
           montantMobcash,
@@ -882,7 +894,7 @@ exports.onNouvelRetrait = onDocumentCreated(
         status: "retrait_en_cours",
       });
 
-      await db.collection("orders").doc(docId).update({
+      await db.collection("retrait_orders").doc(docId).update({
         status: "Paiement Reçu",
         webhookStatus: "ok",
         webhookAt: FieldValue.serverTimestamp(),
@@ -921,7 +933,7 @@ exports.onNouvelRetrait = onDocumentCreated(
       logAudit("retrait_mobcash_ok", { ordreId, waafiNum, montantMobcash });
 
     } catch (e) {
-      await db.collection("orders").doc(docId).update({
+      await db.collection("retrait_orders").doc(docId).update({
         status: "Paiement Non Reçu",
         flagRaison: `MobCash Payout échoué: ${e.message}`,
         flaggedAt: FieldValue.serverTimestamp(),
@@ -949,7 +961,7 @@ exports.onNouvelRetrait = onDocumentCreated(
 // ══════════════════════════════════════════════════════════════════
 exports.onDepotUpdated = onDocumentUpdated(
   {
-    document: "orders/{docId}", region: REGION,
+    document: "depot_orders/{docId}", region: REGION,
     secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
@@ -1047,7 +1059,7 @@ exports.onDepotUpdated = onDocumentUpdated(
 // ══════════════════════════════════════════════════════════════════
 exports.onRetraitUpdated = onDocumentUpdated(
   {
-    document: "orders/{docId}", region: REGION,
+    document: "retrait_orders/{docId}", region: REGION,
     secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
@@ -1168,7 +1180,7 @@ exports.ordresBloques = onSchedule(
     const adminId = TELEGRAM_ADMIN_ID.value();
 
     // ── PARTIE 1 : Ordres En attente → tenter auto-confirmation ────
-    const snapAttente = await db.collection("orders")
+    const snapAttente = await db.collection("depot_orders")
       .where("status", "==", "En attente")
       .get().catch(() => ({ docs: [] }));
 
@@ -1219,7 +1231,7 @@ exports.ordresBloques = onSchedule(
     const alertThrottle = Date.now() - dernierAlerte.getTime() < 60 * 60 * 1000;
 
     if (!alertThrottle) {
-      const reSnapAttente = await db.collection("orders")
+      const reSnapAttente = await db.collection("depot_orders")
         .where("status", "==", "En attente").get().catch(() => ({ docs: [] }));
 
       const vieux = reSnapAttente.docs.filter((d) => {
@@ -1243,9 +1255,8 @@ exports.ordresBloques = onSchedule(
 
     // ── PARTIE 3a : Recovery Dépôt — "Paiement Reçu" + webhookStatus != ok ──
     // MobCash Deposit n'a pas crédité 1xBet. Re-tente automatiquement.
-    const snapDepotRecu = await db.collection("orders")
+    const snapDepotRecu = await db.collection("depot_orders")
       .where("status", "==", "Paiement Reçu")
-      .where("type", "==", "Dépôt")
       .get().catch(() => ({ docs: [] }));
 
     for (const ordreDoc of snapDepotRecu.docs) {
@@ -1296,9 +1307,8 @@ exports.ordresBloques = onSchedule(
 
     // ── PARTIE 3b : Recovery Retrait — "Paiement Reçu" + webhookStatus != ok/ok_retry_rt ──
     // MobCash Payout n'a pas retiré les fonds 1xBet. Re-tente et renvoie USSD à l'admin.
-    const snapRetraitRecu = await db.collection("orders")
+    const snapRetraitRecu = await db.collection("retrait_orders")
       .where("status", "==", "Paiement Reçu")
-      .where("type", "==", "Retrait")
       .get().catch(() => ({ docs: [] }));
 
     const loginId = MOBCASH_LOGIN.value() || "0";
@@ -1403,7 +1413,7 @@ exports.smsWebhook = onRequest(
     // Cas rare : ordre déjà soumis avant que le SMS arrive
     if (!transferId) return;
 
-    const ordreSnap = await db.collection("orders")
+    const ordreSnap = await db.collection("depot_orders")
       .where("waafitranfertID", "==", transferId)
       .where("status", "==", "En attente")
       .limit(1).get();
@@ -1448,14 +1458,14 @@ exports.healthCheck = onRequest(
     const t0 = Date.now();
     let firestoreMs = "?", statut = "ok";
     try {
-      await db.collection("orders").limit(1).get();
+      await db.collection("depot_orders").limit(1).get();
       firestoreMs = `${Date.now() - t0}ms`;
     } catch (e) { firestoreMs = `erreur: ${e.message}`; statut = "degraded"; }
 
     res.json({
       statut, timestamp: new Date().toISOString(), region: REGION,
       firestore: firestoreMs, version: "6.0",
-      flow: "sms_webhook → waafi_notifications → onNouvelOrdre → confirmerDepot",
+      flow: "sms_webhook → waafi_notifications → onNouvelDepot/onNouvelRetrait → confirmerDepot",
       exports: 7,
     });
   }
@@ -1474,11 +1484,10 @@ exports.waRecap = onRequest(
     const ordreId = (req.query.ordreId || (req.body || {}).ordreId || "").trim();
     if (!ordreId) { res.status(400).json({ ok: false, reason: "ordreId requis" }); return; }
 
-    const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get()
-      .catch(() => ({ empty: true }));
-    if (snap.empty) { res.status(404).json({ ok: false, reason: "Ordre introuvable" }); return; }
+    const orderDoc = await findOrder(ordreId).catch(() => null);
+    if (!orderDoc) { res.status(404).json({ ok: false, reason: "Ordre introuvable" }); return; }
 
-    const o          = snap.docs[0].data();
+    const o          = orderDoc.data();
     const phone      = o.whatsapp || "";
     if (!phone) { res.status(400).json({ ok: false, reason: "Aucun numéro WhatsApp" }); return; }
 
@@ -1712,9 +1721,8 @@ exports.supportClient = onRequest(
 
       // ── Numéro d'ordre détecté → chercher dans Firestore ──
       if (ordreId) {
-        const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get()
-          .catch(() => db.collection("orders").where("orderId", "==", ordreId).limit(1).get());
-        if (snap.empty) {
+        const orderDoc = await findOrder(ordreId).catch(() => null);
+        if (!orderDoc) {
           await send(
             `❓ Ordre <b>#${ordreId}</b> introuvable.\n\n` +
             `Vérifiez votre numéro d'ordre sur <b>kaffi-pay.com</b>.\n` +
@@ -1722,8 +1730,8 @@ exports.supportClient = onRequest(
           );
           return;
         }
-        const o          = snap.docs[0].data();
-        const oRef       = snap.docs[0].ref;
+        const o          = orderDoc.data();
+        const oRef       = orderDoc.ref;
         const wbOk       = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
         const adminToken = TELEGRAM_TOKEN.value();
         const adminId2   = TELEGRAM_ADMIN_ID.value();
@@ -1832,13 +1840,12 @@ exports.adminBot = onRequest(
 
           await answerCallback(cbToken, cbId, "✅ Retrait finalisé !");
 
-          const snap = await db.collection("orders").where("orderId", "==", ordreId).limit(1).get();
-          if (snap.empty) {
+          const doc = await findOrder(ordreId).catch(() => null);
+          if (!doc) {
             await sendTelegram(cbToken, cbAdminId, `❓ Ordre <b>#${ordreId}</b> introuvable.`);
             return;
           }
 
-          const doc  = snap.docs[0];
           const data = doc.data();
 
           if (data.status === "Crédité avec succès") {
@@ -1892,9 +1899,9 @@ exports.adminBot = onRequest(
       const confirmMatch = text.match(/^confirmer?\s+#?(\d{5,8})\b/i);
       if (confirmMatch) {
         const num  = confirmMatch[1];
-        const snap = await db.collection("orders").where("orderId", "==", num).limit(1).get();
-        if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
-        const doc  = snap.docs[0]; const data = doc.data();
+        const doc = await findOrder(num).catch(() => null);
+        if (!doc) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        const data = doc.data();
         if (data.status === "Crédité avec succès") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> déjà crédité.`); return; }
         if (data.status === "Paiement Reçu") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> — MobCash en cours de traitement.`); return; }
         if (!transitionValide(data.status, "Paiement Reçu")) {
@@ -1915,9 +1922,9 @@ exports.adminBot = onRequest(
       if (rejectMatch) {
         const num    = rejectMatch[1];
         const raison = (rejectMatch[2] || "Rejeté par admin").trim();
-        const snap   = await db.collection("orders").where("orderId", "==", num).limit(1).get();
-        if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
-        const doc  = snap.docs[0]; const data = doc.data();
+        const doc = await findOrder(num).catch(() => null);
+        if (!doc) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        const data = doc.data();
         if (data.status === "Paiement Non Reçu") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> déjà rejeté.`); return; }
         if (!transitionValide(data.status, "Paiement Non Reçu")) {
           await sendTelegram(token, adminId, `⛔ Impossible de rejeter un ordre en statut <b>${data.status}</b>.`); return;
@@ -1932,9 +1939,9 @@ exports.adminBot = onRequest(
       const remettreMatch = text.match(/^remettre\s+#?(\d{5,8})\b/i);
       if (remettreMatch) {
         const num  = remettreMatch[1];
-        const snap = await db.collection("orders").where("orderId", "==", num).limit(1).get();
-        if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
-        const doc  = snap.docs[0]; const data = doc.data();
+        const doc = await findOrder(num).catch(() => null);
+        if (!doc) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        const data = doc.data();
         if (!transitionValide(data.status, "En attente")) {
           await sendTelegram(token, adminId, `⛔ Impossible de remettre en attente un ordre en statut <b>${data.status}</b>.`); return;
         }
@@ -1948,9 +1955,12 @@ exports.adminBot = onRequest(
       const clientMatch = text.match(/^client\s+((?:77|78|70|71|21)\d{6})\b/i);
       if (clientMatch) {
         const phone = clientMatch[1];
-        const snap  = await db.collection("orders").where("numeroPayment", "==", phone)
-          .orderBy("ts", "desc").limit(10).get()
-          .catch(() => db.collection("orders").where("numeroPayment", "==", phone).limit(10).get());
+        const [depotSnap2, retraitSnap2] = await Promise.all([
+          db.collection("depot_orders").where("numeroPayment", "==", phone).limit(10).get().catch(() => ({ docs: [] })),
+          db.collection("retrait_orders").where("waafiNumber", "==", phone).limit(10).get().catch(() => ({ docs: [] })),
+        ]);
+        const snap = { docs: [...depotSnap2.docs, ...retraitSnap2.docs], empty: true };
+        snap.empty = snap.docs.length === 0;
         if (snap.empty) { await sendTelegram(token, adminId, `❓ Aucun ordre pour <code>${phone}</code>.`); return; }
         const lignes = snap.docs.map((d) => { const o = d.data(); return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status}`; });
         await sendTelegram(token, adminId, `👤 <b>Ordres ${phone} (${snap.size})</b>\n\n${lignes.join("\n")}`);
@@ -1960,9 +1970,11 @@ exports.adminBot = onRequest(
       // alerte
       if (t === "alerte" || t === "/alerte") {
         const cutoff = new Date(Date.now() - 30 * 60 * 1000);
-        const snap   = await db.collection("orders").where("status", "==", "En attente")
-          .orderBy("ts", "asc").get()
-          .catch(() => db.collection("orders").where("status", "==", "En attente").get());
+        const [depotAl, retraitAl] = await Promise.all([
+          db.collection("depot_orders").where("status", "==", "En attente").get().catch(() => ({ docs: [] })),
+          db.collection("retrait_orders").where("status", "==", "En attente").get().catch(() => ({ docs: [] })),
+        ]);
+        const snap = { docs: [...depotAl.docs, ...retraitAl.docs] };
         const vieux = snap.docs.filter((d) => { const ts = d.data().ts; return ts && new Date(ts) < cutoff; });
         if (!vieux.length) { await sendTelegram(token, adminId, "✅ Aucun ordre en attente > 30 min."); return; }
         const lignes = vieux.map((d) => {
@@ -2152,7 +2164,7 @@ exports.adminBot = onRequest(
           return;
         }
 
-        const ordreSnap = await db.collection("orders")
+        const ordreSnap = await db.collection("depot_orders")
           .where("waafitranfertID", "==", tid)
           .where("status", "==", "En attente").limit(1).get();
 
@@ -2209,9 +2221,8 @@ exports.adminBot = onRequest(
       const rechargeMatch = text.match(/^recharge\s+#?(\d{5,8})\b/i);
       if (rechargeMatch) {
         const num  = rechargeMatch[1];
-        const snap = await db.collection("orders").where("orderId", "==", num).limit(1).get();
-        if (snap.empty) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
-        const oDoc  = snap.docs[0];
+        const oDoc = await findOrder(num).catch(() => null);
+        if (!oDoc) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const oData = oDoc.data();
         if (oData.status !== "Crédité avec succès") {
           await sendTelegram(token, adminId, `⛔ Ordre <b>#${num}</b> non crédité (statut: <b>${oData.status}</b>).`); return;
@@ -2236,8 +2247,10 @@ exports.adminBot = onRequest(
 
       // Requêtes générales
       const [ordersSnap, notifSnap] = await Promise.all([
-        db.collection("orders").orderBy("ts", "desc").limit(20).get()
-          .catch(() => db.collection("orders").limit(20).get()),
+        Promise.all([
+          db.collection("depot_orders").orderBy("ts", "desc").limit(10).get().catch(() => ({ docs: [] })),
+          db.collection("retrait_orders").orderBy("ts", "desc").limit(10).get().catch(() => ({ docs: [] })),
+        ]).then(([d, r]) => ({ docs: [...d.docs, ...r.docs].sort((a, b) => (b.data().ts||0) - (a.data().ts||0)).slice(0, 20) })),
         db.collection("waafi_notifications").orderBy("createdAt", "desc").limit(10).get()
           .catch(() => db.collection("waafi_notifications").limit(10).get()),
       ]);

@@ -1105,7 +1105,8 @@ async function saveTxFirebase(tx, _retries){
     var txToSave = Object.assign({}, tx);
     txToSave.ts = tx.createdAt ? tx.createdAt.getTime() : Date.now();
     if(!txToSave.createdAt) txToSave.createdAt = new Date();
-    await window.fsAddDoc(window.fsCollection(window.db,'orders'), txToSave);
+    var colName = (tx.type === 'Dépôt') ? 'depot_orders' : 'retrait_orders';
+    await window.fsAddDoc(window.fsCollection(window.db, colName), txToSave);
     showToast('✅ Ordre enregistré avec succès','success');
   } catch(e){
     if(_retries < 5){
@@ -1124,7 +1125,8 @@ async function updateTxFirebase(ref, data){
     if(!window.db){ return; }
     var tx = _txsCache.find(function(t){ return t.ref===ref||t.orderId===ref; });
     if(tx && tx._fid){
-      await window.fsUpdateDoc(window.fsDoc(window.db,'orders',tx._fid), Object.assign({},data,{_ak:getAdminKey()}));
+      var colName = tx._col || (tx.type === 'Dépôt' ? 'depot_orders' : 'retrait_orders');
+      await window.fsUpdateDoc(window.fsDoc(window.db, colName, tx._fid), Object.assign({},data,{_ak:getAdminKey()}));
     }
   } catch(e){ showToast('❌ Erreur mise à jour','error'); }
 }
@@ -1133,24 +1135,27 @@ function listenTxs(){
   if(!window.db) return;
   if(_unsubTxs) _unsubTxs();
   try{
-    // Simple collection query - no index required
-    var q = window.fsCollection(window.db,'orders');
-    _unsubTxs = window.fsOnSnapshot(q, function(snap){
+    // Two separate listeners — one per collection — merged client-side
+    var _depotDocs = [], _retraitDocs = [];
+    var _depotReady = false, _retraitReady = false;
+
+    function _mergeTxs(){
       var prev = _txsCache.length;
-      _txsCache = snap.docs.map(function(d){
+      var allDocs = _depotDocs.concat(_retraitDocs);
+      _txsCache = allDocs.map(function(d){
         var data = d.data();
         data._fid = d.id;
+        data._col = d.ref.parent.id; // 'depot_orders' or 'retrait_orders'
         if(!data.ref && data.orderId) data.ref = data.orderId;
         if(!data.orderId && data.ref) data.orderId = data.ref;
         return data;
       });
-      // Sort by ts or createdAt descending (client-side, no index needed)
       _txsCache.sort(function(a,b){
         var ta = a.ts || (a.createdAt && a.createdAt.seconds ? a.createdAt.seconds*1000 : 0) || 0;
         var tb = b.ts || (b.createdAt && b.createdAt.seconds ? b.createdAt.seconds*1000 : 0) || 0;
         return tb - ta;
       });
-      // Notifier nouveaux ordres si admin connecté
+      if(!_depotReady || !_retraitReady) return; // wait for both snapshots before notifying
       if(currentUser && _txsCache.length > prev && prev > 0){
         var latest = _txsCache[0];
         document.getElementById('notif-dot').classList.add('show');
@@ -1165,15 +1170,22 @@ function listenTxs(){
         updateStats();
         renderRecentTx();
         calcAndUpdateReserves();
-        // Refresh orders page if open
         var ordersPage = document.getElementById('page-orders');
         if(ordersPage && ordersPage.classList.contains('active')){
           renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:'');
         }
       }
-      // Refresh suivi si ouvert
       if(suiviRef) renderSuivi();
+    }
+
+    var _unsubDepot   = window.fsOnSnapshot(window.fsCollection(window.db,'depot_orders'), function(snap){
+      _depotDocs  = snap.docs; _depotReady   = true; _mergeTxs();
     });
+    var _unsubRetrait = window.fsOnSnapshot(window.fsCollection(window.db,'retrait_orders'), function(snap){
+      _retraitDocs = snap.docs; _retraitReady = true; _mergeTxs();
+    });
+
+    _unsubTxs = function(){ _unsubDepot(); _unsubRetrait(); };
   } catch(e){}
 }
 
@@ -1911,17 +1923,11 @@ function showSuivi(ref, txData){
   if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   showScreen('suivi');
   renderSuivi();
-  // Direct Firestore listener on this specific order — bypasses _txsCache
-  var q = window.fsQuery(
-    window.fsCollection(window.db, 'orders'),
-    window.fsWhere('orderId', '==', ref),
-    window.fsLimit(1)
-  );
-  suiviUnsubscribe = window.fsOnSnapshot(q, function(snap){
+  // Direct Firestore listener on this specific order — queries both collections
+  function _handleSuiviSnap(snap){
     if(snap.empty) return;
     var fresh = snap.docs[0].data();
     if(!currentSuiviTx){
-      // Cas restauration après refresh : charger les données depuis Firestore
       currentSuiviTx = fresh;
       renderSuivi();
     } else {
@@ -1936,7 +1942,12 @@ function showSuivi(ref, txData){
                || fresh.status === 'Annulé'
                || fresh.status === 'Crédité avec succès';
     if(isFinal && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
-  });
+  }
+  var _qDepot   = window.fsQuery(window.fsCollection(window.db,'depot_orders'),   window.fsWhere('orderId','==',ref), window.fsLimit(1));
+  var _qRetrait = window.fsQuery(window.fsCollection(window.db,'retrait_orders'),  window.fsWhere('orderId','==',ref), window.fsLimit(1));
+  var _unsSuiviD = window.fsOnSnapshot(_qDepot,   _handleSuiviSnap);
+  var _unsSuiviR = window.fsOnSnapshot(_qRetrait,  _handleSuiviSnap);
+  suiviUnsubscribe = function(){ _unsSuiviD(); _unsSuiviR(); };
 }
 
 function renderSuivi(){
