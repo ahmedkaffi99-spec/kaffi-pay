@@ -1841,7 +1841,7 @@ async function testMobcashAPI(type){
   var pre = document.getElementById('test-'+type+'-result');
   pre.style.display='block';
   pre.style.color='#adf';
-  pre.textContent='⏳ Appel en cours...';
+  pre.textContent='⏳ Appel MobCash en cours...';
   var userId = document.getElementById('test-'+type+'-userid').value.trim();
   var montant= Number(document.getElementById('test-'+type+'-montant').value)||0;
   var code   = type==='retrait'?(document.getElementById('test-retrait-code').value.trim()):'';
@@ -1854,8 +1854,56 @@ async function testMobcashAPI(type){
       body:JSON.stringify({type,userId,montant,code,_ak:ak})
     });
     var data=await r.json();
-    pre.style.color = data.ok ? '#7fff9a' : '#ff7f7f';
-    pre.textContent = JSON.stringify(data, null, 2);
+    if(data.ok){
+      pre.style.color='#7fff9a';
+      var d=data.data||{};
+      var lines=['✅ SUCCÈS MobCash',''];
+      if(type==='retrait'){
+        lines.push('💰 Montant retrait : '+(d.summa!=null?d.summa+' DJF':'—'));
+        lines.push('✔️  success         : '+d.success);
+        lines.push('🔢 messageId        : '+(d.messageId!=null?d.messageId:'—'));
+        if(d.message) lines.push('💬 message         : '+d.message);
+      } else {
+        lines.push('💰 Montant crédité : '+(d.summa!=null?d.summa+' DJF':'—'));
+        lines.push('✔️  success         : '+d.success);
+        lines.push('🔢 messageId        : '+(d.messageId!=null?d.messageId:'—'));
+        if(d.message) lines.push('💬 message         : '+d.message);
+      }
+      lines.push('');
+      lines.push('── Réponse brute ──');
+      lines.push(JSON.stringify(d, null, 2));
+      pre.textContent=lines.join('\n');
+    } else {
+      pre.style.color='#ff7f7f';
+      var err=data.error||'Erreur inconnue';
+      var lines=['❌ ÉCHEC MobCash',''];
+      // Parse JSON in error message if present
+      var jsonMatch=err.match(/HTTP \d+:\s*(\{.*\})/s);
+      if(jsonMatch){
+        try{
+          var errObj=JSON.parse(jsonMatch[1]);
+          var httpCode=err.match(/HTTP (\d+)/);
+          lines.push('🔴 HTTP Status : '+(httpCode?httpCode[1]:'?'));
+          lines.push('📌 title       : '+(errObj.title||'—'));
+          lines.push('🔢 errorCode   : '+(errObj.errorCode!=null?errObj.errorCode:'—'));
+          if(errObj.invalidFields&&errObj.invalidFields.length){
+            lines.push('');
+            lines.push('⚠️  Champs invalides :');
+            errObj.invalidFields.forEach(function(f){
+              lines.push('   → '+f.key+' : '+f.error);
+            });
+          }
+          lines.push('');
+          lines.push('── Réponse brute ──');
+          lines.push(JSON.stringify(errObj, null, 2));
+        }catch(_){
+          lines.push(err);
+        }
+      } else {
+        lines.push(err);
+      }
+      pre.textContent=lines.join('\n');
+    }
   }catch(e){
     pre.style.color='#ff7f7f';
     pre.textContent='❌ Erreur réseau : '+e.message;
