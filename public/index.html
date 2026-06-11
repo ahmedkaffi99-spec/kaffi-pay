@@ -1641,6 +1641,15 @@ function txHTML(t,showActions){
   const fraudBadge=isFraude?'<span style="color:#ff4040;font-size:0.62rem;font-weight:700;margin-left:6px;">🚨 FRAUDE</span>':'';
   const flagLine=t.flagRaison?`<div style="font-size:0.63rem;color:#ffb347;margin-top:4px;word-break:break-word;">⚠️ ${t.flagRaison}</div>`:'';
   const numLine=(t.numeroPayment)?`<div style="font-size:0.63rem;color:var(--muted);margin-top:2px;">📱 ${t.numeroPayment}</div>`:'';
+  const ussdLine=isRetraitPret?(function(){
+    var wn=(t.waafiNumber||t.tel||'').replace(/\s/g,'').replace(/^\+?253/,'');
+    var ussd='*200*'+wn+'*'+Number(t.montant||0)+'#';
+    return '<div style="margin-top:8px;background:rgba(255,215,0,0.06);border:1px solid rgba(255,215,0,0.2);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation();">'
+      +'<span style="font-size:0.65rem;color:var(--muted);flex-shrink:0;">📱 USSD</span>'
+      +'<code style="font-size:0.85rem;color:var(--gold);letter-spacing:0.5px;flex:1;">'+ussd+'</code>'
+      +'<button onclick="adminCopy(this,\''+ussd+'\')" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:6px;padding:4px 8px;font-size:0.7rem;cursor:pointer;flex-shrink:0;">📋</button>'
+      +'</div>';
+  })():'';
   return `<div class="tx-item" onclick="openOrderDetail('${t.ref}')" style="cursor:pointer;${isFraude?'border-left:3px solid #ff4040;':''}">
     <div class="tx-top">
       <div class="tx-icon ${d?'depot':'retrait'}">${d?'📥':'📤'}</div>
@@ -1657,7 +1666,7 @@ function txHTML(t,showActions){
       ${terminerBtn}
     </div>
     <div class="tx-detail">${details}</div>
-    ${numLine}${flagLine}
+    ${numLine}${flagLine}${ussdLine}
   </div>`;
 }
 
