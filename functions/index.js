@@ -151,7 +151,10 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
     signal: AbortSignal.timeout(30000),
   });
 
-  if (!resp.ok) throw new Error(`MobCash ${endpoint} HTTP ${resp.status}`);
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new Error(`MobCash ${endpoint} HTTP ${resp.status}: ${errText}`);
+  }
   const data = await resp.json();
   if (data.success === false || (data.messageId && data.messageId !== 0))
     throw new Error(`MobCash ${endpoint}: ${data.message || JSON.stringify(data)}`);
