@@ -29,7 +29,7 @@
 // FIREBASE CONFIG — version 10.14.1 (stable)
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCILUjQPp_wO-IJrp6WwckMRDN5ISbcexU",
@@ -45,7 +45,7 @@ const firebaseConfig = {
 let app, db;
 try {
   app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
+  db = initializeFirestore(app, { localCache: persistentLocalCache() });
 } catch(e) {
 }
 
@@ -938,7 +938,15 @@ function checkURLAdmin(){
                 search === '?admin';
   if(isAdmin){
     try{ window.history.replaceState(null,'',window.location.pathname.replace('/admin','/') || '/'); }catch(e){}
-    loginSuccess({user:'admin', role:'Admin', isCreator:true});
+    // Restaurer session sauvegardée (fonctionne hors internet)
+    var _saved = null;
+    try{ _saved = JSON.parse(localStorage.getItem('kp_session')); }catch(e){}
+    if(_saved && _saved.user){
+      loginSuccess(_saved);
+      return;
+    }
+    showAdminLogin();
+    document.getElementById('screen-login').style.opacity='1';
   } else if(hash.startsWith('#suivi-')){
     // Restaurer la page suivi après refresh / pull-to-refresh
     window._pendingSuiviRef = decodeURIComponent(hash.replace('#suivi-',''));
@@ -1016,6 +1024,7 @@ function showLoginError(m){
 
 function loginSuccess(u){
   currentUser=u; fails=0;
+  try{ localStorage.setItem('kp_session', JSON.stringify({user:u.user, role:u.role, isCreator:!!u.isCreator})); }catch(e){}
   document.getElementById('login-error').style.display='none';
   document.getElementById('login-user').value='';
   document.getElementById('login-pass').value='';
@@ -1042,6 +1051,7 @@ function loginSuccess(u){
 function doLogout(){
   currentUser=null;
   loginMode='client';
+  try{ localStorage.removeItem('kp_session'); }catch(e){}
   // Arrêter le listener SMS à la déconnexion
   if(_smsListener){ _smsListener(); _smsListener=null; }
   document.getElementById('sec-fields').style.display='none';
