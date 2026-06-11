@@ -734,10 +734,15 @@ exports.onNouvelRetrait = onDocumentCreated(
       return;
     }
 
-    const cashdeskIdForPayout = MOBCASH_CASHDESKID.value() || "0";
+    const userId1xBet = (tx.userId1xBet || tx.id1x || "").trim();
+    if (!userId1xBet) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>Retrait sans ID 1xBet</b> — #${ordreId}\nID 1xBet manquant, intervention manuelle requise.`);
+      return;
+    }
 
     try {
-      const mobcashData    = await callMobcash("Retrait", cashdeskIdForPayout, montantVal, tidRetrait);
+      const mobcashData    = await callMobcash("Retrait", userId1xBet, montantVal, tidRetrait);
       const montantMobcash = Number(
         mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
       );
