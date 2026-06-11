@@ -668,6 +668,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div class="order-filter">
       <div class="filter-chip active" onclick="filterTx('tous',this)">Tous</div>
       <div class="filter-chip" onclick="filterTx('attente',this)">⏳ En attente</div>
+      <div class="filter-chip" onclick="filterTx('retrait-pret',this)">🔄 Retrait à payer</div>
       <div class="filter-chip" onclick="filterTx('Dépôt',this)">📥 Dépôts</div>
       <div class="filter-chip" onclick="filterTx('Retrait',this)">📤 Retraits</div>
       <div class="filter-chip" onclick="filterTx('Crédité avec succès',this)">✅ Crédités</div>
@@ -1537,6 +1538,7 @@ function renderRecentTx(){
 function renderAllTx(f,s){
   let t=getTxs();
   if(f==='attente') t=t.filter(x=>x.status==='En attente');
+  else if(f==='retrait-pret') t=t.filter(x=>x.type==='Retrait'&&x.status==='Paiement Reçu'&&(x.webhookStatus==='ok'||x.webhookStatus==='ok_retry_rt'));
   else if(f!=='tous') t=t.filter(x=>x.type===f||x.status===f);
   if(s) t=t.filter(x=>
     (x.ref||'').toLowerCase().includes(s.toLowerCase())||
@@ -1549,11 +1551,15 @@ function renderAllTx(f,s){
 
 function txHTML(t,showActions){
   const d=t.type==='Dépôt';
-  const sc=t.status==='Crédité avec succès'?'confirmed':(t.status==='Paiement Non Reçu'||t.status==='Annulé')?'rejected':t.status==='Paiement Reçu'?'confirmed':'pending';
+  const isRetraitPret=!d && t.status==='Paiement Reçu' && (t.webhookStatus==='ok'||t.webhookStatus==='ok_retry_rt');
+  const sc=t.status==='Crédité avec succès'?'confirmed':(t.status==='Paiement Non Reçu'||t.status==='Annulé')?'rejected':isRetraitPret?'pending':'pending';
+  const statusLabel=isRetraitPret?'⏳ Retrait — Payer Waafi':(t.status||'En attente');
   const details=d
     ?`<span>ID 1xBet: ${t.userId1xBet||t.id1x||'—'}</span><span>Transfer ID: ${t.waafitranfertID||t.hash||'—'}</span>`
     :`<span>Code: ${(t.withdrawalCode||t.code||'—').substring(0,16)}</span><span>Waafi: ${t.waafiNumber||t.tel||'—'}</span>`;
-  const actions = '';
+  const terminerBtn=isRetraitPret
+    ?`<button onclick="event.stopPropagation();terminerRetrait('${t.ref}')" style="background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:5px 12px;font-size:0.68rem;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Terminer</button>`
+    :'';
   return `<div class="tx-item" onclick="openOrderDetail('${t.ref}')" style="cursor:pointer;">
     <div class="tx-top">
       <div class="tx-icon ${d?'depot':'retrait'}">${d?'📥':'📤'}</div>
@@ -1566,8 +1572,8 @@ function txHTML(t,showActions){
       </div>
     </div>
     <div class="tx-bottom">
-      <span class="tx-status ${sc}">${t.status||'En attente'}</span>
-      ${actions}
+      <span class="tx-status ${sc}">${statusLabel}</span>
+      ${terminerBtn}
     </div>
     <div class="tx-detail">${details}</div>
   </div>`;
@@ -1659,18 +1665,35 @@ function odmClose(){ document.getElementById('order-detail-modal').classList.rem
 
 async function terminerRetrait(ref){
   if(!window.db){ showToast('❌ Firebase non connecté','error'); return; }
-  var btn=document.querySelector('#odm-actions button[onclick*="terminerRetrait"]');
-  if(btn){ btn.disabled=true; btn.textContent='⏳ Finalisation…'; }
+  // Désactive tous les boutons Terminer liés à cet ordre
+  document.querySelectorAll('[onclick*="terminerRetrait(\''+ref+'\')"]').forEach(function(b){
+    b.disabled=true; b.textContent='⏳ Finalisation…';
+  });
   try{
+    var tx=getTxs().find(function(t){ return t.ref===ref; });
     await updateTxFirebase(ref,{
       status:'Crédité avec succès',
       finalisePar:'admin_web',
       finaliseAt:new Date()
     });
+    // Archiver dans ordre_traite
+    if(window.fsCollection && window.db && tx){
+      window.fsAddDoc(window.fsCollection(window.db,'ordre_traite'),{
+        ordreId: tx.orderId||tx.ref||ref,
+        type:'Retrait',
+        montant: tx.montant||0,
+        waafiNumber: tx.waafiNumber||tx.tel||'',
+        finalisePar:'admin_web',
+        finaliseAt: new Date(),
+        status:'finalise'
+      }).catch(function(){});
+    }
     odmClose();
     showToast('✅ Retrait finalisé — client notifié','success');
   }catch(e){
-    if(btn){ btn.disabled=false; btn.textContent='✅ Paiement Waafi effectué — Terminer'; }
+    document.querySelectorAll('[onclick*="terminerRetrait(\''+ref+'\')"]').forEach(function(b){
+      b.disabled=false; b.textContent='✅ Terminer';
+    });
     showToast('❌ Erreur : '+e.message,'error');
   }
 }
@@ -1906,13 +1929,21 @@ function renderSuivi(){
     sdesc.textContent= 'Votre ordre est en cours de traitement. Vous serez crédité très rapidement.';
     prog.style.width = '20%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
     if(cancelBtnEl) cancelBtnEl.style.display = 'block';
-  } else if(status === 'Paiement Reçu' && !wbFail){
+  } else if(status === 'Paiement Reçu' && !isDepot && !wbFail){
+    card.style.borderColor = 'rgba(255,170,0,0.25)';
+    card.style.background  = 'linear-gradient(160deg,rgba(255,170,0,0.06),rgba(7,16,30,0.8))';
+    icon.textContent = '⏳';
+    stxt.textContent = 'Retrait accepté — Paiement Waafi en cours';
+    stxt.style.color = 'var(--warning)';
+    sdesc.textContent= 'Votre retrait a été accepté par 1xBet. Le paiement sur votre numéro Waafi est en cours de traitement.';
+    prog.style.width = '70%'; prog.style.background = 'linear-gradient(90deg,var(--warning),#ffcc00)';
+  } else if(status === 'Paiement Reçu' && isDepot && !wbFail){
     card.style.borderColor = 'rgba(91,156,255,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(91,156,255,0.05),rgba(7,16,30,0.8))';
     icon.textContent = '⏳';
-    stxt.textContent = 'Paiement reçu — Crédit en cours...';
+    stxt.textContent = 'Paiement reçu — Crédit 1xBet en cours...';
     stxt.style.color = '#5b9cff';
-    sdesc.textContent= 'Votre paiement a été reçu. Votre compte '+(isDepot?'1xBet':'Waafi')+' est en cours de crédit.';
+    sdesc.textContent= 'Votre paiement Waafi a été reçu. Votre compte 1xBet est en cours de crédit.';
     prog.style.width = '70%'; prog.style.background = 'linear-gradient(90deg,#5b9cff,#00d4a0)';
   } else if(status === 'Paiement Reçu' && wbFail){
     card.style.borderColor = 'rgba(255,64,96,0.2)';

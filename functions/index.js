@@ -381,20 +381,25 @@ function logAudit(action, data) {
 // Flux : client envoie numéro d'ordre → cherche dans Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
 function statutOrdreMsg(ordreId, o) {
-  const montant = Number(o.montant || 0).toLocaleString();
-  const type    = o.type || "Ordre";
+  const montant  = Number(o.montant || 0).toLocaleString();
+  const type     = o.type || "Ordre";
+  const isRetrait = o.type === "Retrait";
   const wbOk    = o.webhookStatus === "ok" || o.webhookStatus === "ok_retry_rt";
   const wbFail  = o.webhookStatus === "echec";
 
   let statut = "";
   if (o.status === "Crédité avec succès")
-    statut = "✅ <b>Crédité avec succès</b> — votre compte 1xBet a été rechargé.";
+    statut = isRetrait
+      ? "✅ <b>Retrait effectué</b> — votre argent a été envoyé sur votre Waafi."
+      : "✅ <b>Crédité avec succès</b> — votre compte 1xBet a été rechargé.";
   else if (o.status === "En attente")
     statut = "⏳ <b>En attente</b> — traitement en cours.";
+  else if (o.status === "Paiement Reçu" && isRetrait)
+    statut = "⏳ <b>Retrait accepté</b> — paiement Waafi en cours de traitement.";
   else if (o.status === "Paiement Reçu" && wbFail)
     statut = "⚠️ <b>Paiement reçu — crédit échoué</b> — notre équipe va intervenir.";
   else if (o.status === "Paiement Reçu")
-    statut = "💳 <b>Paiement reçu</b> — crédit MobCash en cours...";
+    statut = "💳 <b>Paiement reçu</b> — crédit 1xBet en cours...";
   else if (o.status === "Paiement Non Reçu")
     statut = `❌ <b>Paiement non reçu</b> — ${o.flagRaison || "Paiement non reçu."}`;
   else if (o.status === "Annulé")
@@ -889,6 +894,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         `<i>Composez le code USSD sur votre téléphone puis cliquez Terminer.</i>`,
         [
           [{ text: `📞 Composer ${ussd}`, url: ussdUrl }],
+          [{ text: "🌐 Voir l'ordre sur kaffi-pay.com", url: "https://kaffi-pay.com" }],
           [{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }],
         ]
       );
@@ -1661,6 +1667,16 @@ exports.adminBot = onRequest(
             finalisePar: "admin_terminer_button",
             finaliseAt: FieldValue.serverTimestamp(),
           });
+          // Archiver dans ordre_traite comme finalisé
+          await db.collection("ordre_traite").add({
+            ordreId,
+            type: "Retrait",
+            montant: data.montant || 0,
+            waafiNumber: data.waafiNumber || data.tel || "",
+            finalisePar: "admin_terminer_button",
+            finaliseAt: FieldValue.serverTimestamp(),
+            status: "finalise",
+          }).catch(() => {});
           // onOrdreUpdated gère WhatsApp 3/3 + Telegram "Crédité avec succès" automatiquement.
           logAudit("retrait_finalise_admin", { ordreId, adminId: cbAdminId });
         } else {
