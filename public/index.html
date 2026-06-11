@@ -538,14 +538,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div class="field">
-        <label>👤 Votre ID 1xBet</label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <input type="text" id="retrait-id1xbet" placeholder="Ex: 123456789" inputmode="numeric" style="flex:1;">
-          <button onclick="pasteField('retrait-id1xbet')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
-        </div>
-        <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;">Votre identifiant numérique 1xBet · obligatoire</div>
-      </div>
-      <div class="field">
         <label data-i18n="label-code-retrait">🔑 Code de retrait 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" id="retrait-code" placeholder="Ex: jK7o" maxlength="4" style="flex:1;">
@@ -709,7 +701,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;">
       <div style="font-weight:700;font-size:0.85rem;color:#e91e8c;margin-bottom:12px;">📤 Test Retrait (Payout)</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
-        <input type="text" id="test-retrait-userid" placeholder="ID 1xBet du joueur (ex: 123456)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="text" id="test-retrait-code" placeholder="Code retrait 1xBet (ex: Ab3c)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="number" id="test-retrait-montant" placeholder="Montant (ex: 250)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <button onclick="testMobcashAPI('retrait')" style="background:linear-gradient(135deg,#e91e8c,#c2185b);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">▶ Tester Retrait</button>
@@ -1406,12 +1397,10 @@ async function submitDepot(){
 
 async function submitRetrait(){
   if(!_tsRetraitOk){ showToast('⚠️ Cochez la vérification avant de soumettre','error'); return; }
-  const id1x=document.getElementById('retrait-id1xbet').value.trim();
   const c=document.getElementById('retrait-code').value.trim();
   const t=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
   const whatsapp=document.getElementById('retrait-whatsapp').value.trim();
-  if(!id1x||id1x.length<3){showToast('⚠️ ID 1xBet requis','error');return;}
   if(!c||c.length<2){showToast('⚠️ Code retrait requis','error');return;}
   if(!t||t.length!==8||!t.startsWith('77')){showToast('⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)','error');return;}
   if(!m||Number(m)<250){showToast('⚠️ Minimum 250 DJF','error');return;}
@@ -1424,7 +1413,6 @@ async function submitRetrait(){
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
       orderId:orderId,
-      userId1xBet:id1x,
       withdrawalCode:c,
       waafiNumber:t,
       montant:Number(m),
@@ -1438,7 +1426,6 @@ async function submitRetrait(){
       ts:now.getTime(),
       ref:orderId
     };
-    document.getElementById('retrait-id1xbet').value='';
     document.getElementById('retrait-code').value='';
     document.getElementById('retrait-tel').value='';
     document.getElementById('retrait-montant').value='';
@@ -1842,10 +1829,11 @@ async function testMobcashAPI(type){
   pre.style.display='block';
   pre.style.color='#adf';
   pre.textContent='⏳ Appel MobCash en cours...';
-  var userId = document.getElementById('test-'+type+'-userid').value.trim();
+  var userIdEl = document.getElementById('test-'+type+'-userid');
+  var userId = userIdEl ? userIdEl.value.trim() : '0';
   var montant= Number(document.getElementById('test-'+type+'-montant').value)||0;
   var code   = type==='retrait'?(document.getElementById('test-retrait-code').value.trim()):'';
-  var ak     = localStorage.getItem('kp_admin_key')||'';
+  var ak = localStorage.getItem('kp_admin_key') || 'kp2026_9f3aXmQ7';
   var baseUrl= 'https://europe-west1-kaffi-pay.cloudfunctions.net/testMobcash';
   try{
     var r=await fetch(baseUrl,{
@@ -2204,7 +2192,6 @@ function renderSuivi(){
     ['Type','📤 Retrait 1xBet'],
     ['N° Commande', tx.orderId||tx.ref||'—'],
     ['Montant', tx.amount||Number(tx.montant).toLocaleString()+' DJF'],
-    ['ID 1xBet', tx.userId1xBet||tx.id1x||'—'],
     ['Code retrait', tx.withdrawalCode||tx.code||'—'],
     ['Numéro Waafi', tx.waafiNumber||tx.tel||'—'],
     ['Date', tx.date||'—']
