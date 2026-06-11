@@ -158,8 +158,11 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
     throw new Error(`MobCash ${endpoint} HTTP ${resp.status}: ${errText}`);
   }
   const data = await resp.json();
-  if (data.success === false || (data.messageId && data.messageId !== 0))
-    throw new Error(`MobCash ${endpoint}: ${data.message || JSON.stringify(data)}`);
+  const isSuccess = data.Success ?? data.success;
+  const msgId     = data.MessageId ?? data.messageId;
+  const msgText   = data.Message   || data.message || JSON.stringify(data);
+  if (isSuccess === false || (msgId && msgId !== 0))
+    throw new Error(`MobCash ${endpoint}: ${msgText}`);
   return data;
 }
 
