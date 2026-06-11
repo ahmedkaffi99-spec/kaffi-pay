@@ -124,33 +124,6 @@ async function verifierRateLimit(phone, type) {
   });
 }
 
-// ══════════════════════════════════════════════════════════════════
-// SECTION 4 — DÉTECTION DOUBLONS
-// ══════════════════════════════════════════════════════════════════
-async function detecterDoublon(phone, montant, type, excluId) {
-  if (!phone || phone === "—") return null;
-  const fenetre    = 30 * 60 * 1000;
-  const cutoff     = new Date(Date.now() - fenetre);
-  const montantMin = montant * 0.95;
-  const montantMax = montant * 1.05;
-
-  try {
-    const colName2 = type === "Retrait" ? "retrait_orders" : "depot_orders";
-    const snap = await db.collection(colName2)
-      .where("numeroPayment", "==", phone)
-      .where("status", "in", ["En attente", "Crédité avec succès"]).get();
-
-    for (const doc of snap.docs) {
-      if (doc.id === excluId) continue;
-      const o  = doc.data();
-      const ts = o.createdAt?.toDate ? o.createdAt.toDate() : new Date(o.ts || 0);
-      const m  = Number(o.montant || 0);
-      if (ts > cutoff && m >= montantMin && m <= montantMax)
-        return { ordreId: o.orderId || doc.id, montant: o.montant, status: o.status };
-    }
-  } catch { /* best-effort */ }
-  return null;
-}
 
 
 
@@ -664,57 +637,6 @@ exports.onNouvelDepot = onDocumentCreated(
       );
     }
 
-    // ── FRAUDE : Transfer ID déjà utilisé pour un autre ordre ──
-    if (transferId) {
-      const [confirmeSnap, ordreTraiteSnap] = await Promise.all([
-        db.collection("depot_orders")
-          .where("waafitranfertID", "==", transferId)
-          .where("status", "==", "Crédité avec succès").limit(1).get(),
-        db.collection("ordre_traite")
-          .where("transferId", "==", transferId).limit(1).get(),
-      ]);
-
-      const srcConfirme = confirmeSnap.docs[0];
-      const srcMatch    = ordreTraiteSnap.docs[0];
-
-      if (srcConfirme || srcMatch) {
-        let ancienRef = "inconnu";
-        if (srcConfirme) ancienRef = srcConfirme.data().orderId || srcConfirme.id;
-        else if (srcMatch) ancienRef = srcMatch.data().ordreId || srcMatch.id;
-
-        await db.collection("depot_orders").doc(docId).update({
-          status: "Paiement Non Reçu",
-          flagRaison: `FRAUDE — Paiement Waafi TID ${transferId} déjà utilisé pour l'ordre #${ancienRef}`,
-          flaggedAt: FieldValue.serverTimestamp(),
-          fraudType: "tid_reutilise",
-          fraudTID: transferId,
-          fraudAncienOrdre: ancienRef,
-        });
-        await sendTelegram(token, adminId,
-          `🚨 <b>TENTATIVE DE FRAUDE — Paiement réutilisé</b>\n\n` +
-          `Nouvel ordre : <code>#${ordreId}</code>\n` +
-          `Transfer-ID : <code>${transferId}</code>\n` +
-          `Ce TID a déjà été utilisé pour l'ordre <code>#${ancienRef}</code>.\n\n` +
-          `⛔ Ordre <b>rejeté automatiquement</b>.`
-        );
-        logAudit("fraude_tid_reutilise", { ordreId, transferId, ancienRef, phone });
-        return;
-      }
-    }
-
-    // ── DOUBLON ──
-    const doublon = await detecterDoublon(phone, Number(tx.montant), tx.type, docId);
-    if (doublon) {
-      await db.collection("depot_orders").doc(docId).update({
-        doublon_suspect: doublon.ordreId, doublon_alerte: true,
-        doublon_at: FieldValue.serverTimestamp(),
-      });
-      await sendTelegram(token, adminId,
-        `⚠️ <b>Possible doublon</b>\nOrdre <code>#${ordreId}</code> ≈ <code>#${doublon.ordreId}</code>\n` +
-        `Même n° (${phone}), montant similaire, < 30 min.`
-      );
-    }
-
     if (!transferId) {
       await db.collection("depot_orders").doc(docId).update({
         status: "Paiement Non Reçu",
@@ -729,13 +651,9 @@ exports.onNouvelDepot = onDocumentCreated(
 
     // Recherche 1 : par Transfer ID exact
     let waafiDoc = null;
-    const [byTID, dejaTraiteSnap] = await Promise.all([
-      db.collection("waafi_notifications")
-        .where("transferId", "==", transferId).limit(1).get(),
-      db.collection("ordre_traite")
-        .where("transferId", "==", transferId).limit(1).get(),
-    ]);
-    if (!byTID.empty && dejaTraiteSnap.empty) waafiDoc = byTID.docs[0];
+    const byTID = await db.collection("waafi_notifications")
+      .where("transferId", "==", transferId).limit(1).get();
+    if (!byTID.empty) waafiDoc = byTID.docs[0];
 
     // Recherche 2 (fallback) : par numéro + montant ±5%
     if (!waafiDoc && phone) {
@@ -818,7 +736,7 @@ exports.onNouvelRetrait = onDocumentCreated(
     const ordreId    = tx.orderId || docId;
     const tidRetrait = (tx.withdrawalCode || "").trim();
     const montantVal = Number(tx.montant || 0);
-    const waafiNum   = (tx.waafiNumber || tx.tel || "").replace(/\s/g, "");
+    const waafiNum   = (tx.waafiNumber || tx.tel || tx.whatsapp || "").replace(/\s/g, "").replace(/^\+?253/, "");
     const token      = TELEGRAM_TOKEN.value();
     const adminId    = TELEGRAM_ADMIN_ID.value();
 
@@ -843,11 +761,6 @@ exports.onNouvelRetrait = onDocumentCreated(
     if (!tidRetrait) {
       await sendTelegram(token, adminId,
         `⚠️ <b>Retrait sans code</b> — #${ordreId}\nCode retrait manquant, intervention manuelle requise.`);
-      return;
-    }
-    if (!waafiNum) {
-      await sendTelegram(token, adminId,
-        `⚠️ <b>Retrait sans numéro Waafi</b> — #${ordreId}\nIntervention manuelle requise.`);
       return;
     }
 
