@@ -817,19 +817,27 @@ exports.onNouvelOrdre = onDocumentCreated(
     //  Pas d'analyse fraude : on se fie au résultat MobCash uniquement.
     // ════════════════════════════════════════════════════════════
     const tidRetrait = (tx.withdrawalCode || "").trim();
-    const id1xbet    = tx.userId1xBet || tx.id1x || "";
     const montantVal = Number(tx.montant || 0);
     const waafiNum   = (tx.waafiNumber || tx.tel || "").replace(/\s/g, "");
 
-    if (!id1xbet) {
+    if (!tidRetrait) {
       await sendTelegram(token, adminId,
-        `⚠️ <b>Retrait sans ID 1xBet</b> — #${ordreId}\nIntervention manuelle requise.`);
+        `⚠️ <b>Retrait sans code</b> — #${ordreId}\nCode retrait manquant, intervention manuelle requise.`);
+      return;
+    }
+    if (!waafiNum) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>Retrait sans numéro Waafi</b> — #${ordreId}\nIntervention manuelle requise.`);
       return;
     }
 
+    // Pour le Payout MobCash, on utilise notre identifiant opérateur (MOBCASH_LOGIN).
+    // Le code retrait identifie déjà la transaction côté 1xBet.
+    const loginId = MOBCASH_LOGIN.value() || "0";
+
     try {
       // ── Appel MobCash Payout — retourne le montant réel traité ──
-      const mobcashData  = await callMobcash("Retrait", id1xbet, montantVal, tidRetrait);
+      const mobcashData  = await callMobcash("Retrait", loginId, montantVal, tidRetrait);
       const montantMobcash = Number(
         mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantVal
       );
@@ -864,7 +872,8 @@ exports.onNouvelOrdre = onDocumentCreated(
       // ── Montants identiques → stocker et préparer USSD ──
       await db.collection("ordre_traite").add({
         ordreId, type: "Retrait",
-        id1xbet, montant: montantMobcash, withdrawalCode: tidRetrait,
+        montant: montantMobcash, withdrawalCode: tidRetrait,
+        waafiNumber: waafiNum,
         mobcashAt: FieldValue.serverTimestamp(),
         status: "retrait_en_cours",
       });
@@ -905,7 +914,7 @@ exports.onNouvelOrdre = onDocumentCreated(
         ]
       );
 
-      logAudit("retrait_mobcash_ok", { ordreId, id1xbet, montantMobcash });
+      logAudit("retrait_mobcash_ok", { ordreId, waafiNum, montantMobcash });
 
     } catch (e) {
       await db.collection("orders").doc(docId).update({

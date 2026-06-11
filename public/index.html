@@ -2516,9 +2516,8 @@ function startSmsListener(){
           // Ignorer déjà traités
           if(_smsDejaTrait.has(docId)) return;
 
-          // ✅ FIX: Accepter status manquant, 'nouveau', 'new', ou non défini
-          // Ne bloquer QUE les documents déjà traités (matché/non_matché)
-          if(data.status && data.status !== 'nouveau' && data.status !== 'new' && data.status !== 'pending') return;
+          // Ne traiter que les docs sans statut ou en attente — sauter tout le reste
+          if(data.status && !['nouveau','new','pending'].includes(data.status)) return;
 
           // ✅ FIX: Accepter TOUS les noms de champs possibles envoyés par MacroDroid
           var texte = data.texte      // champ standard
@@ -2575,6 +2574,9 @@ function startSmsListener(){
 }
 
 async function traiterSmsWaafi(texte, smsId){
+  // Marquer immédiatement comme en cours → empêche double traitement si page rechargée
+  try{ await window.fsUpdateDoc(window.fsDoc(window.db,'waafi_notifications',smsId),{status:'en_cours',startedAt:new Date(),_ak:getAdminKey()}); }catch(e){}
+
   var transferId = extraireTransferId(texte);
   var montant    = extraireMontant(texte);
   var numExp     = extraireNumeroExp(texte);
