@@ -1643,11 +1643,16 @@ function txHTML(t,showActions){
   const numLine=(t.numeroPayment)?`<div style="font-size:0.63rem;color:var(--muted);margin-top:2px;">📱 ${t.numeroPayment}</div>`:'';
   const ussdLine=isRetraitPret?(function(){
     var wn=(t.waafiNumber||t.tel||'').replace(/\s/g,'').replace(/^\+?253/,'');
-    var ussd='*200*'+wn+'*'+Number(t.montant||0)+'#';
-    return '<div style="margin-top:8px;background:rgba(255,215,0,0.06);border:1px solid rgba(255,215,0,0.2);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation();">'
+    var mt=Number(t.montant||0);
+    var ussd='*200*'+wn+'*'+mt+'#';
+    var ussdTel='tel:'+ussd.replace(/#/g,'%23');
+    return '<div style="margin-top:8px;background:rgba(255,215,0,0.06);border:1px solid rgba(255,215,0,0.2);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;" onclick="event.stopPropagation();">'
+      +'<div style="display:flex;align-items:center;gap:8px;">'
       +'<span style="font-size:0.65rem;color:var(--muted);flex-shrink:0;">📱 USSD</span>'
       +'<code style="font-size:0.85rem;color:var(--gold);letter-spacing:0.5px;flex:1;">'+ussd+'</code>'
       +'<button onclick="adminCopy(this,\''+ussd+'\')" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:6px;padding:4px 8px;font-size:0.7rem;cursor:pointer;flex-shrink:0;">📋</button>'
+      +'</div>'
+      +'<a href="'+ussdTel+'" onclick="event.stopPropagation();" style="display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(0,212,160,0.12);border:1px solid rgba(0,212,160,0.35);color:#00d4a0;border-radius:8px;padding:7px 10px;font-size:0.78rem;font-weight:600;text-decoration:none;letter-spacing:0.2px;">📞 Bixi Waafi dhaadhac | '+mt+' DJF</a>'
       +'</div>';
   })():'';
   return `<div class="tx-item" onclick="openOrderDetail('${t.ref}')" style="cursor:pointer;${isFraude?'border-left:3px solid #ff4040;':''}">
