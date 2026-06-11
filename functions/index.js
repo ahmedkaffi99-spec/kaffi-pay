@@ -129,10 +129,10 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
     .update(`hash=${hash}&lng=${lng}&userid=${userId}`)
     .digest("hex");
 
-  // Signature step 2 : MD5 selon type
-  const part2 = isDepot
-    ? crypto.createHash("md5").update(`summa=${montant}&cashierpass=${cashierpass}&cashdeskid=${cashdeskId}`).digest("hex")
-    : crypto.createHash("md5").update(`code=${withdrawalCode}&cashierpass=${cashierpass}&cashdeskid=${cashdeskId}`).digest("hex");
+  // Signature step 2 : MD5(summa + cashierpass + cashdeskId) — identique pour Dépôt et Retrait
+  const part2 = crypto.createHash("md5")
+    .update(`summa=${montant}&cashierpass=${cashierpass}&cashdeskid=${cashdeskId}`)
+    .digest("hex");
 
   // Signature step 3 : SHA256(part1 + part2) → header "sign"
   const sign = crypto.createHash("sha256").update(part1 + part2).digest("hex");
@@ -142,7 +142,7 @@ async function callMobcash(type, userId1xbet, montant, withdrawalCode) {
 
   const body = isDepot
     ? { cashdeskid: Number(cashdeskId), lng, summa: montant, confirm }
-    : { cashdeskid: Number(cashdeskId), lng, code: String(withdrawalCode || ""), confirm };
+    : { cashdeskid: Number(cashdeskId), lng, summa: montant, code: String(withdrawalCode || ""), confirm };
 
   const resp = await fetch(`${MOBCASH_BASE}/Deposit/${userId}/${endpoint}`, {
     method: "POST",
