@@ -701,7 +701,24 @@ exports.onNouvelDepot = onDocumentCreated(
       const { score, mismatches, decision } = scorerCorrespondance(tx, waafiDoc.data());
 
       if (decision === "confirmer") {
-        await confirmerDepot(ordreSnap, waafiDoc, token, adminId);
+        const confirmed = await confirmerDepot(ordreSnap, waafiDoc, token, adminId);
+        if (!confirmed) {
+          // TID déjà utilisé par un autre ordre — alerte admin
+          const autreOrdre = await db.collection("ordre_traite")
+            .where("transferId", "==", waafiDoc.data().transferId || "").limit(1).get();
+          const autreId = autreOrdre.empty ? "?" : (autreOrdre.docs[0].data().ordreId || "?");
+          await db.collection("depot_orders").doc(docId).update({
+            status: "Paiement Non Reçu",
+            flagRaison: `Transfer-ID déjà utilisé par l'ordre #${autreId}`,
+            flaggedAt: FieldValue.serverTimestamp(),
+          });
+          await sendTelegram(token, adminId,
+            `⚠️ <b>Doublon TID détecté — #${ordreId}</b>\n\n` +
+            `Transfer-ID <code>${transferId}</code> déjà utilisé par l'ordre <code>#${autreId}</code>.\n` +
+            `Montant: ${Number(tx.montant||0).toLocaleString()} DJF | ID 1xBet: <code>${tx.userId1xBet||"?"}</code>\n\n` +
+            `<i>Si c'est un re-soumission du même client, relancez <code>#${autreId}</code> avec le bon ID 1xBet.</i>`
+          );
+        }
         return;
       }
 
