@@ -1245,32 +1245,43 @@ function listenTxs(){
 }
 
 // Agents stockés dans Firestore
+var CF_BASE = 'https://europe-west1-kaffi-pay.cloudfunctions.net';
+function cfHeaders(){ return {'Content-Type':'application/json','X-Admin-Key':getAdminKey()}; }
+
 function getAgents(){ return _agentsCache; }
-function saveAgents(a){
-  _agentsCache = a;
-  if(window.db && window.fsSetDoc && window.fsDoc){
-    window.fsSetDoc(window.fsDoc(window.db,'config','agents'),{list:a,updatedAt:new Date(),_ak:getAdminKey()}).catch(function(){});
-  }
-}
 function loadAgentsFromFirestore(){
-  if(!window.db) return;
-  window.fsGetDocs(window.fsCollection(window.db,'config')).then(function(snap){
-    snap.forEach(function(d){ if(d.id==='agents') _agentsCache=d.data().list||[]; });
-  }).catch(function(){});
+  fetch(CF_BASE+'/adminAgents?_ak='+getAdminKey())
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if(d.ok){ _agentsCache=d.agents||[]; } })
+    .catch(function(){});
 }
+async function cfAgentAction(action, agent){
+  try{
+    const r=await fetch(CF_BASE+'/adminAgents',{method:'POST',headers:cfHeaders(),body:JSON.stringify({_ak:getAdminKey(),action,agent})});
+    const d=await r.json();
+    if(d.ok){ _agentsCache=d.agents||[]; return true; }
+    showToast('❌ '+(d.error||'Erreur'),'error'); return false;
+  }catch(e){ showToast('❌ Erreur réseau agents','error'); return false; }
+}
+
 function getReserves(){ return _reservesCache; }
 function saveReservesData(r){
   _reservesCache=r;
-  if(window.db && window.fsSetDoc && window.fsDoc){
-    window.fsSetDoc(window.fsDoc(window.db,'config','reserves'),{data:r,updatedAt:new Date(),_ak:getAdminKey()}).catch(function(e){ showToast('❌ Erreur sauvegarde réserve','error'); });
-  }
+  fetch(CF_BASE+'/adminReserves',{method:'POST',headers:cfHeaders(),body:JSON.stringify({_ak:getAdminKey(),reserves:r})})
+    .then(function(res){ return res.json(); })
+    .then(function(d){ if(!d.ok) showToast('❌ Erreur sauvegarde réserve','error'); })
+    .catch(function(){ showToast('❌ Erreur réseau réserves','error'); });
 }
 function loadReservesFromFirestore(){
-  if(!window.db) return;
-  window.fsGetDocs(window.fsCollection(window.db,'config')).then(function(snap){
-    snap.forEach(function(d){ if(d.id==='reserves'){ var fd=d.data().data; if(fd) _reservesCache=fd; } });
-    calcAndUpdateReserves();
-  }).catch(function(){});
+  fetch(CF_BASE+'/adminReserves?_ak='+getAdminKey())
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.ok && d.reserves && typeof d.reserves.r1x_base!=='undefined'){
+        _reservesCache=d.reserves;
+      }
+      calcAndUpdateReserves();
+    })
+    .catch(function(){ calcAndUpdateReserves(); });
 }
 
 // ═══════════════════════════════════════════════════
@@ -1994,6 +2005,49 @@ function initDashboard(){
   calcAndUpdateReserves();
   renderRecentTx();
   initMainChart('7j');
+  // Charger stats backend (serveur) pour valeurs précises au chargement
+  fetchAdminStats(_dashPeriod);
+}
+function fetchAdminStats(period){
+  fetch(CF_BASE+'/adminStats?period='+(period||'today')+'&_ak='+getAdminKey())
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok) return;
+      var s=d.stats;
+      document.getElementById('stat-depot').textContent=(s.totalDepots||0).toLocaleString();
+      document.getElementById('stat-depot-sub').textContent=(s.countDepots||0)+' crédités';
+      document.getElementById('stat-retrait').textContent=(s.totalRetraits||0).toLocaleString();
+      document.getElementById('stat-retrait-sub').textContent=(s.countRetraits||0)+' effectués';
+      document.getElementById('stat-pending').textContent=(s.pending||0);
+      document.getElementById('stat-pending-sub').textContent=(s.fraudes||0)?'à traiter · '+(s.fraudes)+' fraudes':'à traiter';
+      document.getElementById('stat-today').textContent=(s.volume||0).toLocaleString();
+      // Chart depuis backend
+      if(d.chart && d.chart.length){
+        var lb=d.chart.map(function(c){return c.label;});
+        var dd=d.chart.map(function(c){return c.dep;});
+        var rd=d.chart.map(function(c){return c.ret;});
+        renderChartData(lb,dd,rd);
+      }
+    })
+    .catch(function(){});
+}
+function renderChartData(lb,dd,rd){
+  var ctx=document.getElementById('mainChart').getContext('2d');
+  if(mChart) mChart.destroy();
+  mChart=new Chart(ctx,{
+    type:'bar',
+    data:{labels:lb,datasets:[
+      {label:'Dépôts',data:dd,backgroundColor:'rgba(0,212,160,0.55)',borderColor:'#00d4a0',borderWidth:1,borderRadius:3},
+      {label:'Retraits',data:rd,backgroundColor:'rgba(255,215,0,0.45)',borderColor:'#FFD700',borderWidth:1,borderRadius:3}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#5c7a9e',font:{size:9}}}},
+      scales:{
+        x:{ticks:{color:'#5c7a9e',font:{size:8}},grid:{display:false}},
+        y:{ticks:{color:'#5c7a9e',font:{size:8},callback:function(v){return v>=1000?(v/1000).toFixed(0)+'k':v;}},grid:{color:'rgba(255,255,255,0.04)'}}
+      }
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════
@@ -2026,20 +2080,28 @@ function addAgent(){
   if(p!==p2){showToast('⚠️ Mots de passe différents','error');return;}
   const ag=getAgents(), u=n.toLowerCase().replace(/\s+/g,'');
   if(u==='admin'||ag.find(a=>a.user===u)){showToast('⚠️ Utilisateur déjà existant','error');return;}
-  ag.push({name:n,user:u,pass:p,role:r});
-  saveAgents(ag); renderAgents();
-  document.getElementById('new-agent-name').value='';
-  document.getElementById('new-agent-pass').value='';
-  document.getElementById('new-agent-pass2').value='';
-  document.getElementById('add-agent-form').classList.remove('show');
-  showToast('✅ Agent '+n+' ajouté','success');
+  cfAgentAction('add',{name:n,user:u,pass:p,role:r}).then(function(ok){
+    if(!ok) return;
+    renderAgents();
+    document.getElementById('new-agent-name').value='';
+    document.getElementById('new-agent-pass').value='';
+    document.getElementById('new-agent-pass2').value='';
+    document.getElementById('add-agent-form').classList.remove('show');
+    showToast('✅ Agent '+n+' ajouté','success');
+  });
 }
 
 function deleteAgent(i){
   if(!currentUser||!currentUser.isCreator)return;
   if(!confirm('Supprimer cet agent ?'))return;
-  const ag=getAgents(); ag.splice(i,1); saveAgents(ag); renderAgents();
-  showToast('🗑 Agent supprimé','warning');
+  const ag=getAgents();
+  const agent=ag[i];
+  if(!agent) return;
+  cfAgentAction('delete',agent).then(function(ok){
+    if(!ok) return;
+    renderAgents();
+    showToast('🗑 Agent supprimé','warning');
+  });
 }
 
 // ═══════════════════════════════════════════════════
@@ -3050,6 +3112,8 @@ function setDashPeriod(p,el){
   const tab=document.querySelector('.chart-tab[onclick*="\''+cp+'\'"]');
   if(tab){ document.querySelectorAll('.chart-tab').forEach(t=>t.classList.remove('active')); tab.classList.add('active'); }
   initMainChart(cp);
+  // Mise à jour stats depuis backend
+  if(p!=='today'&&p!=='all') fetchAdminStats(p);
 }
 
 // Expose all functions to window (required for type=module)
@@ -3091,6 +3155,8 @@ try {
   if(typeof submitRetrait!=="undefined") window.submitRetrait=submitRetrait;
   if(typeof switchChart!=="undefined") window.switchChart=switchChart;
   if(typeof setDashPeriod!=="undefined") window.setDashPeriod=setDashPeriod;
+  if(typeof fetchAdminStats!=="undefined") window.fetchAdminStats=fetchAdminStats;
+  if(typeof cfAgentAction!=="undefined") window.cfAgentAction=cfAgentAction;
   if(typeof switchTab!=="undefined") window.switchTab=switchTab;
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;

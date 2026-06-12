@@ -2168,3 +2168,193 @@ exports.adminBot = onRequest(
     } catch (e) { console.error("adminBot crash:", e.message, e.stack); }
   }
 );
+
+// ══════════════════════════════════════════════════════════════════
+// HTTP — ADMIN API : AGENTS
+// GET  → liste des agents
+// POST → action: 'add' | 'delete'  +  agent: {name,user,pass,role}
+// ══════════════════════════════════════════════════════════════════
+const ADMIN_KEY = "kp2026_9f3aXmQ7";
+function adminCors(res) {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type, X-Admin-Key");
+}
+function checkAdminKey(req) {
+  const ak = (req.body && req.body._ak) || req.query._ak || req.headers["x-admin-key"] || "";
+  return ak === ADMIN_KEY;
+}
+
+exports.adminAgents = onRequest(
+  { region: REGION, invoker: "public" },
+  async (req, res) => {
+    adminCors(res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (!checkAdminKey(req)) { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
+
+    const docRef = db.collection("config").doc("agents");
+
+    try {
+      if (req.method === "GET") {
+        const snap = await docRef.get();
+        const agents = snap.exists ? (snap.data().list || []) : [];
+        res.json({ ok: true, agents });
+        return;
+      }
+
+      if (req.method === "POST") {
+        const { action, agent } = req.body || {};
+        const snap = await docRef.get();
+        let agents = snap.exists ? (snap.data().list || []) : [];
+
+        if (action === "add") {
+          if (!agent || !agent.user) { res.status(400).json({ ok: false, error: "Agent invalide" }); return; }
+          agents = agents.filter(a => a.user !== agent.user); // évite doublons
+          agents.push(agent);
+        } else if (action === "delete") {
+          if (!agent || !agent.user) { res.status(400).json({ ok: false, error: "Agent invalide" }); return; }
+          agents = agents.filter(a => a.user !== agent.user);
+        } else {
+          res.status(400).json({ ok: false, error: "Action inconnue" }); return;
+        }
+
+        await docRef.set({ list: agents, updatedAt: new Date() });
+        res.json({ ok: true, agents });
+        return;
+      }
+
+      res.status(405).json({ ok: false, error: "Méthode non autorisée" });
+    } catch (e) {
+      console.error("adminAgents error:", e.message);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// HTTP — ADMIN API : RÉSERVES
+// GET  → données actuelles des réserves
+// POST → sauvegarde les réserves  body: { reserves: {...} }
+// ══════════════════════════════════════════════════════════════════
+exports.adminReserves = onRequest(
+  { region: REGION, invoker: "public" },
+  async (req, res) => {
+    adminCors(res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (!checkAdminKey(req)) { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
+
+    const docRef = db.collection("config").doc("reserves");
+
+    try {
+      if (req.method === "GET") {
+        const snap = await docRef.get();
+        const reserves = snap.exists ? (snap.data().data || {}) : {};
+        res.json({ ok: true, reserves });
+        return;
+      }
+
+      if (req.method === "POST") {
+        const { reserves } = req.body || {};
+        if (!reserves || typeof reserves !== "object") {
+          res.status(400).json({ ok: false, error: "Données réserves invalides" }); return;
+        }
+        await docRef.set({ data: reserves, updatedAt: new Date() });
+        res.json({ ok: true });
+        return;
+      }
+
+      res.status(405).json({ ok: false, error: "Méthode non autorisée" });
+    } catch (e) {
+      console.error("adminReserves error:", e.message);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// HTTP — ADMIN API : STATS DASHBOARD
+// GET ?period=today|7j|30j|all&_ak=...
+// Retourne stats agrégées depuis Firestore (server-side)
+// ══════════════════════════════════════════════════════════════════
+exports.adminStats = onRequest(
+  { region: REGION, invoker: "public" },
+  async (req, res) => {
+    adminCors(res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (!checkAdminKey(req)) { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
+
+    const period = req.query.period || "all";
+
+    try {
+      // Calculer la date de début selon la période
+      let startDate = null;
+      const now = new Date();
+      if (period === "today") {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      } else if (period === "7j") {
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        startDate.setHours(0, 0, 0, 0);
+      } else if (period === "30j") {
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        startDate.setHours(0, 0, 0, 0);
+      }
+
+      // Requêtes Firestore parallèles
+      let depotQ  = db.collection("depot_orders");
+      let retraitQ = db.collection("retrait_orders");
+      if (startDate) {
+        depotQ   = depotQ.where("createdAt",  ">=", startDate);
+        retraitQ = retraitQ.where("createdAt", ">=", startDate);
+      }
+
+      const [depSnap, retSnap] = await Promise.all([depotQ.get(), retraitQ.get()]);
+
+      const depots   = depSnap.docs.map(d => d.data());
+      const retraits = retSnap.docs.map(d => d.data());
+      const all      = [...depots, ...retraits];
+
+      const confDep = depots.filter(x => x.status === "Crédité avec succès");
+      const confRet = retraits.filter(x => x.status === "Payé" || x.status === "Crédité avec succès");
+      const pending = all.filter(x => ["En attente","Paiement Reçu","Code Validé"].includes(x.status));
+      const fraudes = all.filter(x => x.fraudType || (x.flagRaison && x.flagRaison.toUpperCase().includes("FRAUDE")));
+
+      const totalDep = confDep.reduce((s, x) => s + Number(x.montant || 0), 0);
+      const totalRet = confRet.reduce((s, x) => s + Number(x.montant || 0), 0);
+
+      // Chart data : 7 ou 30 derniers jours groupés par jour
+      const chartDays = period === "30j" ? 30 : 7;
+      const chart = [];
+      for (let i = chartDays - 1; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0,0,0,0);
+        const dEnd = new Date(d); dEnd.setHours(23,59,59,999);
+        const label = `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`;
+        const dep = confDep.filter(x => {
+          const t = x.createdAt && x.createdAt.toDate ? x.createdAt.toDate() : new Date(x.date || 0);
+          return t >= d && t <= dEnd;
+        }).reduce((s, x) => s + Number(x.montant || 0), 0);
+        const ret = confRet.filter(x => {
+          const t = x.createdAt && x.createdAt.toDate ? x.createdAt.toDate() : new Date(x.date || 0);
+          return t >= d && t <= dEnd;
+        }).reduce((s, x) => s + Number(x.montant || 0), 0);
+        chart.push({ label, dep, ret });
+      }
+
+      res.json({
+        ok: true, period,
+        stats: {
+          totalDepots:  totalDep,
+          countDepots:  confDep.length,
+          totalRetraits: totalRet,
+          countRetraits: confRet.length,
+          pending:  pending.length,
+          fraudes:  fraudes.length,
+          volume:   totalDep + totalRet,
+        },
+        chart,
+      });
+    } catch (e) {
+      console.error("adminStats error:", e.message);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
