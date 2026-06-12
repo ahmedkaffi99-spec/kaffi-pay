@@ -651,7 +651,7 @@ exports.onNouvelDepot = onDocumentCreated(
       return;
     }
 
-    // Recherche 1 : par Transfer ID exact
+    // Recherche 1 : par Transfer ID exact (champ parsé)
     let waafiDoc = null;
     const byTID = await db.collection("waafi_notifications")
       .where("transferId", "==", transferId).limit(1).get();
@@ -665,11 +665,34 @@ exports.onNouvelDepot = onDocumentCreated(
         .where("numClient", "==", phone).limit(10).get();
       for (const d of byPhone.docs) {
         const n = d.data();
-        if (!n.montant || Math.abs(montantOrdre - n.montant) > tolerance) continue;
+        if (n.montant && Math.abs(montantOrdre - n.montant) > tolerance) continue;
         const dejaTID = n.transferId
           ? (await db.collection("ordre_traite").where("transferId", "==", n.transferId).limit(1).get()).empty
           : true;
         if (dejaTID) { waafiDoc = d; break; }
+      }
+    }
+
+    // Recherche 3 (fallback brut) : docs MacroDroid non encore parsés (contiennent le TID dans le texte)
+    // Utile si onNouvelleNotifWaafi n'a pas encore tourné (race condition quelques ms)
+    if (!waafiDoc) {
+      const rawSnap = await db.collection("waafi_notifications")
+        .where("status", "in", ["nouveau", "new", "pending", "reçu"])
+        .limit(30).get();
+      for (const d of rawSnap.docs) {
+        const n = d.data();
+        if (n.transferId !== undefined) continue; // Déjà parsé, skip
+        const texte = n.texte || n.sms || n.message || n.notification || n.content
+                   || (n.not_title ? (n.not_title + " " + (n.notification || "")) : "");
+        if (!texte.includes(transferId)) continue;
+        // Enrichir le doc avec les champs parsés pour les prochaines recherches
+        const tid2 = extractTransferId(texte);
+        const mt2  = extractMontant(texte);
+        const nc2  = extractNumClient(texte);
+        d.ref.update({ transferId: tid2 || null, montant: mt2 || null, numClient: nc2 || null,
+                       parsedAt: FieldValue.serverTimestamp(), source: n.source || "macrodroid_direct" }).catch(() => {});
+        waafiDoc = d;
+        break;
       }
     }
 
@@ -1223,6 +1246,106 @@ exports.ordresBloques = onSchedule(
 
 // ══════════════════════════════════════════════════════════════════
 // HTTP — WEBHOOK MACRODROID (réception SMS Waafi)
+// ══════════════════════════════════════════════════════════════════
+// TRIGGER WAAFI NOTIF — Parse les docs bruts écrits par MacroDroid
+// directement dans Firestore (not_title + notification fields).
+// Complète les champs transferId/montant/numClient puis fait le
+// reverse-match avec les ordres "En attente".
+// ══════════════════════════════════════════════════════════════════
+exports.onNouvelleNotifWaafi = onDocumentCreated(
+  { document: "waafi_notifications/{docId}", region: REGION,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  async (event) => {
+    const data  = event.data.data();
+
+    // Skip docs déjà parsés par smsWebhook (source = "macrodroid" + champ transferId présent)
+    if (data.source === "macrodroid" && data.transferId !== undefined) return;
+    // Skip docs déjà traités
+    if (data.status && !["nouveau", "new", "pending"].includes(data.status)) return;
+
+    // Construire le texte brut depuis tous les champs possibles de MacroDroid
+    let texte = data.texte || data.sms || data.message || data.body
+             || data.text  || data.notification || data.content || "";
+    if (!texte && data.not_title && data.notification)
+      texte = data.not_title + " " + data.notification;
+    if (!texte && data.not_title && data.not_message)
+      texte = data.not_title + " " + data.not_message;
+
+    // Filtrer : doit ressembler à un SMS Waafi
+    const isWaafi = texte.includes("Transfer") || texte.includes("DJF")
+                 || texte.includes("Waafi")     || texte.includes("transferred")
+                 || texte.includes("received")  || texte.includes("Evc-Plus");
+    if (!isWaafi) return;
+
+    // Parser les champs structurés
+    const transferId = extractTransferId(texte);
+    const montant    = extractMontant(texte);
+    const numClient  = extractNumClient(texte);
+
+    // Enrichir le document (utile pour les recherches dans onNouvelDepot)
+    await event.data.ref.update({
+      transferId: transferId || null,
+      montant:    montant    || null,
+      numClient:  numClient  || null,
+      rawText:    texte,
+      parsedAt:   FieldValue.serverTimestamp(),
+      source:     data.source || "macrodroid_direct",
+      status:     "reçu",
+    }).catch(() => {});
+
+    const token   = TELEGRAM_TOKEN.value();
+    const adminId = TELEGRAM_ADMIN_ID.value();
+
+    if (!transferId && !montant) {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>SMS Waafi non parsable</b>\n<code>${texte.substring(0, 200)}</code>`
+      ).catch(() => {});
+      return;
+    }
+
+    // Alerte admin — SMS reçu et parsé
+    await sendTelegram(token, adminId,
+      `📩 <b>SMS Waafi reçu (MacroDroid direct)</b>\n\n` +
+      `Transfer-ID: <code>${transferId || "?"}</code>\n` +
+      `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
+      `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
+      `<i>✅ En attente de l'ordre client...</i>`
+    ).catch(() => {});
+
+    if (!transferId) return; // Pas de TID → pas de reverse-match possible
+
+    // Reverse-match : ordre déjà soumis avec ce TID ?
+    const ordreSnap = await db.collection("depot_orders")
+      .where("waafitranfertID", "==", transferId)
+      .where("status", "==", "En attente")
+      .limit(1).get();
+    if (ordreSnap.empty) return;
+
+    const dejaTraite = await db.collection("ordre_traite")
+      .where("transferId", "==", transferId).limit(1).get();
+    if (!dejaTraite.empty) return;
+
+    const ordreDoc  = ordreSnap.docs[0];
+    const notifSnap = await event.data.ref.get();
+    const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), notifSnap.data());
+
+    if (decision === "confirmer") {
+      await confirmerDepot(ordreDoc, notifSnap, token, adminId);
+    } else {
+      const raison = mismatchToRaison(mismatches);
+      await ordreDoc.ref.update({
+        status: "Paiement Non Reçu",
+        flagRaison: raison,
+        flaggedAt: FieldValue.serverTimestamp(),
+      });
+      await sendTelegram(token, adminId,
+        `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreDoc.data().orderId || ordreDoc.id}</code>\n` +
+        mismatches.map((m) => `• ${m}`).join("\n")
+      );
+    }
+  }
+);
+
 // Parse le SMS, stocke dans waafi_notifications, alerte admin.
 // Cas rare : si un ordre "En attente" avec ce TID existe déjà,
 // confirme directement (ordre soumis avant l'arrivée du SMS).
