@@ -612,13 +612,38 @@ exports.onNouvelDepot = onDocumentCreated(
 
     logAudit("nouvel_depot", { ordreId, montant: tx.montant, phone });
 
+    // ── Analyse fraude ──
+    const fraude = analyserFraude(tx, transferId);
+    const fraudeTag = fraude.score >= 70
+      ? `\n🚨 <b>Fraude ${fraude.risque.toUpperCase()} (${fraude.score}/100)</b> : ${fraude.raisons.join(", ")}`
+      : fraude.score >= 40
+      ? `\n⚠️ <i>Risque fraude moyen (${fraude.score}/100) : ${fraude.raisons.join(", ")}</i>`
+      : "";
+
+    if (fraude.action === "rejeter") {
+      await db.collection("depot_orders").doc(docId).update({
+        status: "Paiement Non Reçu",
+        flagRaison: `Fraude détectée : ${fraude.raisons.join(", ")}`,
+        fraudType: fraude.risque,
+        score_fraude: fraude.score,
+        flaggedAt: FieldValue.serverTimestamp(),
+      });
+      await sendTelegram(token, adminId,
+        `🚨 <b>Dépôt rejeté — Fraude</b> <code>#${ordreId}</code>\n` +
+        `Score: ${fraude.score}/100 | Risque: ${fraude.risque}\n` +
+        fraude.raisons.map((r) => `• ${r}`).join("\n")
+      );
+      logAudit("depot_rejete_fraude", { ordreId, score: fraude.score, raisons: fraude.raisons });
+      return;
+    }
+
     // ── Telegram admin — nouvel ordre reçu ──
     await sendTelegram(token, adminId,
       `📥 <b>Nouvel ordre Dépôt</b> — <code>#${ordreId}</code>\n\n` +
       `Montant : <b>${Number(tx.montant || 0).toLocaleString()} DJF</b>\n` +
       `ID 1xBet : <code>${tx.userId1xBet || tx.id1x || "—"}</code>\n` +
       `Transfer-ID : <code>${transferId || "—"}</code>\n` +
-      `N° Waafi : <code>${phone || "—"}</code>\n\n` +
+      `N° Waafi : <code>${phone || "—"}</code>${fraudeTag}\n\n` +
       `<i>⏳ Vérification en cours...</i>`
     );
 
@@ -1186,6 +1211,13 @@ exports.ordresBloques = onSchedule(
       // Erreur permanente déjà détectée → skip sans réessayer
       if (o.webhookStatus === "echec_permanent") continue;
       if (!id1xbet) continue;
+      // Délai de grâce 2 min : si aucun webhookStatus et ordre récemment confirmé,
+      // onDepotUpdated est peut-être encore en cours → évite double appel MobCash
+      if (!o.webhookStatus) {
+        const confirmedTs = o.confirmedAt && o.confirmedAt.toDate
+          ? o.confirmedAt.toDate().getTime() : (o.confirmedAt ? Number(o.confirmedAt) : 0);
+        if (confirmedTs && Date.now() - confirmedTs < 2 * 60 * 1000) continue;
+      }
 
       // Max 3 tentatives de recovery
       const retryCount = Number(o.webhookRetryCount || 0);

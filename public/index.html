@@ -3121,16 +3121,12 @@ var _rejetTimers = {};
 
 function demarrerTimerRejet(ref){
   if(_rejetTimers[ref]) clearTimeout(_rejetTimers[ref]);
-  _rejetTimers[ref] = setTimeout(async function(){
+  _rejetTimers[ref] = setTimeout(function(){
     var ordre = _txsCache.find(function(t){ return (t.ref===ref||t.orderId===ref) && t.status==='En attente'; });
     if(ordre){
-      await updateTxFirebase(ref, {
-        status: 'Rejeté',
-        rejetRaison: 'Délai dépassé — aucun paiement reçu en 10 minutes',
-        rejetedAt: new Date()
-      });
-      pushNotif('ordre_rejete', 'Aucun paiement reçu en 10 minutes. Ordre rejeté automatiquement.', ref, ordre.montant);
-      showToast('⏰ Ordre #'+ref+' rejeté (délai dépassé)', 'warning');
+      // Ne pas toucher Firestore — le backend scheduler gère les ordres bloqués.
+      // Afficher uniquement un avertissement local au client.
+      showToast('⏳ Traitement long — contactez le support si le problème persiste', 'warning');
     }
     delete _rejetTimers[ref];
   }, 600000);
