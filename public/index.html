@@ -1809,6 +1809,17 @@ function openOrderDetail(ref){
       +'<button onclick="terminerRetrait(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:14px;font-size:0.9rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">✅ Paiement Waafi effectué — Terminer</button>';
   } else if(tx.status==='En attente'){
     actDiv.innerHTML='<div style="padding:10px;text-align:center;color:var(--success);font-size:0.8rem;width:100%;">🤖 Traitement automatique en cours...</div>';
+  } else if(isDepot && tx.status==='Paiement Reçu' && (tx.webhookStatus==='echec_permanent'||tx.webhookStatus==='echec_max'||tx.webhookStatus==='echec')){
+    var currentId = tx.userId1xBet||tx.id1x||'';
+    var errHint = tx.webhookStatus==='echec_permanent'
+      ? '<div style="font-size:0.7rem;color:#ff6b6b;margin-bottom:10px;line-height:1.4;">⚠️ Erreur permanente : compte 1xBet en USD/EUR.<br>Entrez l\'ID du compte DJF du client.</div>'
+      : '<div style="font-size:0.7rem;color:#ffb347;margin-bottom:10px;line-height:1.4;">⚠️ Échec MobCash. Vérifiez l\'ID 1xBet et relancez.</div>';
+    actDiv.innerHTML = errHint
+      +'<div style="display:flex;gap:8px;margin-bottom:10px;">'
+      +'<input id="retry-id-input" type="text" placeholder="Nouvel ID 1xBet (ou laisser vide)" value="'+currentId+'"'
+      +' style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;color:#fff;font-size:0.85rem;"/>'
+      +'</div>'
+      +'<button onclick="adminRetryDeposit(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#ffd700,#ffb300);border:none;color:#000;border-radius:10px;padding:14px;font-size:0.88rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">🔄 Relancer le crédit 1xBet</button>';
   } else {
     actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
   }
@@ -1818,6 +1829,34 @@ function openOrderDetail(ref){
 
 var currentOdmRef=null;
 function odmClose(){ document.getElementById('order-detail-modal').classList.remove('show'); }
+
+async function adminRetryDeposit(ref){
+  var btn = document.querySelector('[onclick*="adminRetryDeposit(\''+ref+'\')"]');
+  var input = document.getElementById('retry-id-input');
+  var newId = input ? input.value.trim() : '';
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Envoi en cours...'; }
+  try{
+    var body = { _ak: getAdminKey(), orderId: ref };
+    if(newId) body.newUserId1xBet = newId;
+    var resp = await fetch(CF_BASE+'/adminRetryDeposit', {
+      method: 'POST',
+      headers: cfHeaders(),
+      body: JSON.stringify(body)
+    });
+    var data = await resp.json();
+    if(data.ok){
+      showToast('✅ Dépôt relancé — crédit réussi !', 'success');
+      odmClose();
+      loadTxsFromFirebase();
+    } else {
+      showToast('❌ '+data.error, 'error');
+      if(btn){ btn.disabled=false; btn.textContent='🔄 Relancer le crédit 1xBet'; }
+    }
+  } catch(e){
+    showToast('❌ Erreur réseau : '+e.message, 'error');
+    if(btn){ btn.disabled=false; btn.textContent='🔄 Relancer le crédit 1xBet'; }
+  }
+}
 
 async function terminerRetrait(ref){
   if(!window.db){ showToast('❌ Firebase non connecté','error'); return; }

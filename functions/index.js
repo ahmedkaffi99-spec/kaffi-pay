@@ -2430,3 +2430,85 @@ exports.adminStats = onRequest(
     }
   }
 );
+
+// ══════════════════════════════════════════════════════════════════
+// HTTP — ADMIN : Relancer un dépôt bloqué (echec_permanent / echec_max)
+// POST { _ak, orderId, newUserId1xBet? }
+// ══════════════════════════════════════════════════════════════════
+exports.adminRetryDeposit = onRequest(
+  { region: REGION, invoker: "public",
+    secrets: [MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN,
+              TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  async (req, res) => {
+    setCorsHeaders(res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST")    { res.status(405).json({ ok: false, error: "POST requis" }); return; }
+    if (!checkAdminKey(req))      { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
+
+    const { orderId, newUserId1xBet } = req.body || {};
+    if (!orderId) { res.status(400).json({ ok: false, error: "orderId requis" }); return; }
+
+    const token   = TELEGRAM_TOKEN.value();
+    const adminId = TELEGRAM_ADMIN_ID.value();
+
+    // Cherche l'ordre dans depot_orders
+    const snap = await db.collection("depot_orders")
+      .where("orderId", "==", orderId).limit(1).get();
+    if (snap.empty) { res.status(404).json({ ok: false, error: "Ordre introuvable" }); return; }
+
+    const ordreDoc = snap.docs[0];
+    const o        = ordreDoc.data();
+
+    if (o.status !== "Paiement Reçu") {
+      res.status(400).json({ ok: false, error: `Statut actuel '${o.status}' — retry uniquement sur 'Paiement Reçu'` });
+      return;
+    }
+
+    const userId = newUserId1xBet ? String(newUserId1xBet).trim() : (o.userId1xBet || o.id1x || "");
+    if (!userId) { res.status(400).json({ ok: false, error: "ID 1xBet manquant" }); return; }
+
+    try {
+      await callMobcash("Dépôt", userId, Number(o.montant || 0), "");
+
+      const tid = o.waafitranfertID || o.hash || "";
+      if (tid) {
+        db.collection("ordre_traite").doc(tid).update({
+          status: "credite", creditedAt: FieldValue.serverTimestamp(),
+        }).catch(() => {});
+      }
+
+      const updates = {
+        status: "Crédité avec succès",
+        webhookStatus: "ok",
+        webhookAt: FieldValue.serverTimestamp(),
+        recoveryBy: "admin_retry",
+        webhookRetryCount: 0,
+      };
+      if (newUserId1xBet) updates.userId1xBet = userId;
+
+      await ordreDoc.ref.update(updates);
+
+      await sendTelegram(token, adminId,
+        `✅ <b>Retry Admin — Dépôt crédité</b>\n` +
+        `Ordre <code>#${orderId}</code> | ID 1xBet: <code>${userId}</code>\n` +
+        `${Number(o.montant||0).toLocaleString()} DJF`
+      );
+      logAudit("depot_admin_retry_ok", { orderId, userId });
+      res.json({ ok: true, message: `Ordre #${orderId} crédité avec succès` });
+
+    } catch (err) {
+      const errMsg = err.message || "";
+      const estPermanente = ["currency does not match", "account currency", "user not found", "invalid user", "account not found"]
+        .some((e) => errMsg.toLowerCase().includes(e));
+
+      await ordreDoc.ref.update({
+        webhookStatus: estPermanente ? "echec_permanent" : "echec",
+        webhookErr: errMsg,
+        webhookRetryCount: 0,
+        ...(newUserId1xBet ? { userId1xBet: userId } : {}),
+      });
+
+      res.status(400).json({ ok: false, error: errMsg, permanent: estPermanente });
+    }
+  }
+);
