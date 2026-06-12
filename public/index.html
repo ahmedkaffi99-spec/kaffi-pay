@@ -1654,7 +1654,9 @@ function friendlyStatus(t){
   if(!d && t.status==='Code Invalide') return '❌ Code invalide';
   if(!d && t.status==='Paiement Non Reçu') return '❌ Retrait échoué';
   if(isRetraitPret) return '⏳ Code validé — Paiement en cours';
-  if(t.status==='Paiement Reçu' && d && (t.webhookStatus==='echec')) return '⚠️ Paiement reçu — crédit échoué';
+  if(t.status==='Paiement Reçu' && d && t.webhookStatus==='echec_permanent') return '🚨 Compte 1xBet invalide — support requis';
+  if(t.status==='Paiement Reçu' && d && t.webhookStatus==='echec_max') return '🚨 Crédit échoué — support requis';
+  if(t.status==='Paiement Reçu' && d && t.webhookStatus==='echec') return '⚠️ Paiement reçu — crédit échoué';
   if(t.status==='Paiement Reçu' && d) return '💳 Paiement reçu — crédit en cours';
   if(t.status==='Crédité avec succès') return '✅ Crédité avec succès';
   if(t.status==='Paiement Non Reçu') return '❌ Paiement non reçu';
@@ -2206,8 +2208,8 @@ function renderSuivi(){
   if(!tx) return;
   const isDepot = tx.type === 'Dépôt';
   const status  = tx.status || 'En attente';
-  const wbOk    = tx.webhookStatus === 'ok' || tx.webhookStatus === 'ok_retry_rt';
-  const wbFail  = tx.webhookStatus === 'echec';
+  const wbOk    = tx.webhookStatus === 'ok' || tx.webhookStatus === 'ok_retry_rt' || tx.webhookStatus === 'ok_recovery';
+  const wbFail  = tx.webhookStatus === 'echec' || tx.webhookStatus === 'echec_permanent' || tx.webhookStatus === 'echec_max';
   const wbPend  = !wbOk && !wbFail;
 
   document.getElementById('suivi-ref').textContent = tx.orderId || tx.ref || '—';
@@ -2251,11 +2253,17 @@ function renderSuivi(){
   } else if(status === 'Paiement Reçu' && wbFail){
     card.style.borderColor = 'rgba(255,64,96,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
-    icon.textContent = '❌';
+    icon.textContent = '🚨';
+    var isPermanent = tx.webhookStatus === 'echec_permanent';
+    var isMax       = tx.webhookStatus === 'echec_max';
     stxt.textContent = isDepot ? 'Crédit échoué — Contactez le support' : 'Envoi Waafi échoué — Contactez le support';
     stxt.style.color = 'var(--error)';
     sdesc.textContent= isDepot
-      ? 'Le crédit de votre compte 1xBet a échoué. Contactez le support avec votre numéro d\'ordre.'
+      ? (isPermanent
+          ? 'Votre compte 1xBet semble être en devise étrangère (USD/EUR). Fournissez votre ID de compte DJF au support avec votre numéro d\'ordre #' + (tx.orderId||tx.ref||'') + '.'
+          : (isMax
+              ? 'Le crédit automatique a échoué après 3 tentatives. Contactez le support avec votre numéro d\'ordre #' + (tx.orderId||tx.ref||'') + '.'
+              : 'Le crédit de votre compte 1xBet a échoué. Contactez le support avec votre numéro d\'ordre.'))
       : 'L\'envoi Waafi a échoué. Contactez le support avec votre numéro d\'ordre.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
   } else if(status === 'Crédité avec succès'){

@@ -926,6 +926,14 @@ exports.onDepotUpdated = onDocumentUpdated(
       return;
     }
 
+    const ERREURS_PERMANENTES_DEPOT = [
+      "currency does not match",
+      "account currency",
+      "user not found",
+      "invalid user",
+      "account not found",
+    ];
+
     try {
       await callMobcash("Dépôt", userId1xBet, montantVal, "");
       const tid = after.waafitranfertID || after.hash || "";
@@ -941,11 +949,26 @@ exports.onDepotUpdated = onDocumentUpdated(
       });
       logAudit("depot_mobcash_ok", { ordreId, userId1xBet });
     } catch (e) {
-      await event.data.after.ref.update({ webhookStatus: "echec", webhookErr: e.message });
-      await sendTelegram(token, adminId,
-        `⚠️ <b>MobCash Dépôt échoué</b> — #${ordreId}\n<code>${e.message}</code>\n` +
-        `<i>Le scheduler relancera dans 5 min.</i>`);
-      logAudit("depot_mobcash_echec", { ordreId, err: e.message });
+      const errMsg = e.message || "";
+      const estPermanente = ERREURS_PERMANENTES_DEPOT.some((s) => errMsg.toLowerCase().includes(s));
+      await event.data.after.ref.update({
+        webhookStatus: estPermanente ? "echec_permanent" : "echec",
+        webhookErr: errMsg,
+      });
+      if (estPermanente) {
+        await sendTelegram(token, adminId,
+          `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
+          `ID 1xBet: <code>${userId1xBet}</code>\n` +
+          `<code>${errMsg}</code>\n\n` +
+          `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
+          `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement.`
+        );
+      } else {
+        await sendTelegram(token, adminId,
+          `⚠️ <b>MobCash Dépôt échoué</b> — #${ordreId}\n<code>${errMsg}</code>\n` +
+          `<i>Le scheduler relancera dans 5 min (max 3 tentatives).</i>`);
+      }
+      logAudit("depot_mobcash_echec", { ordreId, err: errMsg, permanent: estPermanente });
     }
   }
 );
@@ -1094,10 +1117,18 @@ exports.ordresBloques = onSchedule(
     }
 
     // ── PARTIE 3a : Recovery Dépôt — "Paiement Reçu" + webhookStatus != ok ──
-    // MobCash Deposit n'a pas crédité 1xBet. Re-tente automatiquement.
+    // MobCash Deposit n'a pas crédité 1xBet. Re-tente max 3 fois.
     const snapDepotRecu = await db.collection("depot_orders")
       .where("status", "==", "Paiement Reçu")
       .get().catch(() => ({ docs: [] }));
+
+    const ERREURS_PERMANENTES = [
+      "currency does not match",
+      "account currency",
+      "user not found",
+      "invalid user",
+      "account not found",
+    ];
 
     for (const ordreDoc of snapDepotRecu.docs) {
       const o         = ordreDoc.data();
@@ -1106,7 +1137,26 @@ exports.ordresBloques = onSchedule(
       const wbOk      = o.webhookStatus === "ok" || o.webhookStatus === "ok_recovery";
 
       if (wbOk) continue;
+      // Erreur permanente déjà détectée → skip sans réessayer
+      if (o.webhookStatus === "echec_permanent") continue;
       if (!id1xbet) continue;
+
+      // Max 3 tentatives de recovery
+      const retryCount = Number(o.webhookRetryCount || 0);
+      if (retryCount >= 3) {
+        // Alerte unique à la 3ème tentative (webhookStatus passe à echec_max)
+        if (o.webhookStatus !== "echec_max") {
+          await ordreDoc.ref.update({ webhookStatus: "echec_max" });
+          await sendTelegram(token, adminId,
+            `🚨 <b>Recovery abandonné — 3 échecs</b>\n` +
+            `Ordre <code>#${ordreId}</code> | ID 1xBet: <code>${id1xbet}</code>\n` +
+            `${Number(o.montant||0).toLocaleString()} DJF\n` +
+            `Dernière erreur: <code>${o.webhookErr || "?"}</code>\n\n` +
+            `<i>⚠️ Intervention manuelle requise.</i>`
+          );
+        }
+        continue;
+      }
 
       const tid         = o.waafitranfertID || o.hash || "";
       const dejaCredite = tid
@@ -1138,10 +1188,32 @@ exports.ordresBloques = onSchedule(
         );
         logAudit("depot_recovery_scheduler", { ordreId, id1xbet });
       } catch (err) {
-        await ordreDoc.ref.update({ webhookStatus: "echec", webhookErr: err.message });
-        await sendTelegram(token, adminId,
-          `⚠️ <b>Recovery Dépôt échoué</b> — #${ordreId}\n<code>${err.message}</code>`
-        );
+        const errMsg = err.message || "";
+        const estPermanente = ERREURS_PERMANENTES.some((e) => errMsg.toLowerCase().includes(e));
+
+        if (estPermanente) {
+          await ordreDoc.ref.update({
+            webhookStatus: "echec_permanent",
+            webhookErr: errMsg,
+            webhookRetryCount: retryCount + 1,
+          });
+          await sendTelegram(token, adminId,
+            `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
+            `ID 1xBet: <code>${id1xbet}</code>\n` +
+            `<code>${errMsg}</code>\n\n` +
+            `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
+            `<b>Action requise :</b> demander au client son ID de compte DJF ou créditer manuellement.`
+          );
+        } else {
+          await ordreDoc.ref.update({
+            webhookStatus: "echec",
+            webhookErr: errMsg,
+            webhookRetryCount: retryCount + 1,
+          });
+          await sendTelegram(token, adminId,
+            `⚠️ <b>Recovery Dépôt échoué (${retryCount + 1}/3)</b> — #${ordreId}\n<code>${errMsg}</code>`
+          );
+        }
       }
     }
 
