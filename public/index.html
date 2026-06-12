@@ -1019,6 +1019,13 @@ window.addEventListener('DOMContentLoaded', function(){
   }, 200);
   // Stop retry after 10s
   setTimeout(function(){ clearInterval(fbRetry); }, 10000);
+
+  // Rafraîchit le suivi quand l'utilisateur revient sur l'onglet/app (écran veille, switch d'app)
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'visible' && suiviRef){
+      refreshSuiviFromServer();
+    }
+  });
 });
 
 function switchLoginMode(mode){ loginMode=mode; }
@@ -1231,6 +1238,14 @@ function listenTxs(){
         }
       }
       if(suiviRef) renderSuivi();
+      // Rafraîchit la modale admin si elle est ouverte sur un ordre qui vient de changer
+      if(currentOdmRef){
+        var modal = document.getElementById('order-detail-modal');
+        if(modal && modal.classList.contains('show')){
+          var updated = _txsCache.find(function(t){ return t.ref===currentOdmRef||t.orderId===currentOdmRef; });
+          if(updated) openOrderDetail(currentOdmRef);
+        }
+      }
     }
 
     var _unsubDepot   = window.fsOnSnapshot(window.fsCollection(window.db,'depot_orders'), function(snap){
@@ -2203,6 +2218,28 @@ let suiviRef=null, suiviInterval=null, suiviUnsubscribe=null;
 var currentSuiviTx = null;
 
 
+function _isSuiviFinal(status){
+  return status === 'Paiement Non Reçu' || status === 'Annulé'
+      || status === 'Crédité avec succès' || status === 'Payé' || status === 'Code Invalide';
+}
+
+// Force-fetch the order from Firestore and update suivi (used on reconnect / visibility change)
+async function refreshSuiviFromServer(){
+  if(!suiviRef || !window.db) return;
+  try{
+    var [sd, sr] = await Promise.all([
+      window.fsGetDocs(window.fsQuery(window.fsCollection(window.db,'depot_orders'),   window.fsWhere('orderId','==',suiviRef), window.fsLimit(1))),
+      window.fsGetDocs(window.fsQuery(window.fsCollection(window.db,'retrait_orders'),  window.fsWhere('orderId','==',suiviRef), window.fsLimit(1)))
+    ]);
+    var snap = !sd.empty ? sd : (!sr.empty ? sr : null);
+    if(!snap) return;
+    var fresh = snap.docs[0].data();
+    currentSuiviTx = Object.assign({}, currentSuiviTx || {}, fresh);
+    renderSuivi();
+    if(_isSuiviFinal(fresh.status) && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+  }catch(e){}
+}
+
 function showSuivi(ref, txData){
   suiviRef = ref;
   if(txData) currentSuiviTx = txData;
@@ -2210,36 +2247,37 @@ function showSuivi(ref, txData){
     window.history.pushState({page:'suivi', ref:ref}, '', '#suivi-'+encodeURIComponent(ref));
   }catch(e){}
   if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
-  if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+  if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   showScreen('suivi');
   renderSuivi();
-  // Direct Firestore listener on this specific order — queries both collections
+
+  if(!window.db){ return; } // Firebase pas encore prêt — _pendingSuiviRef gérera le retry
+
   function _handleSuiviSnap(snap){
     if(snap.empty) return;
     var fresh = snap.docs[0].data();
-    if(!currentSuiviTx){
-      currentSuiviTx = fresh;
-      renderSuivi();
-    } else {
-      var statusChanged  = fresh.status !== currentSuiviTx.status;
-      var webhookChanged = (fresh.webhookStatus||'') !== (currentSuiviTx.webhookStatus||'');
-      if(statusChanged || webhookChanged){
-        currentSuiviTx = Object.assign({}, currentSuiviTx, fresh);
-        renderSuivi();
-      }
-    }
-    var isFinal = fresh.status === 'Paiement Non Reçu'
-               || fresh.status === 'Annulé'
-               || fresh.status === 'Crédité avec succès'
-               || fresh.status === 'Payé'
-               || fresh.status === 'Code Invalide';
-    if(isFinal && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+    // Toujours mettre à jour (le serveur a autorité sur les champs)
+    currentSuiviTx = Object.assign({}, currentSuiviTx || {}, fresh);
+    renderSuivi();
+    if(_isSuiviFinal(fresh.status) && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   }
-  var _qDepot   = window.fsQuery(window.fsCollection(window.db,'depot_orders'),   window.fsWhere('orderId','==',ref), window.fsLimit(1));
-  var _qRetrait = window.fsQuery(window.fsCollection(window.db,'retrait_orders'),  window.fsWhere('orderId','==',ref), window.fsLimit(1));
-  var _unsSuiviD = window.fsOnSnapshot(_qDepot,   _handleSuiviSnap);
-  var _unsSuiviR = window.fsOnSnapshot(_qRetrait,  _handleSuiviSnap);
-  suiviUnsubscribe = function(){ _unsSuiviD(); _unsSuiviR(); };
+
+  try{
+    var _qDepot   = window.fsQuery(window.fsCollection(window.db,'depot_orders'),   window.fsWhere('orderId','==',ref), window.fsLimit(1));
+    var _qRetrait = window.fsQuery(window.fsCollection(window.db,'retrait_orders'),  window.fsWhere('orderId','==',ref), window.fsLimit(1));
+    var _unsSuiviD = window.fsOnSnapshot(_qDepot,   _handleSuiviSnap);
+    var _unsSuiviR = window.fsOnSnapshot(_qRetrait,  _handleSuiviSnap);
+    suiviUnsubscribe = function(){ _unsSuiviD(); _unsSuiviR(); };
+  }catch(e){ suiviUnsubscribe=null; }
+
+  // Polling toutes les 8s en backup (réseau mobile instable / écran veille)
+  suiviInterval = setInterval(function(){
+    if(!suiviRef) return;
+    if(_isSuiviFinal(currentSuiviTx && currentSuiviTx.status)){
+      clearInterval(suiviInterval); suiviInterval=null; return;
+    }
+    refreshSuiviFromServer();
+  }, 8000);
 }
 
 function renderSuivi(){
@@ -2315,7 +2353,7 @@ function renderSuivi(){
       ? 'Votre compte 1xBet a été crédité. Vous pouvez maintenant jouer !'
       : 'Votre argent a été envoyé sur votre numéro Waafi. Vérifiez votre solde Waafi.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
-    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   } else if(status === 'Paiement Non Reçu'){
     card.style.borderColor = 'rgba(255,64,96,0.2)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,64,96,0.05),rgba(7,16,30,0.8))';
@@ -2326,7 +2364,7 @@ function renderSuivi(){
       ? (tx.flagRaison ? tx.flagRaison + '. Soumettez un nouvel ordre si le problème est résolu.' : 'Votre paiement n\'a pas été reçu. Vérifiez votre Transfer ID et contactez le support.')
       : (tx.flagRaison ? tx.flagRaison + '. Contactez le support si besoin.' : 'Votre retrait n\'a pas pu être traité. Contactez le support avec votre numéro d\'ordre.');
     prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
-    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   } else if(status === 'Annulé'){
     card.style.borderColor = 'rgba(150,150,150,0.15)';
     card.style.background  = 'linear-gradient(160deg,rgba(150,150,150,0.03),rgba(7,16,30,0.8))';
@@ -2335,7 +2373,7 @@ function renderSuivi(){
     stxt.style.color = 'var(--muted)';
     sdesc.textContent= 'Votre ordre a été annulé. Vous pouvez soumettre un nouvel ordre à tout moment.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,#555,#888)';
-    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   } else if(status === 'Code Validé'){
     card.style.borderColor = 'rgba(255,170,0,0.25)';
     card.style.background  = 'linear-gradient(160deg,rgba(255,170,0,0.06),rgba(7,16,30,0.8))';
@@ -2352,7 +2390,7 @@ function renderSuivi(){
     stxt.style.color = 'var(--error)';
     sdesc.textContent= tx.flagRaison ? tx.flagRaison + ' Contactez le support ou soumettez un nouvel ordre.' : 'Votre code de retrait est invalide. Contactez le support.';
     prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
-    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   } else if(status === 'Payé'){
     card.style.borderColor = 'rgba(0,212,160,0.3)';
     card.style.background  = 'linear-gradient(160deg,rgba(0,212,160,0.08),rgba(7,16,30,0.8))';
@@ -2361,7 +2399,7 @@ function renderSuivi(){
     stxt.style.color = 'var(--success)';
     sdesc.textContent= 'Votre paiement a été envoyé sur votre numéro Waafi. Vérifiez votre solde Waafi.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
-    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+    if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   }
 
   // ── DÉTAILS ──
