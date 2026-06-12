@@ -703,10 +703,16 @@ exports.onNouvelDepot = onDocumentCreated(
       if (decision === "confirmer") {
         const confirmed = await confirmerDepot(ordreSnap, waafiDoc, token, adminId);
         if (!confirmed) {
-          // TID déjà utilisé par un autre ordre — alerte admin
+          // Re-lire le statut actuel : une autre fonction (onNouvelleNotifWaafi, scheduler)
+          // a peut-être déjà confirmé cet ordre entre-temps (race condition normale).
+          const freshSnap = await db.collection("depot_orders").doc(docId).get();
+          if (!freshSnap.exists || freshSnap.data().status !== "En attente") return;
+
+          // Vrai doublon TID : le TID appartient à un autre ordre
           const autreOrdre = await db.collection("ordre_traite")
             .where("transferId", "==", waafiDoc.data().transferId || "").limit(1).get();
           const autreId = autreOrdre.empty ? "?" : (autreOrdre.docs[0].data().ordreId || "?");
+          if (autreId === ordreId) return; // Même ordre — déjà confirmé, on ne touche pas
           await db.collection("depot_orders").doc(docId).update({
             status: "Paiement Non Reçu",
             flagRaison: `Transfer-ID déjà utilisé par l'ordre #${autreId}`,
