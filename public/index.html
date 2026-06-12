@@ -2236,7 +2236,10 @@ async function refreshSuiviFromServer(){
     var fresh = snap.docs[0].data();
     currentSuiviTx = Object.assign({}, currentSuiviTx || {}, fresh);
     renderSuivi();
-    if(_isSuiviFinal(fresh.status) && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+    if(_isSuiviFinal(fresh.status)){
+      if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+      if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+    }
   }catch(e){}
 }
 
@@ -2247,7 +2250,7 @@ function showSuivi(ref, txData){
     window.history.pushState({page:'suivi', ref:ref}, '', '#suivi-'+encodeURIComponent(ref));
   }catch(e){}
   if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
-  if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+  if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
   showScreen('suivi');
   renderSuivi();
 
@@ -2259,7 +2262,10 @@ function showSuivi(ref, txData){
     // Toujours mettre à jour (le serveur a autorité sur les champs)
     currentSuiviTx = Object.assign({}, currentSuiviTx || {}, fresh);
     renderSuivi();
-    if(_isSuiviFinal(fresh.status) && suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+    if(_isSuiviFinal(fresh.status)){
+      if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
+      if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+    }
   }
 
   try{
