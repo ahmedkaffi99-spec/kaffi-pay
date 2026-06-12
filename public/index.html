@@ -1348,17 +1348,28 @@ function logAction(action, data){
   }).catch(function(){});
 }
 
-function genererOrderId(){
+async function genererOrderId(){
   const now=new Date();
   const mm=String(now.getMonth()+1).padStart(2,'0');
   const dd=String(now.getDate()).padStart(2,'0');
-  const dayKey='kp_cnt_'+mm+dd;
-  let n=parseInt(localStorage.getItem(dayKey)||'0')+1;
-  localStorage.setItem(dayKey,n);
-  for(const k of Object.keys(localStorage)){
-    if(k.startsWith('kp_cnt_')&&k!==dayKey) localStorage.removeItem(k);
+  const dayKey=mm+dd;
+  if(!window.db||!window.fsRunTransaction||!window.fsDoc){
+    // Fallback si Firebase pas encore prêt
+    return dayKey+String(Math.floor(Math.random()*9000)+1000);
   }
-  return mm+dd+n;
+  const counterRef=window.fsDoc(window.db,'counters','daily_orders');
+  try{
+    const newCount=await window.fsRunTransaction(window.db,async function(txn){
+      const snap=await txn.get(counterRef);
+      const count=(snap.exists()&&snap.data().day===dayKey)?(Number(snap.data().count||0)+1):1;
+      txn.set(counterRef,{day:dayKey,count:count});
+      return count;
+    });
+    return dayKey+newCount;
+  }catch(e){
+    // Fallback réseau : timestamp partiel (unique par seconde)
+    return dayKey+String(Math.floor((Date.now()%86400000)/1000));
+  }
 }
 
 // Turnstile — verification avant chaque soumission

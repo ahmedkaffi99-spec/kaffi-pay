@@ -48,6 +48,16 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Compteur d'ordres — lecture/écriture publique (incrément séquentiel uniquement)
+    match /counters/{docId} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['day', 'count'])
+                   && request.resource.data.day is string
+                   && request.resource.data.count is int
+                   && request.resource.data.count >= 1
+                   && request.resource.data.count <= 99999;
+    }
+
     // Tout le reste — Cloud Functions uniquement (Admin SDK bypasse les règles)
     match /{document=**} {
       allow read, write: if false;
