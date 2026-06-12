@@ -540,13 +540,21 @@ async function sendWhatsApp(phone, message) {
         "Authorization": fonnteToken,
       },
       body: JSON.stringify({ target, message, countryCode: "253" }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(30000),
     });
     const body = await resp.text();
     if (!resp.ok) {
       console.warn("Fonnte error:", resp.status, body);
       return { ok: false, status: resp.status, body };
     }
+    // Fonnte retourne HTTP 200 même pour "invalid token" — vérifier le JSON
+    try {
+      const json = JSON.parse(body);
+      if (json.status === false) {
+        console.warn("Fonnte status false:", body);
+        return { ok: false, reason: json.reason || "status_false", body };
+      }
+    } catch { /* body non-JSON, ignorer */ }
     return { ok: true, body };
   } catch (e) {
     console.warn("WhatsApp send failed:", e.message);
