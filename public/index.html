@@ -642,16 +642,23 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
   <!-- DASHBOARD -->
   <div class="page-section active" id="page-dashboard">
+    <div class="order-filter" style="margin-bottom:10px;">
+      <div class="filter-chip active" onclick="setDashPeriod('today',this)">📅 Aujourd'hui</div>
+      <div class="filter-chip" onclick="setDashPeriod('7j',this)">7 Jours</div>
+      <div class="filter-chip" onclick="setDashPeriod('30j',this)">30 Jours</div>
+      <div class="filter-chip" onclick="setDashPeriod('all',this)">Tout</div>
+    </div>
     <div class="stats-grid">
-      <div class="stat-card green"><div class="stat-label">Total Dépôts</div><div class="stat-value" id="stat-depot">0</div><div class="stat-sub" id="stat-depot-sub">0 confirmés</div></div>
-      <div class="stat-card red"><div class="stat-label">Total Retraits</div><div class="stat-value" id="stat-retrait">0</div><div class="stat-sub" id="stat-retrait-sub">0 confirmés</div></div>
+      <div class="stat-card green"><div class="stat-label" id="stat-depot-label">Dépôts</div><div class="stat-value" id="stat-depot">0</div><div class="stat-sub" id="stat-depot-sub">0 crédités</div></div>
+      <div class="stat-card red"><div class="stat-label" id="stat-retrait-label">Retraits</div><div class="stat-value" id="stat-retrait">0</div><div class="stat-sub" id="stat-retrait-sub">0 effectués</div></div>
       <div class="stat-card orange"><div class="stat-label">En Attente</div><div class="stat-value" id="stat-pending">0</div><div class="stat-sub" id="stat-pending-sub">à traiter</div></div>
-      <div class="stat-card blue"><div class="stat-label">Aujourd'hui</div><div class="stat-value" id="stat-today">0</div><div class="stat-sub">DJF confirmés</div></div>
+      <div class="stat-card blue"><div class="stat-label" id="stat-today-label">Confirmés</div><div class="stat-value" id="stat-today">0</div><div class="stat-sub">DJF total</div></div>
     </div>
     <div class="chart-card">
       <div class="chart-header">
         <div class="chart-title">Activité</div>
         <div class="chart-tabs">
+          <div class="chart-tab" onclick="switchChart('1j',this)">24h</div>
           <div class="chart-tab active" onclick="switchChart('7j',this)">7j</div>
           <div class="chart-tab" onclick="switchChart('30j',this)">30j</div>
         </div>
@@ -1116,6 +1123,15 @@ function goOrders(){
 var _txsCache = [];
 var _agentsCache = [];
 var _reservesCache = {r1x:0,rW:0,r1x_base:0,rW_base:0,r1x_dep_offset:0,r1x_ret_offset:0,rW_dep_offset:0,rW_ret_offset:0};
+var _dashPeriod = 'today';
+function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function filterTxByPeriod(txs,period){
+  if(period==='all') return txs;
+  if(period==='today'){ const s=isoDate(new Date()); return txs.filter(x=>x.date&&x.date.startsWith(s)); }
+  const days=period==='7j'?7:30;
+  const cut=new Date(); cut.setDate(cut.getDate()-days+1); const cs=isoDate(cut);
+  return txs.filter(x=>x.date&&x.date.slice(0,10)>=cs);
+}
 var _unsubTxs = null;
 
 function getTxs(){
@@ -1468,20 +1484,26 @@ function setLoading(type,on){
 // ADMIN — STATS
 // ═══════════════════════════════════════════════════
 function updateStats(){
-  const t=getTxs();
+  const all=getTxs();
+  const t=filterTxByPeriod(all,_dashPeriod);
   const dep=t.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès');
   const ret=t.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès'));
-  const pending=t.filter(x=>x.status==='En attente'||x.status==='Paiement Reçu'||x.status==='Code Validé');
-  document.getElementById('stat-depot').textContent=dep.reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
+  const pending=all.filter(x=>x.status==='En attente'||x.status==='Paiement Reçu'||x.status==='Code Validé');
+  const fraudes=all.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
+  const depAmt=dep.reduce((s,x)=>s+Number(x.montant),0);
+  const retAmt=ret.reduce((s,x)=>s+Number(x.montant),0);
+  document.getElementById('stat-depot').textContent=depAmt.toLocaleString();
   document.getElementById('stat-depot-sub').textContent=dep.length+' crédités';
-  document.getElementById('stat-retrait').textContent=ret.reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
+  document.getElementById('stat-retrait').textContent=retAmt.toLocaleString();
   document.getElementById('stat-retrait-sub').textContent=ret.length+' effectués';
-  const fraudes=t.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
   document.getElementById('stat-pending').textContent=pending.length;
   document.getElementById('stat-pending-sub').textContent=fraudes.length?'à traiter · '+fraudes.length+' fraudes':'à traiter';
-  const today=new Date().toLocaleDateString('fr-FR');
-  document.getElementById('stat-today').textContent=
-    t.filter(x=>x.date&&x.date.startsWith(today)&&(x.status==='Crédité avec succès'||x.status==='Payé')).reduce((s,x)=>s+Number(x.montant),0).toLocaleString();
+  document.getElementById('stat-today').textContent=(depAmt+retAmt).toLocaleString();
+  const lbl={today:"Aujourd'hui",'7j':'7 Jours','30j':'30 Jours',all:'Total'};
+  const pl=lbl[_dashPeriod]||"Aujourd'hui";
+  document.getElementById('stat-depot-label').textContent='Dépôts — '+pl;
+  document.getElementById('stat-retrait-label').textContent='Retraits — '+pl;
+  document.getElementById('stat-today-label').textContent='Volume — '+pl;
 }
 
 // ═══════════════════════════════════════════════════
@@ -1586,8 +1608,8 @@ function updateStatus(ref, newStatus){
 }
 
 function renderRecentTx(){
-  document.getElementById('recent-tx-list').innerHTML=
-    getTxs().slice(0,6).map(t=>txHTML(t,false)).join('')||emptyState();
+  const txs=filterTxByPeriod(getTxs(),_dashPeriod).slice(0,8);
+  document.getElementById('recent-tx-list').innerHTML=txs.map(t=>txHTML(t,false)).join('')||emptyState();
 }
 
 function renderAllTx(f,s){
@@ -2973,27 +2995,40 @@ function showToast(m,t=''){  const el=document.getElementById('toast');
 
 function initMainChart(p){
   const ctx=document.getElementById('mainChart').getContext('2d');
-  const days=p==='7j'?7:30,lb=[],dd=[],rd=[];
   const txs=getTxs();
-  for(let i=days-1;i>=0;i--){
-    const d=new Date();d.setDate(d.getDate()-i);
-    const dl=d.toLocaleDateString('fr-FR');
-    lb.push(d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}));
-    dd.push(txs.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès'&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
-    rd.push(txs.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès')&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
+  const lb=[],dd=[],rd=[];
+  if(p==='1j'){
+    // 24h : tranches de 2h (12 barres)
+    const now=new Date();
+    const todayStr=isoDate(now);
+    for(let h=0;h<24;h+=2){
+      lb.push(String(h).padStart(2,'0')+'h');
+      const slice=txs.filter(x=>x.date&&x.date.startsWith(todayStr)&&parseInt(x.date.slice(11,13))>=h&&parseInt(x.date.slice(11,13))<h+2);
+      dd.push(slice.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès').reduce((s,x)=>s+Number(x.montant),0));
+      rd.push(slice.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès')).reduce((s,x)=>s+Number(x.montant),0));
+    }
+  } else {
+    const days=p==='30j'?30:7;
+    for(let i=days-1;i>=0;i--){
+      const d=new Date(); d.setDate(d.getDate()-i);
+      const dl=isoDate(d);
+      lb.push(dl.slice(8,10)+'/'+dl.slice(5,7));
+      dd.push(txs.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès'&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
+      rd.push(txs.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès')&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
+    }
   }
   if(mChart)mChart.destroy();
   mChart=new Chart(ctx,{
-    type:'line',
+    type:'bar',
     data:{labels:lb,datasets:[
-      {label:'Dépôts',data:dd,borderColor:'#00d4a0',backgroundColor:'rgba(0,212,160,0.06)',fill:true,tension:0.4,pointRadius:2,pointBackgroundColor:'#00d4a0'},
-      {label:'Retraits',data:rd,borderColor:'#FFD700',backgroundColor:'rgba(255,215,0,0.05)',fill:true,tension:0.4,pointRadius:2,pointBackgroundColor:'#FFD700'}
+      {label:'Dépôts',data:dd,backgroundColor:'rgba(0,212,160,0.55)',borderColor:'#00d4a0',borderWidth:1,borderRadius:3},
+      {label:'Retraits',data:rd,backgroundColor:'rgba(255,215,0,0.45)',borderColor:'#FFD700',borderWidth:1,borderRadius:3}
     ]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{labels:{color:'#5c7a9e',font:{size:9}}}},
       scales:{
-        x:{ticks:{color:'#5c7a9e',font:{size:8}},grid:{color:'rgba(255,255,255,0.03)'}},
-        y:{ticks:{color:'#5c7a9e',font:{size:8}},grid:{color:'rgba(255,255,255,0.03)'}}
+        x:{ticks:{color:'#5c7a9e',font:{size:8}},grid:{display:false}},
+        y:{ticks:{color:'#5c7a9e',font:{size:8},callback:function(v){return v>=1000?(v/1000).toFixed(0)+'k':v;}},grid:{color:'rgba(255,255,255,0.04)'}}
       }
     }
   });
@@ -3002,6 +3037,19 @@ function switchChart(p,el){
   document.querySelectorAll('.chart-tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
   initMainChart(p);
+}
+function setDashPeriod(p,el){
+  _dashPeriod=p;
+  document.querySelectorAll('#page-dashboard .filter-chip').forEach(c=>c.classList.remove('active'));
+  if(el) el.classList.add('active');
+  updateStats();
+  renderRecentTx();
+  // Sync chart tab
+  const chartMap={today:'1j','7j':'7j','30j':'30j',all:'30j'};
+  const cp=chartMap[p]||'7j';
+  const tab=document.querySelector('.chart-tab[onclick*="\''+cp+'\'"]');
+  if(tab){ document.querySelectorAll('.chart-tab').forEach(t=>t.classList.remove('active')); tab.classList.add('active'); }
+  initMainChart(cp);
 }
 
 // Expose all functions to window (required for type=module)
@@ -3042,6 +3090,7 @@ try {
   if(typeof submitDepot!=="undefined") window.submitDepot=submitDepot;
   if(typeof submitRetrait!=="undefined") window.submitRetrait=submitRetrait;
   if(typeof switchChart!=="undefined") window.switchChart=switchChart;
+  if(typeof setDashPeriod!=="undefined") window.setDashPeriod=setDashPeriod;
   if(typeof switchTab!=="undefined") window.switchTab=switchTab;
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
