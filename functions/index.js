@@ -40,8 +40,7 @@ const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET"); // smsWebhook auth only
 const SUPPORT_BOT_TOKEN  = defineSecret("SUPPORT_BOT_TOKEN");
-const ULTRAMSG_INSTANCE  = defineSecret("ULTRAMSG_INSTANCE_ID");
-const ULTRAMSG_TOKEN     = defineSecret("ULTRAMSG_TOKEN");
+const FONNTE_TOKEN       = defineSecret("FONNTE_TOKEN");
 const MOBCASH_HASH       = defineSecret("MOBCASH_HASH");
 const MOBCASH_CASHIERPASS = defineSecret("MOBCASH_CASHIERPASS");
 const MOBCASH_CASHDESKID = defineSecret("MOBCASH_CASHDESKID");
@@ -526,26 +525,26 @@ async function sendTelegramToBot(token, chatId, text) {
 }
 
 async function sendWhatsApp(phone, message) {
-  const instanceId = ULTRAMSG_INSTANCE.value();
-  const token      = ULTRAMSG_TOKEN.value();
-  if (!instanceId || !token || !phone) {
-    console.warn("WhatsApp skipped: missing instanceId, token, or phone", { instanceId: !!instanceId, token: !!token, phone: !!phone });
+  const fonnteToken = FONNTE_TOKEN.value();
+  if (!fonnteToken || !phone) {
+    console.warn("WhatsApp skipped: missing token or phone", { token: !!fonnteToken, phone: !!phone });
     return { ok: false, reason: "missing_config" };
   }
-  // Normalise l'instance ID : "#179983" ou "179983" → "instance179983"
-  let iid = instanceId.replace(/^#/, "").trim();
-  if (/^\d+$/.test(iid)) iid = "instance" + iid;
-  const to = phone.startsWith("+") ? phone : "+" + phone;
+  // Normalise le numéro : supprime le + initial si présent
+  const target = phone.startsWith("+") ? phone.slice(1) : phone;
   try {
-    const resp = await fetch(`https://api.ultramsg.com/${iid}/messages/chat`, {
+    const resp = await fetch("https://api.fonnte.com/send", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ token, to, body: message }).toString(),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": fonnteToken,
+      },
+      body: JSON.stringify({ target, message, countryCode: "253" }),
       signal: AbortSignal.timeout(15000),
     });
     const body = await resp.text();
     if (!resp.ok) {
-      console.warn("UltraMsg error:", resp.status, body);
+      console.warn("Fonnte error:", resp.status, body);
       return { ok: false, status: resp.status, body };
     }
     return { ok: true, body };
@@ -595,7 +594,7 @@ function extractNumClient(text, own = "77275572") {
 exports.onNouvelDepot = onDocumentCreated(
   {
     document: "depot_orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
@@ -798,7 +797,7 @@ exports.onNouvelDepot = onDocumentCreated(
 exports.onNouvelRetrait = onDocumentCreated(
   {
     document: "retrait_orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
@@ -934,7 +933,7 @@ exports.onNouvelRetrait = onDocumentCreated(
 exports.onDepotUpdated = onDocumentUpdated(
   {
     document: "depot_orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
@@ -1053,7 +1052,7 @@ exports.onDepotUpdated = onDocumentUpdated(
 exports.onRetraitUpdated = onDocumentUpdated(
   {
     document: "retrait_orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN],
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN],
     timeoutSeconds: 30,
   },
   async (event) => {
@@ -1107,7 +1106,7 @@ exports.onRetraitUpdated = onDocumentUpdated(
 // ══════════════════════════════════════════════════════════════════
 exports.ordresBloques = onSchedule(
   { schedule: "every 5 minutes", region: REGION, timeoutSeconds: 120,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN] },
   async () => {
     const token   = TELEGRAM_TOKEN.value();
@@ -1406,7 +1405,7 @@ exports.onNouvelleNotifWaafi = onDocumentCreated(
 // confirme directement (ordre soumis avant l'arrivée du SMS).
 // ══════════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
-  { region: REGION, invoker: "public", secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
+  { region: REGION, invoker: "public", secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1541,10 +1540,10 @@ exports.testMobcash = onRequest(
 );
 
 // HTTP — WHATSAPP RECAP (appelé par le bouton "Recevoir les détails")
-// Envoie automatiquement via UltraMsg — pas de wa.me manuel.
+// Envoie automatiquement via Fonnte — pas de wa.me manuel.
 // ══════════════════════════════════════════════════════════════════
 exports.waRecap = onRequest(
-  { region: REGION, invoker: "public", secrets: [ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN] },
+  { region: REGION, invoker: "public", secrets: [FONNTE_TOKEN] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1611,7 +1610,7 @@ exports.waRecap = onRequest(
 // Flux simple : client donne numéro d'ordre → Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
 exports.supportClient = onRequest(
-  { region: REGION, invoker: "public", secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+  { region: REGION, invoker: "public", secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
                               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
@@ -1941,7 +1940,7 @@ exports.supportClient = onRequest(
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
   { region: REGION, invoker: "public", secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_SECRET,
-                              ULTRAMSG_INSTANCE, ULTRAMSG_TOKEN,
+                              FONNTE_TOKEN,
                               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
@@ -2140,47 +2139,26 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // test whatsapp — diagnostic complet Ultramsg
+      // test whatsapp — diagnostic complet Fonnte
       if (t.startsWith("test whatsapp")) {
         const numMatch = text.match(/(\+?\d{8,15})/);
         if (!numMatch) { await sendTelegram(token, adminId, "Usage: <code>test whatsapp +25377XXXXXX</code>"); return; }
-        const rawInstance = ULTRAMSG_INSTANCE.value();
-        const waToken     = ULTRAMSG_TOKEN.value();
-        if (!rawInstance || !waToken) {
+        const fonnteToken = FONNTE_TOKEN.value();
+        if (!fonnteToken) {
           await sendTelegram(token, adminId,
-            "❌ Secrets Ultramsg manquants :\n" +
-            `• ULTRAMSG_INSTANCE_ID : ${rawInstance ? "✅" : "❌ non défini"}\n` +
-            `• ULTRAMSG_TOKEN : ${waToken ? "✅" : "❌ non défini"}`);
+            "❌ Secret Fonnte manquant :\n" +
+            `• FONNTE_TOKEN : ❌ non défini`);
           return;
         }
-        // Normalisation identique à sendWhatsApp
-        let iid = rawInstance.replace(/^#/, "").trim();
-        if (/^\d+$/.test(iid)) iid = "instance" + iid;
-        const apiUrl = `https://api.ultramsg.com/${iid}/messages/chat`;
         await sendTelegram(token, adminId,
-          `🔍 <b>Diagnostic WhatsApp</b>\n` +
-          `Secret brut : <code>${rawInstance}</code>\n` +
-          `Instance normalisée : <code>${iid}</code>\n` +
-          `URL : <code>${apiUrl}</code>\n` +
-          `Token (5 premiers car.) : <code>${waToken.slice(0,5)}…</code>\n\n` +
-          `🔄 Vérification statut instance…`);
-        // 1) Vérifie le statut de l'instance
-        let statusInfo = "—";
-        try {
-          const sr = await fetch(
-            `https://api.ultramsg.com/${iid}/instance/status?token=${encodeURIComponent(waToken)}`,
-            { signal: AbortSignal.timeout(10000) }
-          );
-          const sb = await sr.text();
-          statusInfo = sb.slice(0, 200);
-        } catch (e) { statusInfo = "Timeout / erreur réseau : " + e.message; }
-        await sendTelegram(token, adminId, `📡 Statut instance :\n<code>${statusInfo}</code>`);
-        // 2) Tente l'envoi
-        await sendTelegram(token, adminId, `📤 Envoi test vers <code>${numMatch[1]}</code>…`);
+          `🔍 <b>Diagnostic WhatsApp (Fonnte)</b>\n` +
+          `Token (5 premiers car.) : <code>${fonnteToken.slice(0,5)}…</code>\n` +
+          `URL : <code>https://api.fonnte.com/send</code>\n\n` +
+          `📤 Envoi test vers <code>${numMatch[1]}</code>…`);
         const result = await sendWhatsApp(numMatch[1], "✅ Test Kaffi-Pay — WhatsApp fonctionne !");
         if (result && result.ok) {
           await sendTelegram(token, adminId,
-            `✅ <b>Message envoyé avec succès !</b>\nRéponse Ultramsg : <code>${String(result.body).slice(0,300)}</code>`);
+            `✅ <b>Message envoyé avec succès !</b>\nRéponse Fonnte : <code>${String(result.body).slice(0,300)}</code>`);
         } else {
           await sendTelegram(token, adminId,
             `❌ <b>Échec envoi</b>\nHTTP status : <code>${result?.status || "N/A"}</code>\n` +
