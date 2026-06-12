@@ -1261,26 +1261,14 @@ function loadAgentsFromFirestore(){
 function getReserves(){ return _reservesCache; }
 function saveReservesData(r){
   _reservesCache=r;
-  try{ localStorage.setItem('kp_reserves_cache', JSON.stringify(r)); }catch(e){}
   if(window.db && window.fsSetDoc && window.fsDoc){
-    window.fsSetDoc(window.fsDoc(window.db,'config','reserves'),{data:r,updatedAt:new Date(),_ak:getAdminKey()}).catch(function(){});
+    window.fsSetDoc(window.fsDoc(window.db,'config','reserves'),{data:r,updatedAt:new Date(),_ak:getAdminKey()}).catch(function(e){ showToast('❌ Erreur sauvegarde réserve','error'); });
   }
 }
 function loadReservesFromFirestore(){
-  // Restaurer depuis localStorage immédiatement (évite le flash à 0)
-  try{
-    var ls=JSON.parse(localStorage.getItem('kp_reserves_cache'));
-    if(ls && typeof ls.r1x_base!=='undefined'){ _reservesCache=ls; calcAndUpdateReserves(); }
-  }catch(e){}
-  // Puis synchroniser avec Firestore
   if(!window.db) return;
   window.fsGetDocs(window.fsCollection(window.db,'config')).then(function(snap){
-    var fsData=null;
-    snap.forEach(function(d){ if(d.id==='reserves') fsData=d.data().data; });
-    if(fsData && typeof fsData.r1x_base!=='undefined'){
-      _reservesCache=fsData;
-      try{ localStorage.setItem('kp_reserves_cache', JSON.stringify(fsData)); }catch(e){}
-    }
+    snap.forEach(function(d){ if(d.id==='reserves'){ var fd=d.data().data; if(fd) _reservesCache=fd; } });
     calcAndUpdateReserves();
   }).catch(function(){});
 }
