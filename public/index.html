@@ -1115,7 +1115,7 @@ function goOrders(){
 // ═══════════════════════════════════════════════════
 var _txsCache = [];
 var _agentsCache = [];
-var _reservesCache = {r1x:0,rW:0,r1x_base:0,rW_base:0};
+var _reservesCache = {r1x:0,rW:0,r1x_base:0,rW_base:0,r1x_dep_offset:0,r1x_ret_offset:0,rW_dep_offset:0,rW_ret_offset:0};
 var _unsubTxs = null;
 
 function getTxs(){
@@ -1489,21 +1489,21 @@ function updateStats(){
 // ═══════════════════════════════════════════════════
 function calcAndUpdateReserves(){
   const txs=getTxs().filter(x=>x.status==='Crédité avec succès'||x.status==='Payé');
-  // Dépôt 1xBet : client envoie Waafi → reçoit 1xBet
-  //   → Réserve 1xBet DIMINUE (on donne du 1xBet au client)
-  //   → Réserve Waafi AUGMENTE (on reçoit du Waafi du client)
   const dep=txs.filter(x=>x.type==='Dépôt').reduce((s,x)=>s+Number(x.montant),0);
-  // Retrait 1xBet : client envoie 1xBet → reçoit Waafi
-  //   → Réserve Waafi DIMINUE (on donne du Waafi au client)
-  //   → Réserve 1xBet AUGMENTE (on reçoit du 1xBet du client)
   const ret=txs.filter(x=>x.type==='Retrait').reduce((s,x)=>s+Number(x.montant),0);
   const stored=getReserves();
   const base1x = stored.r1x_base||0;
   const baseW  = stored.rW_base||0;
-  // 1xBet : commence à base1x, diminue avec dépôts, augmente avec retraits
-  const r1x = Math.max(0, base1x - dep + ret);
-  // Waafi : commence à baseW, augmente avec dépôts, diminue avec retraits
-  const rW  = Math.max(0, baseW  + dep - ret);
+  // Offsets = totaux au moment du dernier ajustement manuel
+  // Seules les transactions APRÈS l'ajustement sont comptées
+  const d1xOff = stored.r1x_dep_offset||0;
+  const r1xOff = stored.r1x_ret_offset||0;
+  const dWOff  = stored.rW_dep_offset||0;
+  const rWOff  = stored.rW_ret_offset||0;
+  // Dépôt : 1xBet diminue, Waafi augmente
+  // Retrait : 1xBet augmente, Waafi diminue
+  const r1x = Math.max(0, base1x - (dep - d1xOff) + (ret - r1xOff));
+  const rW  = Math.max(0, baseW  + (dep - dWOff)  - (ret - rWOff));
   updateReserveDisplay(r1x,rW);
   checkAlert(r1x,rW);
 }
@@ -1525,8 +1525,15 @@ function saveReserve(type){
   const stored=getReserves();
   const val=parseInt(document.getElementById('r'+type+'-input').value);
   if(isNaN(val)||val<0){showToast('⚠️ Montant invalide','error');return;}
-  if(type==='1x'){stored.r1x=val;stored.r1x_base=val;}
-  else{stored.rW=val;stored.rW_base=val;}
+  // Snapshot des totaux actuels → seules les nouvelles transactions compteront
+  const txs=getTxs().filter(x=>x.status==='Crédité avec succès'||x.status==='Payé');
+  const depNow=txs.filter(x=>x.type==='Dépôt').reduce((s,x)=>s+Number(x.montant),0);
+  const retNow=txs.filter(x=>x.type==='Retrait').reduce((s,x)=>s+Number(x.montant),0);
+  if(type==='1x'){
+    stored.r1x_base=val; stored.r1x_dep_offset=depNow; stored.r1x_ret_offset=retNow;
+  } else {
+    stored.rW_base=val; stored.rW_dep_offset=depNow; stored.rW_ret_offset=retNow;
+  }
   saveReservesData(stored);
   document.getElementById('r'+type+'-input').value='';
   calcAndUpdateReserves();
