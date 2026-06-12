@@ -1170,7 +1170,9 @@ exports.ordresBloques = onSchedule(
 
       const vieux = reSnapAttente.docs.filter((d) => {
         const ts = d.data().ts;
-        return ts && new Date(ts) < cutoff60;
+        if (!ts) return false;
+        const tsDate = ts.toDate ? ts.toDate() : new Date(typeof ts === "number" ? ts : Number(ts));
+        return tsDate < cutoff60;
       });
 
       if (vieux.length) {
@@ -1369,24 +1371,32 @@ exports.onNouvelleNotifWaafi = onDocumentCreated(
 
     if (!transferId) return; // Pas de TID → pas de reverse-match possible
 
-    // Reverse-match : ordre déjà soumis avec ce TID ?
-    const ordreSnap = await db.collection("depot_orders")
-      .where("waafitranfertID", "==", transferId)
-      .where("status", "==", "En attente")
-      .limit(1).get();
-    if (ordreSnap.empty) return;
+    // Reverse-match : ordre déjà soumis avec ce TID ? (cherche waafitranfertID ET hash)
+    const [byWaafiTID, byHash] = await Promise.all([
+      db.collection("depot_orders")
+        .where("waafitranfertID", "==", transferId)
+        .where("status", "==", "En attente").limit(1).get(),
+      db.collection("depot_orders")
+        .where("hash", "==", transferId)
+        .where("status", "==", "En attente").limit(1).get(),
+    ]);
+    const ordreMatchSnap = byWaafiTID.empty ? byHash : byWaafiTID;
+    if (ordreMatchSnap.empty) return;
 
     const dejaTraite = await db.collection("ordre_traite")
       .where("transferId", "==", transferId).limit(1).get();
     if (!dejaTraite.empty) return;
 
-    const ordreDoc  = ordreSnap.docs[0];
+    const ordreDoc  = ordreMatchSnap.docs[0];
     const notifSnap = await event.data.ref.get();
     const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), notifSnap.data());
 
     if (decision === "confirmer") {
       await confirmerDepot(ordreDoc, notifSnap, token, adminId);
     } else {
+      // Re-lire le statut : onNouvelDepot a peut-être confirmé l'ordre entre-temps
+      const freshSnap = await ordreDoc.ref.get();
+      if (!freshSnap.exists || freshSnap.data().status !== "En attente") return;
       const raison = mismatchToRaison(mismatches);
       await ordreDoc.ref.update({
         status: "Paiement Non Reçu",
