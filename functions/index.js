@@ -1809,29 +1809,41 @@ exports.supportClient = onRequest(
 
         } else if (cbData.startsWith("agent_take_")) {
           const oId4 = cbData.replace("agent_take_", "");
-          const sessionRef = db.collection("support_sessions").doc(oId4);
-          const sessionSnap = await sessionRef.get();
-          if (!sessionSnap.exists || sessionSnap.data().status !== "pending") {
-            await reply(cbChatId, `⚠️ Session #${oId4} déjà prise en charge ou introuvable.`);
-          } else {
-            const sess = sessionSnap.data();
-            await sessionRef.update({
-              agentChatId: cbChatId, agentName: cbName,
-              status: "open", takenAt: FieldValue.serverTimestamp(),
-            });
-            // Notifier l'agent
+
+          // Vérifier que l'agent n'a pas déjà une session active
+          const agentBusy = await db.collection("support_sessions")
+            .where("agentChatId", "==", cbChatId).where("status", "==", "open").limit(1).get();
+          if (!agentBusy.empty) {
+            const busySess = agentBusy.docs[0].data();
             await replyKb(cbChatId,
-              `✅ <b>Session ouverte — Ordre #${oId4}</b>\n\n` +
-              `👤 Client : <b>${sess.clientName || "?"}</b>\n` +
-              `💰 Montant : ${Number(sess.montant||0).toLocaleString()} DJF\n` +
-              `🔑 ID 1xBet : <code>${sess.id1xBet || "?"}</code>\n\n` +
-              `Écrivez directement ici — vos messages seront transmis au client.\n` +
-              `Pour clôturer : tapez <b>fermer</b>`,
-              [[{ text: "🔒 Fermer la session", callback_data: `agent_close_${oId4}` }]]
+              `⚠️ Vous avez déjà une session active avec <b>${busySess.clientName || "un client"}</b>.\nFermez-la d'abord avant d'en prendre une autre.`,
+              [[{ text: "🔒 Fermer ma session", callback_data: `agent_close_${agentBusy.docs[0].id}` }]]
             );
-            // Notifier le client
-            await sendTelegramToBot(supportToken, sess.clientChatId,
-              `👤 <b>Agent ${cbName} disponible</b>\n\nBonjour ${sess.clientName || ""}, votre dossier est pris en charge.\nÉcrivez ici directement.` + SIG);
+          } else {
+            const sessionRef = db.collection("support_sessions").doc(oId4);
+            const sessionSnap = await sessionRef.get();
+            if (!sessionSnap.exists || sessionSnap.data().status !== "pending") {
+              await reply(cbChatId, `⚠️ Session déjà prise en charge par un autre agent ou introuvable.`);
+            } else {
+              const sess = sessionSnap.data();
+              await sessionRef.update({
+                agentChatId: cbChatId, agentName: cbName,
+                status: "open", takenAt: FieldValue.serverTimestamp(),
+              });
+              const detailsMsg =
+                (sess.orderId ? `📦 Ordre : <b>#${sess.orderId}</b>\n` : "") +
+                (sess.montant ? `💰 Montant : ${Number(sess.montant).toLocaleString()} DJF\n` : "") +
+                (sess.id1xBet ? `🔑 ID 1xBet : <code>${sess.id1xBet}</code>\n` : "");
+              await replyKb(cbChatId,
+                `✅ <b>Session ouverte — ${sess.clientName || "Client"}</b>\n\n` +
+                detailsMsg +
+                `\nÉcrivez directement ici — messages transmis au client.\n` +
+                `Tapez <b>sessions</b> pour voir vos sessions. Tapez <b>fermer</b> pour clôturer.`,
+                [[{ text: "🔒 Fermer la session", callback_data: `agent_close_${oId4}` }]]
+              );
+              await sendTelegramToBot(supportToken, sess.clientChatId,
+                `👤 <b>Agent ${cbName} disponible</b>\n\nBonjour ${sess.clientName || ""}, votre dossier est pris en charge.\nÉcrivez ici directement.` + SIG);
+            }
           }
 
         } else if (cbData.startsWith("agent_close_")) {
@@ -1855,9 +1867,20 @@ exports.supportClient = onRequest(
         } else if (cbData === "sc_agent") {
           const adminTok = TELEGRAM_TOKEN.value();
           const adminId0 = TELEGRAM_ADMIN_ID.value();
-          const sessionId = "s_" + cbChatId; // une session par client
+          const sessionId = "s_" + cbChatId;
 
-          // Créer/remplacer session en attente
+          // Ne pas créer si session déjà active
+          const existingSnap = await db.collection("support_sessions")
+            .where("clientChatId", "==", cbChatId).where("status", "in", ["pending","open"]).limit(1).get();
+          if (!existingSnap.empty) {
+            const ex = existingSnap.docs[0].data();
+            await reply(cbChatId, ex.status === "open"
+              ? `💬 Vous êtes déjà en conversation avec l'agent <b>${ex.agentName || "Kaffi-Pay"}</b>.\nÉcrivez directement ici.`
+              : `⏳ Votre demande est déjà en attente. Un agent va vous prendre en charge.`);
+            return;
+          }
+
+          // Créer session en attente
           await db.collection("support_sessions").doc(sessionId).set({
             orderId: null, clientChatId: cbChatId, clientName: cbName,
             montant: 0, id1xBet: "", tid: "",
@@ -1916,14 +1939,18 @@ exports.supportClient = onRequest(
       const agentSessionSnap = await db.collection("support_sessions")
         .where("agentChatId", "==", chatId).where("status", "==", "open").limit(1).get();
       if (!agentSessionSnap.empty) {
-        const sess = agentSessionSnap.docs[0].data();
+        const sess    = agentSessionSnap.docs[0].data();
+        const sessId  = agentSessionSnap.docs[0].id;
         if (t === "fermer" || t === "/fermer" || t === "close" || t === "/close") {
           await agentSessionSnap.docs[0].ref.update({ status: "closed", closedAt: FieldValue.serverTimestamp() });
-          await reply(chatId, `✅ Session #${sess.orderId} fermée.`);
+          await replyKb(chatId, `✅ Session fermée.`, [[{ text: "📋 Sessions en attente", callback_data: "agent_sessions" }]]);
           await replyKb(sess.clientChatId,
             `✅ <b>Conversation terminée</b>\n\nMerci d'avoir contacté Kaffi-Pay. L'agent a clôturé la session.`,
             BACK_KB);
+        } else if (t === "sessions" || t === "/sessions") {
+          await reply(chatId, `💬 Session active : <b>${sess.clientName || "client"}</b>${sess.orderId ? " — Ordre #"+sess.orderId : ""}\n\nTapez <b>fermer</b> pour clôturer.`);
         } else {
+          // Relay message → client
           await sendTelegramToBot(supportToken, sess.clientChatId,
             `💬 <b>Agent ${firstName} :</b>\n\n${text}` + SIG);
           await reply(chatId, `✅ Envoyé à ${sess.clientName || "client"}.`);
@@ -1931,14 +1958,39 @@ exports.supportClient = onRequest(
         return;
       }
 
-      // 2. Vérifier si c'est un client avec session active (→ relay vers agent)
+      // Commande "sessions" sans session active → liste des sessions en attente
+      if (t === "sessions" || t === "/sessions") {
+        const pendingSessions = await db.collection("support_sessions")
+          .where("status", "==", "pending").get();
+        if (pendingSessions.empty) {
+          await reply(chatId, "✅ Aucune session en attente.");
+        } else {
+          const lines = pendingSessions.docs.map(d => {
+            const s = d.data();
+            return `• <b>${s.clientName || "?"}</b>${s.orderId ? " — #"+s.orderId : ""} | ${Number(s.montant||0).toLocaleString()} DJF`;
+          });
+          await replyKb(chatId,
+            `📋 <b>Sessions en attente (${pendingSessions.docs.length})</b>\n\n${lines.join("\n")}\n\nCliquez sur la notif reçue pour prendre en charge.`,
+            BACK_KB
+          );
+        }
+        return;
+      }
+
+      // 2. Vérifier si c'est un client avec session en cours (pending ou open)
       const clientSessionSnap = await db.collection("support_sessions")
-        .where("clientChatId", "==", chatId).where("status", "==", "open").limit(1).get();
+        .where("clientChatId", "==", chatId).where("status", "in", ["pending", "open"]).limit(1).get();
       if (!clientSessionSnap.empty) {
         const sess2 = clientSessionSnap.docs[0].data();
-        await sendTelegramToBot(supportToken, sess2.agentChatId,
-          `💬 <b>${firstName} :</b>\n\n${text}`);
-        await reply(chatId, `✅ Message transmis à votre agent.`);
+        if (sess2.status === "open" && sess2.agentChatId) {
+          // Relay message → agent
+          await sendTelegramToBot(supportToken, sess2.agentChatId,
+            `💬 <b>${firstName} :</b>\n\n${text}`);
+          await reply(chatId, `✅ Message transmis à votre agent.`);
+        } else {
+          // Session pending — agent pas encore disponible
+          await reply(chatId, `⏳ Votre message a été noté. Un agent le verra dès qu'il prendra en charge votre demande.`);
+        }
         return;
       }
       // ─────────────────────────────────────────────────────────────────
@@ -2023,6 +2075,17 @@ exports.supportClient = onRequest(
         const adminTok2  = TELEGRAM_TOKEN.value();
         const adminId3   = TELEGRAM_ADMIN_ID.value();
         const sessionId2 = "s_" + chatId;
+
+        // Ne pas créer si session déjà active
+        const existing2 = await db.collection("support_sessions")
+          .where("clientChatId", "==", chatId).where("status", "in", ["pending","open"]).limit(1).get();
+        if (!existing2.empty) {
+          const ex2 = existing2.docs[0].data();
+          await reply(chatId, ex2.status === "open"
+            ? `💬 Vous êtes déjà en conversation avec l'agent <b>${ex2.agentName || "Kaffi-Pay"}</b>.`
+            : `⏳ Votre demande est déjà en attente. Un agent arrive bientôt.`);
+          return;
+        }
 
         await db.collection("support_sessions").doc(sessionId2).set({
           orderId: null, clientChatId: chatId, clientName: firstName,
