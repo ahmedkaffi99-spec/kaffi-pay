@@ -825,6 +825,11 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     </div>
   </div>
 
+  <div id="suivi-flag-raison" style="display:none;border-radius:12px;padding:10px 14px;margin:6px 0 6px;border:1px solid rgba(255,64,96,0.35);background:rgba(255,64,96,0.07);">
+    <div style="font-size:0.6rem;color:var(--error);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;font-weight:700;">⚠️ Raison du rejet</div>
+    <div id="suivi-flag-raison-text" style="font-size:0.82rem;color:var(--error);font-weight:600;line-height:1.5;"></div>
+  </div>
+
   <div style="border-radius:14px;padding:11px 14px;margin-bottom:8px;border:1px solid rgba(255,215,0,0.15);background:rgba(255,215,0,0.03);">
     <div style="font-size:0.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:5px;">N° de commande</div>
     <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -2397,8 +2402,8 @@ function renderSuivi(){
     stxt.textContent = isDepot ? 'Paiement non reçu' : 'Retrait échoué';
     stxt.style.color = 'var(--error)';
     sdesc.textContent= isDepot
-      ? (tx.flagRaison ? tx.flagRaison + '. Soumettez un nouvel ordre si le problème est résolu.' : 'Votre paiement n\'a pas été reçu. Vérifiez votre Transfer ID et contactez le support.')
-      : (tx.flagRaison ? tx.flagRaison + '. Contactez le support si besoin.' : 'Votre retrait n\'a pas pu être traité. Contactez le support avec votre numéro d\'ordre.');
+      ? 'Votre paiement n\'a pas été reçu. Soumettez un nouvel ordre avec les informations correctes ou contactez le support.'
+      : 'Votre retrait n\'a pas pu être traité. Contactez le support avec votre numéro d\'ordre.';
     prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
     if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   } else if(status === 'Annulé'){
@@ -2424,7 +2429,7 @@ function renderSuivi(){
     icon.textContent = '❌';
     stxt.textContent = 'Code invalide';
     stxt.style.color = 'var(--error)';
-    sdesc.textContent= tx.flagRaison ? tx.flagRaison + ' Contactez le support ou soumettez un nouvel ordre.' : 'Votre code de retrait est invalide. Contactez le support.';
+    sdesc.textContent= 'Votre code de retrait est invalide. Contactez le support ou soumettez un nouvel ordre.';
     prog.style.width = '65%'; prog.style.background = 'linear-gradient(90deg,var(--error),#ff8a9a)';
     if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   } else if(status === 'Payé'){
@@ -2436,6 +2441,18 @@ function renderSuivi(){
     sdesc.textContent= 'Votre paiement a été envoyé sur votre numéro Waafi. Vérifiez votre solde Waafi.';
     prog.style.width = '100%'; prog.style.background = 'linear-gradient(90deg,var(--success),#00ffcc)';
     if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; } if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
+  }
+
+  // ── RAISON REJET ──
+  var flagBox = document.getElementById('suivi-flag-raison');
+  var flagTxt = document.getElementById('suivi-flag-raison-text');
+  if(flagBox && flagTxt){
+    if(tx.flagRaison && (status==='Paiement Non Reçu'||status==='Code Invalide')){
+      flagTxt.textContent = tx.flagRaison;
+      flagBox.style.display = 'block';
+    } else {
+      flagBox.style.display = 'none';
+    }
   }
 
   // ── DÉTAILS ──

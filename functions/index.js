@@ -273,7 +273,8 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
       tx.get(traitRef),
     ]);
     if (!ordreSnap.exists || ordreSnap.data().status !== "En attente") return false;
-    if (traitSnap.exists) return false;
+    // Allow reuse if previous confirmation was never credited (e.g. MobCash failed)
+    if (traitSnap.exists && traitSnap.data().status === "credite") return false;
 
     tx.update(ordreDoc.ref, {
       status: "Paiement Reçu",
@@ -694,7 +695,7 @@ exports.onNouvelDepot = onDocumentCreated(
         const n = d.data();
         if (n.montant && Math.abs(montantOrdre - n.montant) > tolerance) continue;
         const dejaTID = n.transferId
-          ? (await db.collection("ordre_traite").where("transferId", "==", n.transferId).limit(1).get()).empty
+          ? (await db.collection("ordre_traite").where("transferId", "==", n.transferId).where("status", "==", "credite").limit(1).get()).empty
           : true;
         if (dejaTID) { waafiDoc = d; break; }
       }
@@ -1145,9 +1146,9 @@ exports.ordresBloques = onSchedule(
       const tid   = ordre.waafitranfertID || ordre.hash || "";
       if (!tid) continue;
 
-      // Déjà traité ?
+      // Déjà crédité ?
       const dejaTraite = await db.collection("ordre_traite")
-        .where("transferId", "==", tid).limit(1).get();
+        .where("transferId", "==", tid).where("status", "==", "credite").limit(1).get();
       if (!dejaTraite.empty) continue;
 
       // Cherche le SMS correspondant
@@ -1404,7 +1405,7 @@ exports.onNouvelleNotifWaafi = onDocumentCreated(
     if (ordreMatchSnap.empty) return;
 
     const dejaTraite = await db.collection("ordre_traite")
-      .where("transferId", "==", transferId).limit(1).get();
+      .where("transferId", "==", transferId).where("status", "==", "credite").limit(1).get();
     if (!dejaTraite.empty) return;
 
     const ordreDoc  = ordreMatchSnap.docs[0];
@@ -1489,7 +1490,7 @@ exports.smsWebhook = onRequest(
     if (ordreSnap.empty) return;
 
     const dejaTraite = await db.collection("ordre_traite")
-      .where("transferId", "==", transferId).limit(1).get();
+      .where("transferId", "==", transferId).where("status", "==", "credite").limit(1).get();
     if (!dejaTraite.empty) return;
 
     const ordreDoc  = ordreSnap.docs[0];
@@ -2346,9 +2347,9 @@ exports.adminBot = onRequest(
         }
 
         const dejaTraite = await db.collection("ordre_traite")
-          .where("transferId", "==", tid).limit(1).get();
+          .where("transferId", "==", tid).where("status", "==", "credite").limit(1).get();
         if (!dejaTraite.empty) {
-          await sendTelegram(token, adminId, `⚠️ TID <code>${tid}</code> déjà traité — doublon bloqué.`);
+          await sendTelegram(token, adminId, `⚠️ TID <code>${tid}</code> déjà crédité — doublon bloqué.`);
           return;
         }
 
