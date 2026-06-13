@@ -1855,22 +1855,40 @@ exports.supportClient = onRequest(
         } else if (cbData === "sc_agent") {
           const adminTok = TELEGRAM_TOKEN.value();
           const adminId0 = TELEGRAM_ADMIN_ID.value();
+          const sessionId = "s_" + cbChatId; // une session par client
+
+          // Créer/remplacer session en attente
+          await db.collection("support_sessions").doc(sessionId).set({
+            orderId: null, clientChatId: cbChatId, clientName: cbName,
+            montant: 0, id1xBet: "", tid: "",
+            agentChatId: null, agentName: null,
+            status: "pending", openedAt: FieldValue.serverTimestamp(),
+          }, { merge: false });
+
           await replyKb(cbChatId,
-            `👤 <b>Un agent va vous répondre</b>\n\nVotre demande a été transmise à notre équipe.\nUn agent de support vous répondra dans les plus brefs délais.`,
+            `👤 <b>Un agent va vous répondre</b>\n\nVotre demande a été transmise.\nÉcrivez ici vos informations en attendant.`,
             BACK_KB
           );
-          // Notifier l'admin principal
-          const alertMsg = `🆘 <b>Demande agent humain</b> — Support Bot\n👤 ${cbName} (chat: <code>${cbChatId}</code>)`;
-          await sendTelegram(adminTok, adminId0, alertMsg);
-          // Notifier tous les agents de support qui ont un telegramId
+
+          const alertMsg =
+            `🆘 <b>Demande agent humain</b>\n👤 ${cbName}`;
+
+          // Admin via TELEGRAM_TOKEN
+          await sendTelegram(adminTok, adminId0,
+            alertMsg + `\n<i>👉 Ouvrez le support bot pour prendre en charge</i>`);
+
+          // Agents de support via SUPPORT BOT avec bouton
           try {
             const agentsSnap = await db.collection("config").doc("agents").get();
             const agentsList = agentsSnap.exists ? (agentsSnap.data().list || []) : [];
             const supportAgents = agentsList.filter(a => a.role === "Agent de support" && a.telegramId);
             for (const sa of supportAgents) {
-              await sendTelegram(adminTok, String(sa.telegramId), alertMsg).catch(() => {});
+              await sendTelegramKeyboard(supportToken, String(sa.telegramId),
+                alertMsg + SIG,
+                [[{ text: "📞 Prendre en charge", callback_data: `agent_take_${sessionId}` }]]
+              ).catch(() => {});
             }
-          } catch (e) { console.warn("sc_agent notify support agents:", e.message); }
+          } catch (e) { console.warn("sc_agent notify:", e.message); }
         }
       } catch (e) { console.error("supportClient cbq crash:", e.message); }
       return;
@@ -2002,15 +2020,39 @@ exports.supportClient = onRequest(
 
       // ── Demande d'agent ──
       if (/agent|humain|opérateur|parler.*quelqu|quelqu.*humain|personne|responsable|admin|réel|contact/.test(t)) {
-        const adminTok2 = TELEGRAM_TOKEN.value();
-        const adminId3  = TELEGRAM_ADMIN_ID.value();
+        const adminTok2  = TELEGRAM_TOKEN.value();
+        const adminId3   = TELEGRAM_ADMIN_ID.value();
+        const sessionId2 = "s_" + chatId;
+
+        await db.collection("support_sessions").doc(sessionId2).set({
+          orderId: null, clientChatId: chatId, clientName: firstName,
+          montant: 0, id1xBet: "", tid: "",
+          agentChatId: null, agentName: null,
+          status: "pending", openedAt: FieldValue.serverTimestamp(),
+        }, { merge: false });
+
         await replyKb(chatId,
-          `👤 <b>Un agent va vous répondre</b>\n\nVotre demande est transmise à notre équipe.\nUn agent vous répondra dans les plus brefs délais.`,
+          `👤 <b>Un agent va vous répondre</b>\n\nVotre demande est transmise.\nÉcrivez ici en attendant.`,
           BACK_KB
         );
+
+        const alertMsg2 =
+          `🆘 <b>Demande agent</b>\n👤 ${firstName}\nMsg : <i>${text.substring(0, 150)}</i>`;
+
         await sendTelegram(adminTok2, adminId3,
-          `🆘 <b>Demande agent</b> — Support Bot\n👤 ${firstName} (chat: <code>${chatId}</code>)\nMsg : <i>${text.substring(0, 200)}</i>`
-        );
+          alertMsg2 + `\n<i>👉 Ouvrez le support bot pour prendre en charge</i>`);
+
+        try {
+          const agSnap = await db.collection("config").doc("agents").get();
+          const agList = agSnap.exists ? (agSnap.data().list || []) : [];
+          const supAgents = agList.filter(a => a.role === "Agent de support" && a.telegramId);
+          for (const sa of supAgents) {
+            await sendTelegramKeyboard(supportToken, String(sa.telegramId),
+              alertMsg2 + SIG,
+              [[{ text: "📞 Prendre en charge", callback_data: `agent_take_${sessionId2}` }]]
+            ).catch(() => {});
+          }
+        } catch (e) { console.warn("agent text notify:", e.message); }
         return;
       }
 
