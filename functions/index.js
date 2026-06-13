@@ -1735,12 +1735,21 @@ exports.supportClient = onRequest(
           const adminTok = TELEGRAM_TOKEN.value();
           const adminId0 = TELEGRAM_ADMIN_ID.value();
           await replyKb(cbChatId,
-            `👤 <b>Un agent va vous répondre</b>\n\nVotre demande a été transmise à notre équipe.\nUn agent vous répondra dans les plus brefs délais.`,
+            `👤 <b>Un agent va vous répondre</b>\n\nVotre demande a été transmise à notre équipe.\nUn agent de support vous répondra dans les plus brefs délais.`,
             BACK_KB
           );
-          await sendTelegram(adminTok, adminId0,
-            `🆘 <b>Demande agent</b> — Support Bot\n👤 ${cbName} (chat: <code>${cbChatId}</code>)`
-          );
+          // Notifier l'admin principal
+          const alertMsg = `🆘 <b>Demande agent humain</b> — Support Bot\n👤 ${cbName} (chat: <code>${cbChatId}</code>)`;
+          await sendTelegram(adminTok, adminId0, alertMsg);
+          // Notifier tous les agents de support qui ont un telegramId
+          try {
+            const agentsSnap = await db.collection("config").doc("agents").get();
+            const agentsList = agentsSnap.exists ? (agentsSnap.data().list || []) : [];
+            const supportAgents = agentsList.filter(a => a.role === "Agent de support" && a.telegramId);
+            for (const sa of supportAgents) {
+              await sendTelegram(adminTok, String(sa.telegramId), alertMsg).catch(() => {});
+            }
+          } catch (e) { console.warn("sc_agent notify support agents:", e.message); }
         }
       } catch (e) { console.error("supportClient cbq crash:", e.message); }
       return;

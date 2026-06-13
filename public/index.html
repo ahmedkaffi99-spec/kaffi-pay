@@ -684,6 +684,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="filter-chip" onclick="filterTx('Crédité avec succès',this)">✅ Crédités</div>
       <div class="filter-chip" onclick="filterTx('Paiement Non Reçu',this)">❌ Rejetés</div>
       <div class="filter-chip" onclick="filterTx('fraude',this)">🚨 Fraudes</div>
+      <div class="filter-chip" onclick="filterTx('bloque',this)">🔴 Bloqués</div>
     </div>
     <div class="search-wrap">
       <span class="search-icon">🔍</span>
@@ -768,11 +769,20 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div style="font-size:.79rem;font-weight:600;margin-bottom:12px">Nouvel Agent</div>
       <div class="form-row">
         <div class="mini-field"><label>Nom</label><input type="text" id="new-agent-name" placeholder="Ex: Ahmed"></div>
-        <div class="mini-field"><label>Rôle</label><select id="new-agent-role"><option value="Agent">Agent</option><option value="Superviseur">Superviseur</option></select></div>
+        <div class="mini-field"><label>Rôle</label>
+          <select id="new-agent-role">
+            <option value="Agent de paiement">Agent de paiement</option>
+            <option value="Agent de surveillance">Agent de surveillance</option>
+            <option value="Agent de support">Agent de support</option>
+          </select>
+        </div>
       </div>
       <div class="form-row">
         <div class="mini-field"><label>Mot de passe</label><input type="password" id="new-agent-pass" placeholder="••••••••"></div>
         <div class="mini-field"><label>Confirmer</label><input type="password" id="new-agent-pass2" placeholder="••••••••"></div>
+      </div>
+      <div class="form-row">
+        <div class="mini-field" style="flex:1"><label>Telegram ID <span style="color:var(--muted);font-weight:400">(optionnel — support agent)</span></label><input type="text" id="new-agent-telegram" placeholder="Ex: 123456789"></div>
       </div>
       <button class="add-agent-btn" onclick="addAgent()">✅ Ajouter l'agent</button>
     </div>
@@ -1645,6 +1655,10 @@ function renderAllTx(f,s){
   if(f==='attente') t=t.filter(x=>x.status==='En attente');
   else if(f==='retrait-pret') t=t.filter(x=>x.type==='Retrait'&&x.status==='Code Validé');
   else if(f==='fraude') t=t.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
+  else if(f==='bloque') t=t.filter(x=>
+    ['echec','echec_max','echec_permanent'].includes(x.webhookStatus) ||
+    (x.status==='En attente' && x.ts && (Date.now()-Number(x.ts))>90*60*1000)
+  );
   else if(f!=='tous') t=t.filter(x=>x.type===f||x.status===f);
   if(s) { var sl=s.toLowerCase(); t=t.filter(x=>
     (x.ref||'').toLowerCase().includes(sl)||
@@ -2112,13 +2126,23 @@ function renderChartData(lb,dd,rd){
 // ADMIN — AGENTS
 // ═══════════════════════════════════════════════════
 function renderAgents(){
-  let h=`<div class="agent-item"><div class="agent-avatar">K</div><div class="agent-info"><div class="agent-name">admin <span style="font-size:.62rem;color:var(--gold)">👑 Créateur</span></div><div class="agent-role">Accès total — Toutes permissions</div></div></div>`;
-  getAgents().forEach((a,i)=>{
-    h+=`<div class="agent-item">
-      <div class="agent-avatar">${a.name[0].toUpperCase()}</div>
-      <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">${a.role} · login: ${a.user}</div></div>
-      ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
-    </div>`;
+  var ROLE_ICON={'Agent de paiement':'💳','Agent de surveillance':'🔍','Agent de support':'💬'};
+  var ROLE_ORDER=['Agent de paiement','Agent de surveillance','Agent de support'];
+  var all=getAgents();
+  var h=`<div class="agent-item"><div class="agent-avatar">K</div><div class="agent-info"><div class="agent-name">admin <span style="font-size:.62rem;color:var(--gold)">👑 Créateur</span></div><div class="agent-role">Accès total — Toutes permissions</div></div></div>`;
+  ROLE_ORDER.forEach(function(role){
+    var grp=all.filter(function(a){return a.role===role;});
+    if(!grp.length) return;
+    h+=`<div style="font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin:14px 0 6px;padding:0 4px;">${ROLE_ICON[role]||'👤'} ${role}</div>`;
+    grp.forEach(function(a,_){
+      var i=all.indexOf(a);
+      var tgLine=a.telegramId?`<span style="font-size:.6rem;color:#29a8eb;">Telegram: ${a.telegramId}</span>`:'';
+      h+=`<div class="agent-item">
+        <div class="agent-avatar">${a.name[0].toUpperCase()}</div>
+        <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">login: <code style="font-size:.68rem">${a.user}</code> ${tgLine}</div></div>
+        ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
+      </div>`;
+    });
   });
   document.getElementById('agent-list').innerHTML=h;
 }
@@ -2133,17 +2157,21 @@ function addAgent(){
   const r=document.getElementById('new-agent-role').value;
   const p=document.getElementById('new-agent-pass').value;
   const p2=document.getElementById('new-agent-pass2').value;
+  const tg=document.getElementById('new-agent-telegram').value.trim();
   if(!n){showToast('⚠️ Nom requis','error');return;}
   if(!p||p.length<6){showToast('⚠️ Mot de passe min. 6 caractères','error');return;}
   if(p!==p2){showToast('⚠️ Mots de passe différents','error');return;}
   const ag=getAgents(), u=n.toLowerCase().replace(/\s+/g,'');
   if(u==='admin'||ag.find(a=>a.user===u)){showToast('⚠️ Utilisateur déjà existant','error');return;}
-  cfAgentAction('add',{name:n,user:u,pass:p,role:r}).then(function(ok){
+  const agentData={name:n,user:u,pass:p,role:r};
+  if(tg) agentData.telegramId=tg;
+  cfAgentAction('add',agentData).then(function(ok){
     if(!ok) return;
     renderAgents();
     document.getElementById('new-agent-name').value='';
     document.getElementById('new-agent-pass').value='';
     document.getElementById('new-agent-pass2').value='';
+    document.getElementById('new-agent-telegram').value='';
     document.getElementById('add-agent-form').classList.remove('show');
     showToast('✅ Agent '+n+' ajouté','success');
   });
