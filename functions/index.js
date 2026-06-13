@@ -1764,29 +1764,94 @@ exports.supportClient = onRequest(
           const o3     = oDoc3 ? oDoc3.data() : {};
           const adminTokPay = TELEGRAM_TOKEN.value();
           const adminIdPay  = TELEGRAM_ADMIN_ID.value();
+
+          // Créer session en attente dans Firestore
+          await db.collection("support_sessions").doc(oId3).set({
+            orderId: oId3, clientChatId: cbChatId, clientName: cbName,
+            montant: o3.montant || 0,
+            id1xBet: o3.userId1xBet || o3.id1x || "",
+            tid: o3.waafitranfertID || o3.hash || "",
+            webhookStatus: o3.webhookStatus || "",
+            webhookErr: o3.webhookErr || "",
+            agentChatId: null, agentName: null,
+            status: "pending", openedAt: FieldValue.serverTimestamp(),
+          }, { merge: false });
+
+          // Notifier le client
           await replyKb(cbChatId,
             `💳 <b>Intervention équipe paiement demandée</b>\n\n` +
-            `Notre agent de paiement va traiter votre dossier manuellement.\n` +
-            `Vous serez crédité dans les plus brefs délais.\n\n` +
-            `Votre numéro d'ordre : <b>#${oId3}</b>`,
+            `Un agent de paiement va traiter votre dossier.\n` +
+            `Vous recevrez un message dès qu'il prend en charge.\n\n` +
+            `💬 Vous pouvez écrire ici pour ajouter des informations.`,
             BACK_KB
           );
+
+          // Notifier les agents via SUPPORT BOT (pour qu'ils interagissent ici)
           const alertPay =
-            `💳 <b>Intervention manuelle demandée — Crédit échoué</b>\n` +
-            `👤 ${cbName} (chat: <code>${cbChatId}</code>)\n` +
-            `Ordre <b>#${oId3}</b> | ID 1xBet: <code>${o3.userId1xBet || o3.id1x || "?"}</code>\n` +
-            `${Number(o3.montant||0).toLocaleString()} DJF | webhookStatus: <code>${o3.webhookStatus || "?"}</code>\n` +
-            `Err: <code>${o3.webhookErr || "?"}</code>\n\n` +
-            `<i>👉 Pour relancer : tapez <code>relancer #${oId3}</code> dans adminBot</i>`;
-          await sendTelegram(adminTokPay, adminIdPay, alertPay);
+            `💳 <b>Intervention manuelle — Crédit échoué</b>\n` +
+            `👤 ${cbName} | Ordre <b>#${oId3}</b>\n` +
+            `ID 1xBet : <code>${o3.userId1xBet || o3.id1x || "?"}</code> | ${Number(o3.montant||0).toLocaleString()} DJF\n` +
+            `Err: <code>${o3.webhookErr || o3.webhookStatus || "?"}</code>`;
+          await sendTelegram(adminTokPay, adminIdPay,
+            alertPay + `\n\n<i>👉 relancer #${oId3} dans adminBot</i>`);
           try {
             const agentsSnap2 = await db.collection("config").doc("agents").get();
             const agentsList2 = agentsSnap2.exists ? (agentsSnap2.data().list || []) : [];
             const paiementAgents = agentsList2.filter(a => a.role === "Agent de paiement" && a.telegramId);
             for (const pa of paiementAgents) {
-              await sendTelegram(adminTokPay, String(pa.telegramId), alertPay).catch(() => {});
+              // Notif via SUPPORT BOT avec bouton "Prendre en charge"
+              await sendTelegramKeyboard(supportToken, String(pa.telegramId),
+                alertPay + SIG,
+                [[{ text: "📞 Prendre en charge", callback_data: `agent_take_${oId3}` }]]
+              ).catch(() => {});
             }
           } catch (e) { console.warn("sc_paiement notify:", e.message); }
+
+        } else if (cbData.startsWith("agent_take_")) {
+          const oId4 = cbData.replace("agent_take_", "");
+          const sessionRef = db.collection("support_sessions").doc(oId4);
+          const sessionSnap = await sessionRef.get();
+          if (!sessionSnap.exists || sessionSnap.data().status !== "pending") {
+            await reply(cbChatId, `⚠️ Session #${oId4} déjà prise en charge ou introuvable.`);
+          } else {
+            const sess = sessionSnap.data();
+            await sessionRef.update({
+              agentChatId: cbChatId, agentName: cbName,
+              status: "open", takenAt: FieldValue.serverTimestamp(),
+            });
+            // Notifier l'agent
+            await replyKb(cbChatId,
+              `✅ <b>Session ouverte — Ordre #${oId4}</b>\n\n` +
+              `👤 Client : <b>${sess.clientName || "?"}</b>\n` +
+              `💰 Montant : ${Number(sess.montant||0).toLocaleString()} DJF\n` +
+              `🔑 ID 1xBet : <code>${sess.id1xBet || "?"}</code>\n\n` +
+              `Écrivez directement ici — vos messages seront transmis au client.\n` +
+              `Pour clôturer : tapez <b>fermer</b>`,
+              [[{ text: "🔒 Fermer la session", callback_data: `agent_close_${oId4}` }]]
+            );
+            // Notifier le client
+            await sendTelegramToBot(supportToken, sess.clientChatId,
+              `👤 <b>Agent ${cbName} disponible</b>\n\nBonjour ${sess.clientName || ""}, votre dossier est pris en charge.\nÉcrivez ici directement.` + SIG);
+          }
+
+        } else if (cbData.startsWith("agent_close_")) {
+          const oId5 = cbData.replace("agent_close_", "");
+          const sessionRef5 = db.collection("support_sessions").doc(oId5);
+          const sessionSnap5 = await sessionRef5.get();
+          if (sessionSnap5.exists) {
+            const sess5 = sessionSnap5.data();
+            await sessionRef5.update({ status: "closed", closedAt: FieldValue.serverTimestamp() });
+            await reply(cbChatId, `✅ Session #${oId5} fermée.`);
+            if (sess5.clientChatId) {
+              await replyKb(sess5.clientChatId,
+                `✅ <b>Conversation terminée</b>\n\nMerci d'avoir contacté Kaffi-Pay.\nSi vous avez d'autres questions, nous sommes là.`,
+                BACK_KB
+              );
+            }
+          } else {
+            await reply(cbChatId, `❓ Session #${oId5} introuvable.`);
+          }
+
         } else if (cbData === "sc_agent") {
           const adminTok = TELEGRAM_TOKEN.value();
           const adminId0 = TELEGRAM_ADMIN_ID.value();
@@ -1828,6 +1893,38 @@ exports.supportClient = onRequest(
     const t = text.toLowerCase().trim();
 
     try {
+      // ── RELAY SESSION AGENT ↔ CLIENT ───────────────────────────────
+      // 1. Vérifier si c'est un agent avec session active (→ relay vers client)
+      const agentSessionSnap = await db.collection("support_sessions")
+        .where("agentChatId", "==", chatId).where("status", "==", "open").limit(1).get();
+      if (!agentSessionSnap.empty) {
+        const sess = agentSessionSnap.docs[0].data();
+        if (t === "fermer" || t === "/fermer" || t === "close" || t === "/close") {
+          await agentSessionSnap.docs[0].ref.update({ status: "closed", closedAt: FieldValue.serverTimestamp() });
+          await reply(chatId, `✅ Session #${sess.orderId} fermée.`);
+          await replyKb(sess.clientChatId,
+            `✅ <b>Conversation terminée</b>\n\nMerci d'avoir contacté Kaffi-Pay. L'agent a clôturé la session.`,
+            BACK_KB);
+        } else {
+          await sendTelegramToBot(supportToken, sess.clientChatId,
+            `💬 <b>Agent ${firstName} :</b>\n\n${text}` + SIG);
+          await reply(chatId, `✅ Envoyé à ${sess.clientName || "client"}.`);
+        }
+        return;
+      }
+
+      // 2. Vérifier si c'est un client avec session active (→ relay vers agent)
+      const clientSessionSnap = await db.collection("support_sessions")
+        .where("clientChatId", "==", chatId).where("status", "==", "open").limit(1).get();
+      if (!clientSessionSnap.empty) {
+        const sess2 = clientSessionSnap.docs[0].data();
+        await sendTelegramToBot(supportToken, sess2.agentChatId,
+          `💬 <b>${firstName} :</b>\n\n${text}`);
+        await reply(chatId, `✅ Message transmis à votre agent.`);
+        return;
+      }
+      // ─────────────────────────────────────────────────────────────────
+
       // Extraire numéro d'ordre (5-8 chiffres)
       const ordreMatch = text.match(/(?:#\s*)?(\d{5,8})\b/i);
       const ordreId    = ordreMatch ? ordreMatch[1] : null;
