@@ -1279,11 +1279,19 @@ var CF_BASE = 'https://europe-west1-kaffi-pay.cloudfunctions.net';
 function cfHeaders(){ return {'Content-Type':'application/json','X-Admin-Key':getAdminKey()}; }
 
 function getAgents(){ return _agentsCache; }
+var _agentsUnsubscribe = null;
 function loadAgentsFromFirestore(){
-  fetch(CF_BASE+'/adminAgents?_ak='+getAdminKey())
-    .then(function(r){ return r.json(); })
-    .then(function(d){ if(d.ok){ _agentsCache=d.agents||[]; } })
-    .catch(function(){});
+  if(!window.db || !window.fsOnSnapshot || !window.fsDoc) return;
+  if(_agentsUnsubscribe){ _agentsUnsubscribe(); _agentsUnsubscribe=null; }
+  _agentsUnsubscribe = window.fsOnSnapshot(
+    window.fsDoc(window.db,'config','agents'),
+    function(snap){
+      _agentsCache = snap.exists() ? (snap.data().list||[]) : [];
+      var agentsPage=document.getElementById('page-agents');
+      if(agentsPage && agentsPage.classList.contains('active')) renderAgents();
+    },
+    function(){ /* silent fail — Firestore unreachable */ }
+  );
 }
 async function cfAgentAction(action, agent){
   try{
