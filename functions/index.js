@@ -227,13 +227,15 @@ function scorerCorrespondance(ordreData, notifData) {
 }
 
 function mismatchToRaison(mismatches) {
+  const labels = [];
   for (const m of mismatches) {
     const ml = (m || "").toLowerCase();
-    if (ml.includes("transfer")) return "Paiement non reçu";
-    if (ml.includes("montant"))  return "Montant incorrect";
-    if (ml.includes("xpéditeur") || ml.includes("n°")) return "Numéro expéditeur incorrect";
+    if (ml.includes("transfer"))                          labels.push("Transfer ID incorrect");
+    else if (ml.includes("montant"))                      labels.push("Montant incorrect");
+    else if (ml.includes("xpéditeur") || ml.includes("n°")) labels.push("N° expéditeur incorrect");
+    else                                                  labels.push("Information incorrecte");
   }
-  return "Informations incorrectes";
+  return labels.join(" + ") || "Informations incorrectes";
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -759,6 +761,14 @@ exports.onNouvelDepot = onDocumentCreated(
         flagRaison: raison,
         flaggedAt: FieldValue.serverTimestamp(),
       });
+      if (tx.whatsapp) {
+        await sendWhatsApp(tx.whatsapp,
+          `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+          `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+          `Raison : ${raison}\n\n` +
+          `Vérifiez les informations et soumettez un nouvel ordre sur kaffi-pay.com`
+        );
+      }
       await sendTelegram(token, adminId,
         `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\n\n` +
         `Ordre <code>#${ordreId}</code>\n${mismatches.map((m) => `• ${m}`).join("\n")}`
@@ -767,21 +777,31 @@ exports.onNouvelDepot = onDocumentCreated(
       return;
     }
 
-    // Aucune notification trouvée → ordre reste "En attente" (SMS peut arriver dans les prochaines minutes)
-    // Le scheduler ordresBloques (toutes les 5 min) et smsWebhook (reverse match) prendront le relais.
-    // Alerte admin uniquement si ordre > 10 min sans SMS.
-    const ageMin = tx.ts ? Math.round((Date.now() - tx.ts) / 60000) : 0;
-    if (ageMin >= 10) {
-      await sendTelegram(token, adminId,
-        `⏳ <b>Dépôt en attente — SMS introuvable</b>\n\n` +
-        `Ordre: <code>#${ordreId}</code>\n` +
-        `Transfer-ID: <code>${transferId}</code>\n` +
-        `Montant: ${Number(tx.montant || 0).toLocaleString()} DJF\n` +
-        `Âge: ${ageMin} min\n\n` +
-        `<i>Notification Waafi non encore reçue. Le scheduler relancera automatiquement.</i>`
+    // Aucun SMS Waafi avec ce TID → rejet immédiat
+    // Le client a forcément reçu le SMS avant de soumettre l'ordre (le TID vient du SMS).
+    // Si introuvable, le TID est probablement incorrect.
+    const raisonIntrouvable = "Transfer ID introuvable — paiement non reçu";
+    await db.collection("depot_orders").doc(docId).update({
+      status: "Paiement Non Reçu",
+      flagRaison: raisonIntrouvable,
+      flaggedAt: FieldValue.serverTimestamp(),
+    });
+    if (tx.whatsapp) {
+      await sendWhatsApp(tx.whatsapp,
+        `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+        `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+        `Raison : Transfer ID introuvable\n\n` +
+        `Vérifiez votre Transfer ID Waafi et soumettez un nouvel ordre sur kaffi-pay.com`
       );
     }
-    logAudit("depot_sms_introuvable_attente", { ordreId, transferId, ageMin });
+    await sendTelegram(token, adminId,
+      `❌ <b>Dépôt rejeté — TID introuvable</b>\n\n` +
+      `Ordre: <code>#${ordreId}</code>\n` +
+      `Transfer-ID: <code>${transferId}</code>\n` +
+      `Montant: ${Number(tx.montant || 0).toLocaleString()} DJF\n\n` +
+      `<i>Aucun SMS Waafi avec ce Transfer ID dans les registres.</i>`
+    );
+    logAudit("depot_rejete_tid_introuvable", { ordreId, transferId });
   }
 );
 
