@@ -1746,6 +1746,47 @@ exports.supportClient = onRequest(
           await reply(cbChatId,
             `📋 <b>Suivi de votre ordre</b>\n\nEnvoyez votre <b>numéro d'ordre</b> et je l'affiche instantanément.\nExemple : <code>#06111</code>`
           );
+        } else if (cbData.startsWith("sc_resoumettre_")) {
+          const oId    = cbData.replace("sc_resoumettre_", "");
+          const oDoc2  = await findOrder(oId).catch(() => null);
+          const tid2   = oDoc2 ? (oDoc2.data().waafitranfertID || oDoc2.data().hash || "") : "";
+          await replyKb(cbChatId,
+            `📝 <b>Resoumettre un nouvel ordre</b>\n\n` +
+            `1️⃣ Allez sur <b>kaffi-pay.com</b>\n` +
+            `2️⃣ Soumettez un <b>nouvel ordre dépôt</b>\n` +
+            `3️⃣ Entrez votre <b>ID 1xBet en DJF</b> (vérifiez la devise)\n` +
+            (tid2 ? `4️⃣ Utilisez le même <b>Transfer ID : <code>${tid2}</code></b>\n\n✅ Votre paiement Waafi a bien été reçu — le même Transfer ID est réutilisable.` : ""),
+            [[{ text: "🏠 Menu", callback_data: "sc_menu" }]]
+          );
+        } else if (cbData.startsWith("sc_paiement_")) {
+          const oId3   = cbData.replace("sc_paiement_", "");
+          const oDoc3  = await findOrder(oId3).catch(() => null);
+          const o3     = oDoc3 ? oDoc3.data() : {};
+          const adminTokPay = TELEGRAM_TOKEN.value();
+          const adminIdPay  = TELEGRAM_ADMIN_ID.value();
+          await replyKb(cbChatId,
+            `💳 <b>Intervention équipe paiement demandée</b>\n\n` +
+            `Notre agent de paiement va traiter votre dossier manuellement.\n` +
+            `Vous serez crédité dans les plus brefs délais.\n\n` +
+            `Votre numéro d'ordre : <b>#${oId3}</b>`,
+            BACK_KB
+          );
+          const alertPay =
+            `💳 <b>Intervention manuelle demandée — Crédit échoué</b>\n` +
+            `👤 ${cbName} (chat: <code>${cbChatId}</code>)\n` +
+            `Ordre <b>#${oId3}</b> | ID 1xBet: <code>${o3.userId1xBet || o3.id1x || "?"}</code>\n` +
+            `${Number(o3.montant||0).toLocaleString()} DJF | webhookStatus: <code>${o3.webhookStatus || "?"}</code>\n` +
+            `Err: <code>${o3.webhookErr || "?"}</code>\n\n` +
+            `<i>👉 Pour relancer : tapez <code>relancer #${oId3}</code> dans adminBot</i>`;
+          await sendTelegram(adminTokPay, adminIdPay, alertPay);
+          try {
+            const agentsSnap2 = await db.collection("config").doc("agents").get();
+            const agentsList2 = agentsSnap2.exists ? (agentsSnap2.data().list || []) : [];
+            const paiementAgents = agentsList2.filter(a => a.role === "Agent de paiement" && a.telegramId);
+            for (const pa of paiementAgents) {
+              await sendTelegram(adminTokPay, String(pa.telegramId), alertPay).catch(() => {});
+            }
+          } catch (e) { console.warn("sc_paiement notify:", e.message); }
         } else if (cbData === "sc_agent") {
           const adminTok = TELEGRAM_TOKEN.value();
           const adminId0 = TELEGRAM_ADMIN_ID.value();
@@ -1893,9 +1934,37 @@ exports.supportClient = onRequest(
         const adminTok   = TELEGRAM_TOKEN.value();
         const adminId2   = TELEGRAM_ADMIN_ID.value();
 
-        // Paiement reçu, crédit bloqué → relance automatique
+        // Paiement reçu, crédit bloqué → check type d'échec d'abord
         if (o.status === "Paiement Reçu" && !wbOk) {
           const id1xbet = o.userId1xBet || o.id1x || "";
+          const tid     = o.waafitranfertID || o.hash || "";
+
+          // Échec permanent ou max → NE PAS relancer, proposer 2 options au client
+          if (o.webhookStatus === "echec_permanent" || o.webhookStatus === "echec_max") {
+            const isPermanent = o.webhookStatus === "echec_permanent";
+            const raison = isPermanent
+              ? "Le compte 1xBet fourni est en devise étrangère (USD/EUR). Vous avez besoin d'un ID de compte en DJF."
+              : "Le crédit automatique a échoué après 3 tentatives.";
+            await replyKb(chatId,
+              `🚨 <b>Crédit 1xBet échoué — Ordre #${ordreId}</b>\n\n` +
+              `💰 Montant : <b>${Number(o.montant||0).toLocaleString()} DJF</b>\n` +
+              (tid ? `🔑 Votre Transfer ID Waafi : <code>${tid}</code>\n` : "") +
+              `\n⚠️ <b>Raison :</b> ${raison}\n\n` +
+              `<b>Que souhaitez-vous faire ?</b>`,
+              [
+                [{ text: "📝 Nouvel ordre (changer ID 1xBet)", callback_data: `sc_resoumettre_${ordreId}` }],
+                [{ text: "💳 Intervention équipe paiement",    callback_data: `sc_paiement_${ordreId}` }],
+              ]
+            );
+            await sendTelegram(adminTok, adminId2,
+              `🚨 <b>Crédit échoué (${o.webhookStatus})</b> — Support client\n` +
+              `👤 ${firstName} | Ordre <b>#${ordreId}</b>\n` +
+              `ID 1xBet: <code>${id1xbet}</code> | ${Number(o.montant||0).toLocaleString()} DJF\n` +
+              `Err: <code>${o.webhookErr || "?"}</code>`);
+            return;
+          }
+
+          // Pas d'ID 1xBet → ne peut pas relancer
           if (!id1xbet) {
             await replyKb(chatId,
               `⚠️ Votre paiement est bien reçu mais votre <b>ID de compte 1xBet est manquant</b>.\nNotre équipe vous contacte sous peu.`,
