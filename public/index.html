@@ -1000,9 +1000,9 @@ const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur', 
 // ─── Matrice de permissions par rôle ───────────────────────────────────────
 const ROLE_PERMS = {
   'Créateur':               {tabs:['dashboard','orders','reserves','agents','notifs','testapi'], canAction:true,  canDelete:true,  canReserves:true},
-  'Agent de paiement':     {tabs:['orders','notifs','testapi'],                                  canAction:true,  canDelete:false, canReserves:false},
-  'Agent de surveillance': {tabs:['dashboard','orders','reserves','notifs'],                     canAction:false, canDelete:false, canReserves:false},
-  'Agent de support':      {tabs:['orders','notifs'],                                            canAction:false, canDelete:false, canReserves:false},
+  'Agent de paiement':     {tabs:['orders','reserves','notifs','testapi'],                       canAction:true,  canDelete:false, canReserves:true},
+  'Agent de surveillance': {tabs:['dashboard','orders','reserves','notifs'],                     canAction:false, canDelete:false, canReserves:true},
+  'Agent de support':      {tabs:['orders','reserves','notifs'],                                 canAction:false, canDelete:false, canReserves:false},
 };
 function getRolePerms(){
   if(!currentUser) return {tabs:[], canAction:false, canDelete:false, canReserves:false};
