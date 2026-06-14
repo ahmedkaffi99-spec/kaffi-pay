@@ -999,10 +999,10 @@ const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur', 
 
 // ─── Matrice de permissions par rôle ───────────────────────────────────────
 const ROLE_PERMS = {
-  'Créateur':               {tabs:['dashboard','orders','reserves','agents','notifs','testapi'], canAction:true,  canDelete:true,  canReserves:true},
-  'Agent de paiement':     {tabs:['orders','reserves','notifs','testapi'],                       canAction:true,  canDelete:false, canReserves:true},
-  'Agent de surveillance': {tabs:['dashboard','orders','reserves','notifs'],                     canAction:false, canDelete:false, canReserves:true},
-  'Agent de support':      {tabs:['orders','reserves','notifs'],                                 canAction:false, canDelete:false, canReserves:false},
+  'Créateur':               {tabs:['dashboard','orders','reserves','agents','notifs','testapi'], canAction:true,  canDelete:true,  canReserves:true,  seeBenefice:true},
+  'Agent de paiement':     {tabs:['dashboard','orders','reserves','notifs','testapi'],           canAction:true,  canDelete:false, canReserves:true,  seeBenefice:false},
+  'Agent de surveillance': {tabs:['dashboard','orders','reserves','notifs'],                     canAction:false, canDelete:false, canReserves:true,  seeBenefice:false},
+  'Agent de support':      {tabs:['dashboard','orders','reserves','notifs'],                     canAction:false, canDelete:false, canReserves:false, seeBenefice:false},
 };
 function getRolePerms(){
   if(!currentUser) return {tabs:[], canAction:false, canDelete:false, canReserves:false};
@@ -1023,6 +1023,14 @@ function applyRolePerms(){
   rsb.forEach(function(b){ b.style.display=perms.canReserves?'':'none'; });
   var ris=document.querySelectorAll('.reserve-input');
   ris.forEach(function(i){ i.disabled=!perms.canReserves; });
+  // Bénéfice : visible seulement pour le créateur
+  var bcCard=document.querySelector('[id="stat-benefice"]');
+  if(bcCard){ var bcParent=bcCard.closest('.stat-card'); if(bcParent) bcParent.style.display=perms.seeBenefice?'':'none'; }
+  var bcChart=document.querySelector('.chart-card:has(#beneficeChart)');
+  // Fallback si :has() non supporté — cibler via chart title
+  document.querySelectorAll('.chart-card').forEach(function(cc){
+    if(cc.querySelector('#beneficeChart')) cc.style.display=perms.seeBenefice?'':'none';
+  });
 }
 function _checkPass(p){ return btoa(unescape(encodeURIComponent(p))).split('').map(function(c){return c.charCodeAt(0).toString(16);}).join('')===CREATOR._h; }
 let fails=0, lockedUntil=0, currentUser=null, loginMode='client';
