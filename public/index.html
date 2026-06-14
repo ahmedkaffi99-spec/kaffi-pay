@@ -384,6 +384,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
 <!-- ══ ÉCRAN LOGIN ══ -->
 <div class="screen" id="screen-login" style="opacity:1;transition:opacity 0.2s;">
+  <button onclick="showScreen('client')" style="position:absolute;top:16px;right:16px;z-index:10;background:none;border:none;color:rgba(255,255,255,.5);font-size:.82rem;cursor:pointer;padding:6px 10px;border-radius:8px;transition:color .2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,.5)'">← Accueil</button>
   <div id="login-screen">
     <div class="login-box">
       <div class="login-logo-area">
@@ -410,7 +411,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </button>
       <div class="login-error" id="login-error"></div>
       <div class="login-attempts" id="login-attempts"></div>
-      <button onclick="showScreen('client')" style="margin-top:14px;width:100%;background:none;border:1px solid rgba(255,255,255,.15);color:var(--muted);border-radius:12px;padding:11px;font-size:.88rem;cursor:pointer;transition:all .2s;" onmouseover="this.style.borderColor='rgba(255,255,255,.35)';this.style.color='#fff'" onmouseout="this.style.borderColor='rgba(255,255,255,.15)';this.style.color='var(--muted)'">← Retour à l'accueil</button>
     </div>
   </div>
 </div>
