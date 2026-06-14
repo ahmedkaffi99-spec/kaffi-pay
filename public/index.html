@@ -2135,6 +2135,14 @@ function openOrderDetail(ref){
     var ageMs2 = tsMs2 > 0 ? (Date.now() - tsMs2) : 0;
     var isBlocked = tsMs2 > 0 && ageMs2 > 30 * 60 * 1000;
     var ageMinutes = tsMs2 > 0 ? Math.round(ageMs2 / 60000) : 0;
+    // DEBUG TEMPORAIRE
+    actDiv.innerHTML = '<div style="font-size:0.68rem;color:#aaa;padding:8px;word-break:break-all;">'
+      +'ts='+JSON.stringify(tx.ts)+'<br>'
+      +'tsMs2='+tsMs2+'<br>'
+      +'ageMs2='+ageMs2+'<br>'
+      +'ageMin='+ageMinutes+'<br>'
+      +'isBlocked='+isBlocked
+      +'</div>';
     if(isBlocked){
       var confirmLabel = isDepot ? '✅ Confirmer — Paiement reçu' : '✅ Valider code retrait';
       actDiv.innerHTML =
