@@ -576,6 +576,19 @@ async function sendTelegramToBot(token, chatId, text) {
   } catch { return false; }
 }
 
+async function copyTelegramMsg(token, toChatId, fromChatId, messageId, caption) {
+  if (!token || !toChatId || !fromChatId || !messageId) return;
+  try {
+    const body = { chat_id: toChatId, from_chat_id: fromChatId, message_id: messageId };
+    if (caption !== undefined) body.caption = caption;
+    await fetch(`https://api.telegram.org/bot${token}/copyMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) { console.warn("copyTelegramMsg failed:", e.message); }
+}
+
 async function sendWhatsApp(phone, message) {
   const token = FONNTE_TOKEN.value();
   if (!token || !phone) {
@@ -1970,9 +1983,12 @@ exports.supportClient = onRequest(
     const chatId    = String(msg.chat.id);
     const text      = (msg.text || "").trim();
     const firstName = (msg.from || {}).first_name || "Client";
+    const msgId     = msg.message_id;
+    const hasMedia  = !!(msg.photo || msg.voice || msg.video || msg.document || msg.audio || msg.video_note);
+    const origCaption = msg.caption || "";
 
-    // Message sans texte (photo, sticker, voice…)
-    if (!text) {
+    // Message sans texte NI media → menu
+    if (!text && !hasMedia) {
       await replyKb(chatId, `Veuillez envoyer un <b>message texte</b>.\nComment puis-je vous aider ?`, MAIN_KB);
       return;
     }
@@ -1996,9 +2012,14 @@ exports.supportClient = onRequest(
         } else if (t === "sessions" || t === "/sessions") {
           await reply(chatId, `💬 Session active : <b>${sess.clientName || "client"}</b>${sess.orderId ? " — Ordre #"+sess.orderId : ""}\n\nTapez <b>fermer</b> pour clôturer.`);
         } else {
-          // Relay message → client
-          await sendTelegramToBot(supportToken, sess.clientChatId,
-            `💬 <b>Agent ${firstName} :</b>\n\n${text}` + SIG);
+          // Relay message → client (texte ou média)
+          if (hasMedia) {
+            const cap = `💬 Agent ${firstName} :` + (origCaption ? `\n${origCaption}` : "");
+            await copyTelegramMsg(supportToken, sess.clientChatId, chatId, msgId, cap);
+          } else {
+            await sendTelegramToBot(supportToken, sess.clientChatId,
+              `💬 <b>Agent ${firstName} :</b>\n\n${text}` + SIG);
+          }
           await reply(chatId, `✅ Envoyé à ${sess.clientName || "client"}.`);
         }
         return;
@@ -2029,9 +2050,14 @@ exports.supportClient = onRequest(
       if (!clientSessionSnap.empty) {
         const sess2 = clientSessionSnap.docs[0].data();
         if (sess2.status === "open" && sess2.agentChatId) {
-          // Relay message → agent (sans confirmation répétitive au client)
-          await sendTelegramToBot(supportToken, sess2.agentChatId,
-            `💬 <b>${firstName} :</b>\n\n${text}`);
+          // Relay message → agent (texte ou média)
+          if (hasMedia) {
+            const cap = `💬 ${firstName} :` + (origCaption ? `\n${origCaption}` : "");
+            await copyTelegramMsg(supportToken, sess2.agentChatId, chatId, msgId, cap);
+          } else {
+            await sendTelegramToBot(supportToken, sess2.agentChatId,
+              `💬 <b>${firstName} :</b>\n\n${text}`);
+          }
         } else {
           // Session pending — premier message seulement
           await reply(chatId, `⏳ Un agent arrive bientôt. Vous pouvez écrire vos informations ici.`);
