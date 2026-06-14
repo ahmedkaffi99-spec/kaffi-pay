@@ -1165,10 +1165,18 @@ function doLogin(){
   }).catch(function(err){
     if(btn){btn.disabled=false;btn.style.opacity='';}
     var code=err.code||'';
-    if(code==='auth/user-not-found'||code==='auth/wrong-password'||code==='auth/invalid-credential'){
-      _loginFail();
+    if(code==='auth/invalid-credential'||code==='auth/wrong-password'||code==='auth/user-not-found'){
+      // Vérifier si c'est un compte Google-only (gmail.com)
+      var enteredEmail=document.getElementById('login-user').value.trim().toLowerCase();
+      if(enteredEmail===CREATOR.email){
+        showLoginError('⚠️ Ce compte utilise Google — clique "Se connecter avec Google" ci-dessous');
+      } else {
+        _loginFail();
+      }
+    } else if(code==='auth/account-exists-with-different-credential'){
+      showLoginError('⚠️ Ce compte utilise Google — clique "Se connecter avec Google"');
     } else if(code==='auth/too-many-requests'){
-      showLoginError('🔒 Trop de tentatives — réessaie plus tard');
+      showLoginError('🔒 Trop de tentatives — réessaie dans quelques minutes');
     } else if(code==='auth/network-request-failed'){
       showLoginError('📡 Erreur réseau — vérifie ta connexion');
     } else {
