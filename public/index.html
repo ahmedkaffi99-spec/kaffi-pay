@@ -1938,10 +1938,11 @@ function renderAllTx(f,s){
   if(f==='attente') t=t.filter(x=>x.status==='En attente');
   else if(f==='retrait-pret') t=t.filter(x=>x.type==='Retrait'&&x.status==='Code Validé');
   else if(f==='fraude') t=t.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
-  else if(f==='bloque') t=t.filter(x=>
-    ['echec','echec_max','echec_permanent'].includes(x.webhookStatus) ||
-    (x.status==='En attente' && x.ts && (Date.now()-Number(x.ts))>30*60*1000)
-  );
+  else if(f==='bloque') t=t.filter(x=>{
+    var tsMs=x.ts?(typeof x.ts==='object'&&x.ts.toMillis?x.ts.toMillis():Number(x.ts)):0;
+    return ['echec','echec_max','echec_permanent'].includes(x.webhookStatus)||
+      (x.status==='En attente'&&(tsMs===0||(Date.now()-tsMs)>30*60*1000));
+  });
   else if(f!=='tous') t=t.filter(x=>x.type===f||x.status===f);
   if(s) { var sl=s.toLowerCase(); t=t.filter(x=>
     (x.ref||'').toLowerCase().includes(sl)||
