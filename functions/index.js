@@ -1932,23 +1932,13 @@ exports.supportClient = onRequest(
 
           const alertMsg =
             `🆘 <b>Demande agent humain</b>\n👤 ${cbName}`;
+          const takeKb = [[{ text: "📞 Prendre en charge", callback_data: `agent_take_${sessionId}` }]];
 
-          // Admin via TELEGRAM_TOKEN
-          await sendTelegram(adminTok, adminId0,
-            alertMsg + `\n<i>👉 Ouvrez le support bot pour prendre en charge</i>`);
+          // Admin via SUPPORT BOT avec bouton (pour qu'il puisse prendre en charge)
+          await sendTelegramKeyboard(supportToken, adminId0, alertMsg + SIG, takeKb).catch(() => {});
 
           // Agents de support via SUPPORT BOT avec bouton
-          try {
-            const agentsSnap = await db.collection("config").doc("agents").get();
-            const agentsList = agentsSnap.exists ? (agentsSnap.data().list || []) : [];
-            const supportAgents = agentsList.filter(a => a.role === "Agent de support" && a.telegramId);
-            for (const sa of supportAgents) {
-              await sendTelegramKeyboard(supportToken, String(sa.telegramId),
-                alertMsg + SIG,
-                [[{ text: "📞 Prendre en charge", callback_data: `agent_take_${sessionId}` }]]
-              ).catch(() => {});
-            }
-          } catch (e) { console.warn("sc_agent notify:", e.message); }
+          await notifySupportAgents(supportToken, alertMsg + SIG, takeKb);
         }
       } catch (e) { console.error("supportClient cbq crash:", e.message); }
       return;
@@ -2138,21 +2128,12 @@ exports.supportClient = onRequest(
 
         const alertMsg2 =
           `🆘 <b>Demande agent</b>\n👤 ${firstName}\nMsg : <i>${text.substring(0, 150)}</i>`;
+        const takeKb2 = [[{ text: "📞 Prendre en charge", callback_data: `agent_take_${sessionId2}` }]];
 
-        await sendTelegram(adminTok2, adminId3,
-          alertMsg2 + `\n<i>👉 Ouvrez le support bot pour prendre en charge</i>`);
-
-        try {
-          const agSnap = await db.collection("config").doc("agents").get();
-          const agList = agSnap.exists ? (agSnap.data().list || []) : [];
-          const supAgents = agList.filter(a => a.role === "Agent de support" && a.telegramId);
-          for (const sa of supAgents) {
-            await sendTelegramKeyboard(supportToken, String(sa.telegramId),
-              alertMsg2 + SIG,
-              [[{ text: "📞 Prendre en charge", callback_data: `agent_take_${sessionId2}` }]]
-            ).catch(() => {});
-          }
-        } catch (e) { console.warn("agent text notify:", e.message); }
+        // Admin via SUPPORT BOT avec bouton
+        await sendTelegramKeyboard(supportToken, adminId3, alertMsg2 + SIG, takeKb2).catch(() => {});
+        // Agents de support via SUPPORT BOT avec bouton
+        await notifySupportAgents(supportToken, alertMsg2 + SIG, takeKb2);
         return;
       }
 
