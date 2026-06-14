@@ -660,7 +660,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <button class="nav-tab" onclick="showPage('reserves')" id="ntab-reserves"><span>🏦</span>Réserves</button>
     <button class="nav-tab" onclick="showPage('agents')" id="ntab-agents"><span>👥</span>Agents</button>
     <button class="nav-tab" onclick="showPage('notifs')" id="ntab-notifs"><span>📨</span>Notifications<div class="notif-dot" id="notif-bell-dot"></div></button>
-    <button class="nav-tab" onclick="showPage('testapi')" id="ntab-testapi"><span>🧪</span>Test API</button>
+    <button class="nav-tab" onclick="showPage('testapi')" id="ntab-testapi"><span>💳</span>Paiement</button>
   </div>
 
   <!-- DASHBOARD -->
@@ -769,25 +769,25 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
   <!-- TEST API -->
   <div class="page-section" id="page-testapi">
-    <div style="padding:4px 0 16px;font-size:0.75rem;color:var(--muted);">Test direct MobCash API — résultat brut affiché.</div>
+    <div style="padding:4px 0 16px;font-size:0.75rem;color:var(--muted);">Traitement manuel des paiements MobCash (Dépôt & Retrait).</div>
 
     <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;margin-bottom:16px;">
-      <div style="font-weight:700;font-size:0.85rem;color:var(--gold);margin-bottom:12px;">📥 Test Dépôt (Add)</div>
+      <div style="font-weight:700;font-size:0.85rem;color:var(--gold);margin-bottom:12px;">📥 Dépôt Manuel</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
         <input type="text" id="test-depot-userid" placeholder="ID 1xBet du joueur (ex: 123456)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="number" id="test-depot-montant" placeholder="Montant (ex: 100)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
-        <button onclick="testMobcashAPI('depot')" style="background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">▶ Tester Dépôt</button>
+        <button onclick="testMobcashAPI('depot')" style="background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">✅ Effectuer le Dépôt</button>
       </div>
       <pre id="test-depot-result" style="margin-top:12px;background:rgba(0,0,0,0.3);border-radius:8px;padding:10px;font-size:0.7rem;color:#adf;white-space:pre-wrap;word-break:break-all;display:none;"></pre>
     </div>
 
     <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;">
-      <div style="font-weight:700;font-size:0.85rem;color:#e91e8c;margin-bottom:12px;">📤 Test Retrait (Payout)</div>
+      <div style="font-weight:700;font-size:0.85rem;color:#e91e8c;margin-bottom:12px;">📤 Retrait Manuel</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
         <input type="tel" id="test-retrait-userid" placeholder="ID 1xBet du joueur (ex: 1234567890)" inputmode="numeric" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         <input type="text" id="test-retrait-code" placeholder="Code retrait 1xBet (ex: Ab3c)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="number" id="test-retrait-montant" placeholder="Montant (ex: 250)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
-        <button onclick="testMobcashAPI('retrait')" style="background:linear-gradient(135deg,#e91e8c,#c2185b);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">▶ Tester Retrait</button>
+        <button onclick="testMobcashAPI('retrait')" style="background:linear-gradient(135deg,#e91e8c,#c2185b);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">✅ Effectuer le Retrait</button>
       </div>
       <pre id="test-retrait-result" style="margin-top:12px;background:rgba(0,0,0,0.3);border-radius:8px;padding:10px;font-size:0.7rem;color:#adf;white-space:pre-wrap;word-break:break-all;display:none;"></pre>
     </div>
