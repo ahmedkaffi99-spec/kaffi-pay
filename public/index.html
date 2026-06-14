@@ -678,17 +678,32 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="stat-sub" id="dash-rW-sub">DJF disponible</div>
       </div>
     </div>
-    <!-- Graphique flux -->
+    <!-- Trading chart: Volume -->
     <div class="chart-card">
       <div class="chart-header">
-        <div class="chart-title">Flux Activité</div>
+        <div>
+          <div class="chart-title">Volume</div>
+          <div id="vol-change" style="font-size:.68rem;margin-top:2px;color:#00d4a0"></div>
+        </div>
         <div class="chart-tabs">
-          <div class="chart-tab" onclick="switchChart('1j',this)">24h</div>
-          <div class="chart-tab active" onclick="switchChart('7j',this)">7j</div>
-          <div class="chart-tab" onclick="switchChart('30j',this)">30j</div>
+          <div class="chart-tab active" onclick="switchTrade('1h',this)">1H</div>
+          <div class="chart-tab" onclick="switchTrade('4h',this)">4H</div>
+          <div class="chart-tab" onclick="switchTrade('1d',this)">1D</div>
+          <div class="chart-tab" onclick="switchTrade('1w',this)">1W</div>
         </div>
       </div>
-      <div class="chart-wrap" style="height:175px"><canvas id="mainChart"></canvas></div>
+      <div style="height:165px"><canvas id="mainChart"></canvas></div>
+    </div>
+    <!-- Trading chart: Bénéfice -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Bénéfice</div>
+          <div id="ben-change" style="font-size:.68rem;margin-top:2px;color:var(--gold)"></div>
+        </div>
+        <div style="font-size:.62rem;color:var(--muted)">×5% dépôts · ×2% retraits</div>
+      </div>
+      <div style="height:115px"><canvas id="beneficeChart"></canvas></div>
     </div>
     <!-- Donut répartition ordres -->
     <div class="chart-card">
@@ -957,7 +972,8 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur'}; // hash hex
 function _checkPass(p){ return btoa(unescape(encodeURIComponent(p))).split('').map(function(c){return c.charCodeAt(0).toString(16);}).join('')===CREATOR._h; }
 let fails=0, lockedUntil=0, currentUser=null, loginMode='client';
-let mChart=null, dChart=null, currentFilter='tous', lastTxCount=0;
+let mChart=null, dChart=null, bChart=null, currentFilter='tous', lastTxCount=0;
+var _chartTf='1h';
 var _smsListener=null, _smsDejaTrait=new Set();
 
 // ═══════════════════════════════════════════════════
@@ -1580,7 +1596,7 @@ function updateStats(){
   const rejected=t.filter(x=>x.status==='Paiement Non Reçu'||x.status==='Code Invalide');
   const depAmt=dep.reduce((s,x)=>s+Number(x.montant),0);
   const retAmt=ret.reduce((s,x)=>s+Number(x.montant),0);
-  const benefice=depAmt-retAmt;
+  const benefice=Math.round(depAmt*0.05+retAmt*0.02);
   document.getElementById('stat-depot').textContent=depAmt.toLocaleString();
   document.getElementById('stat-depot-sub').textContent=dep.length+' crédités';
   document.getElementById('stat-retrait').textContent=retAmt.toLocaleString();
@@ -2139,7 +2155,7 @@ function showPage(p){
   if(p==='orders'){ renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:''); }
   if(p==='agents') renderAgents();
   if(p==='reserves') calcAndUpdateReserves();
-  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart('7j'); calcAndUpdateReserves(); fetchAdminStats(_dashPeriod); }
+  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart(_chartTf); calcAndUpdateReserves(); fetchAdminStats(_dashPeriod); }
   if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); listenWaafiSms(); }
 }
 
@@ -2147,7 +2163,7 @@ function initDashboard(){
   updateStats();
   calcAndUpdateReserves();
   renderRecentTx();
-  initMainChart('7j');
+  initMainChart(_chartTf);
   // Charger stats backend (serveur) pour valeurs précises au chargement
   fetchAdminStats(_dashPeriod);
 }
@@ -2173,33 +2189,8 @@ function fetchAdminStats(period){
       var pLabel={today:"Aujourd'hui",'7j':'7 Jours','30j':'30 Jours',all:'Total'};
       var dlEl=document.getElementById('donut-period-label');
       if(dlEl) dlEl.textContent=pLabel[d.period||_dashPeriod]||'';
-      // Chart depuis backend
-      if(d.chart && d.chart.length){
-        var lb=d.chart.map(function(c){return c.label;});
-        var dd=d.chart.map(function(c){return c.dep;});
-        var rd=d.chart.map(function(c){return c.ret;});
-        renderChartData(lb,dd,rd);
-      }
     })
     .catch(function(){});
-}
-function renderChartData(lb,dd,rd){
-  var ctx=document.getElementById('mainChart').getContext('2d');
-  if(mChart) mChart.destroy();
-  mChart=new Chart(ctx,{
-    type:'bar',
-    data:{labels:lb,datasets:[
-      {label:'Dépôts',data:dd,backgroundColor:'rgba(0,212,160,0.55)',borderColor:'#00d4a0',borderWidth:1,borderRadius:3},
-      {label:'Retraits',data:rd,backgroundColor:'rgba(255,215,0,0.45)',borderColor:'#FFD700',borderWidth:1,borderRadius:3}
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#5c7a9e',font:{size:9}}}},
-      scales:{
-        x:{ticks:{color:'#5c7a9e',font:{size:8}},grid:{display:false}},
-        y:{ticks:{color:'#5c7a9e',font:{size:8},callback:function(v){return v>=1000?(v/1000).toFixed(0)+'k':v;}},grid:{color:'rgba(255,255,255,0.04)'}}
-      }
-    }
-  });
 }
 
 // ═══════════════════════════════════════════════════
@@ -3264,51 +3255,117 @@ function showToast(m,t=''){  const el=document.getElementById('toast');
   setTimeout(()=>el.className='toast',3500);
 }
 
-function initMainChart(p){
-  const ctx=document.getElementById('mainChart').getContext('2d');
+function getTradeBuckets(tf){
   const txs=getTxs();
-  const lb=[],dd=[],rd=[];
-  if(p==='1j'){
-    // 24h : tranches de 2h (12 barres)
-    const now=new Date();
-    const todayStr=isoDate(now);
-    for(let h=0;h<24;h+=2){
-      lb.push(String(h).padStart(2,'0')+'h');
-      const slice=txs.filter(x=>x.date&&x.date.startsWith(todayStr)&&parseInt(x.date.slice(11,13))>=h&&parseInt(x.date.slice(11,13))<h+2);
-      dd.push(slice.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès').reduce((s,x)=>s+Number(x.montant),0));
-      rd.push(slice.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès')).reduce((s,x)=>s+Number(x.montant),0));
-    }
-  } else {
-    const days=p==='30j'?30:7;
-    for(let i=days-1;i>=0;i--){
-      const d=new Date(); d.setDate(d.getDate()-i);
-      const dl=isoDate(d);
-      lb.push(dl.slice(8,10)+'/'+dl.slice(5,7));
-      dd.push(txs.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès'&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
-      rd.push(txs.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès')&&x.date&&x.date.startsWith(dl)).reduce((s,x)=>s+Number(x.montant),0));
-    }
+  const now=new Date();
+  const buckets=[];
+  let count,ms;
+  if(tf==='1h'){count=24;ms=3600000;}
+  else if(tf==='4h'){count=30;ms=4*3600000;}
+  else if(tf==='1w'){count=12;ms=7*24*3600000;}
+  else{count=30;ms=24*3600000;} // 1d default
+  for(let i=count-1;i>=0;i--){
+    const start=new Date(now.getTime()-(i+1)*ms);
+    const end=new Date(now.getTime()-i*ms);
+    let label;
+    if(tf==='1h') label=String(end.getHours()).padStart(2,'0')+':00';
+    else if(tf==='4h') label=(end.getDate()+'/'+(end.getMonth()+1))+' '+String(end.getHours()).padStart(2,'0')+'h';
+    else if(tf==='1w') label='S'+(count-i);
+    else label=end.getDate()+'/'+(end.getMonth()+1);
+    const slice=txs.filter(function(x){
+      var t=x.date?new Date(x.date):null;
+      return t&&t>=start&&t<end;
+    });
+    const dep=slice.filter(x=>x.type==='Dépôt'&&x.status==='Crédité avec succès');
+    const ret=slice.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès'));
+    const dA=dep.reduce((s,x)=>s+Number(x.montant||0),0);
+    const rA=ret.reduce((s,x)=>s+Number(x.montant||0),0);
+    buckets.push({label,vol:dA+rA,ben:Math.round(dA*0.05+rA*0.02)});
   }
+  return buckets;
+}
+function _makeGradient(c2d,h,colorRgb,rising){
+  const g=c2d.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,'rgba('+colorRgb+','+(rising?'0.38':'0.32')+')');
+  g.addColorStop(0.65,'rgba('+colorRgb+',0.06)');
+  g.addColorStop(1,'rgba('+colorRgb+',0)');
+  return g;
+}
+function _tradeChartOpts(color){
+  return{
+    responsive:true,maintainAspectRatio:false,
+    animation:{duration:400},
+    plugins:{
+      legend:{display:false},
+      tooltip:{mode:'index',intersect:false,callbacks:{label:function(c){return ' '+Number(c.raw||0).toLocaleString()+' DJF';}}}
+    },
+    scales:{
+      x:{ticks:{color:'#4a6280',font:{size:7},maxTicksLimit:8},grid:{display:false},border:{display:false}},
+      y:{position:'right',ticks:{color:'#4a6280',font:{size:7},callback:function(v){return v>=1000?(v/1000).toFixed(1)+'k':v;}},grid:{color:'rgba(255,255,255,.035)'},border:{display:false}}
+    },
+    interaction:{mode:'nearest',intersect:false}
+  };
+}
+function initMainChart(tf){
+  if(typeof tf!=='string'||!['1h','4h','1d','1w'].includes(tf)) tf=_chartTf||'1h';
+  _chartTf=tf;
+  const buckets=getTradeBuckets(tf);
+  const labels=buckets.map(function(b){return b.label;});
+  const vals=buckets.map(function(b){return b.vol;});
+  const nonZ=vals.filter(function(v){return v>0;});
+  const first=nonZ[0]||0, last=nonZ[nonZ.length-1]||0;
+  const rising=nonZ.length<2||last>=first;
+  const color=rising?'#00d4a0':'#ff4060';
+  const pct=first>0?((last-first)/first*100).toFixed(1):'0.0';
+  const sign=last>=first?'+':'';
+  const chEl=document.getElementById('vol-change');
+  if(chEl){chEl.textContent=sign+pct+'% '+(rising?'▲':'▼')+' · '+Number(vals.reduce(function(a,b){return a+b;},0)).toLocaleString()+' DJF';chEl.style.color=color;}
+  const ctx=document.getElementById('mainChart');
+  if(!ctx)return;
+  const c2d=ctx.getContext('2d');
+  const h=ctx.parentElement.clientHeight||165;
+  const rgb=rising?'0,212,160':'255,64,96';
+  const grad=_makeGradient(c2d,h,rgb,rising);
   if(mChart)mChart.destroy();
-  mChart=new Chart(ctx,{
-    type:'bar',
-    data:{labels:lb,datasets:[
-      {label:'Dépôts',data:dd,backgroundColor:'rgba(0,212,160,0.55)',borderColor:'#00d4a0',borderWidth:1,borderRadius:3},
-      {label:'Retraits',data:rd,backgroundColor:'rgba(255,215,0,0.45)',borderColor:'#FFD700',borderWidth:1,borderRadius:3}
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{labels:{color:'#5c7a9e',font:{size:9}}}},
-      scales:{
-        x:{ticks:{color:'#5c7a9e',font:{size:8}},grid:{display:false}},
-        y:{ticks:{color:'#5c7a9e',font:{size:8},callback:function(v){return v>=1000?(v/1000).toFixed(0)+'k':v;}},grid:{color:'rgba(255,255,255,0.04)'}}
-      }
-    }
+  mChart=new Chart(c2d,{
+    type:'line',
+    data:{labels,datasets:[{data:vals,borderColor:color,borderWidth:1.5,fill:true,backgroundColor:grad,tension:0.3,pointRadius:0,pointHoverRadius:4,pointHoverBackgroundColor:color}]},
+    options:_tradeChartOpts(color)
+  });
+  initBeneficeChart(buckets);
+}
+function initBeneficeChart(buckets){
+  const labels=buckets.map(function(b){return b.label;});
+  const vals=buckets.map(function(b){return b.ben;});
+  const total=vals.reduce(function(a,b){return a+b;},0);
+  const nonZ=vals.filter(function(v){return v>0;});
+  const first=nonZ[0]||0, last=nonZ[nonZ.length-1]||0;
+  const rising=nonZ.length<2||last>=first;
+  const color=rising?'#FFD700':'#ff4060';
+  const pct=first>0?((last-first)/first*100).toFixed(1):'0.0';
+  const sign=last>=first?'+':'';
+  const chEl=document.getElementById('ben-change');
+  if(chEl){chEl.textContent=sign+pct+'% '+(rising?'▲':'▼')+' · Total: '+total.toLocaleString()+' DJF';chEl.style.color=color;}
+  const ctx=document.getElementById('beneficeChart');
+  if(!ctx)return;
+  const c2d=ctx.getContext('2d');
+  const h=ctx.parentElement.clientHeight||115;
+  const rgb=rising?'255,215,0':'255,64,96';
+  const grad=_makeGradient(c2d,h,rgb,rising);
+  if(bChart)bChart.destroy();
+  bChart=new Chart(c2d,{
+    type:'line',
+    data:{labels,datasets:[{data:vals,borderColor:color,borderWidth:1.5,fill:true,backgroundColor:grad,tension:0.3,pointRadius:0,pointHoverRadius:4,pointHoverBackgroundColor:color}]},
+    options:_tradeChartOpts(color)
   });
 }
-function switchChart(p,el){
-  document.querySelectorAll('.chart-tab').forEach(t=>t.classList.remove('active'));
-  el.classList.add('active');
-  initMainChart(p);
+function switchTrade(tf,el){
+  _chartTf=tf;
+  document.querySelectorAll('.chart-tab').forEach(function(t){t.classList.remove('active');});
+  if(el)el.classList.add('active');
+  initMainChart(tf);
 }
+function switchChart(p,el){ switchTrade(_chartTf||'1h',el); }
 function initDonutChart(credited,pending,rejected,fraudes){
   var ctx=document.getElementById('donutChart');
   if(!ctx) return;
@@ -3353,13 +3410,6 @@ function setDashPeriod(p,el){
   if(el) el.classList.add('active');
   updateStats();
   renderRecentTx();
-  // Sync chart tab
-  const chartMap={today:'1j','7j':'7j','30j':'30j',all:'30j'};
-  const cp=chartMap[p]||'7j';
-  const tab=document.querySelector('.chart-tab[onclick*="\''+cp+'\'"]');
-  if(tab){ document.querySelectorAll('.chart-tab').forEach(t=>t.classList.remove('active')); tab.classList.add('active'); }
-  initMainChart(cp);
-  // Mise à jour stats depuis backend
   if(p!=='today'&&p!=='all') fetchAdminStats(p);
 }
 
@@ -3401,6 +3451,7 @@ try {
   if(typeof submitDepot!=="undefined") window.submitDepot=submitDepot;
   if(typeof submitRetrait!=="undefined") window.submitRetrait=submitRetrait;
   if(typeof switchChart!=="undefined") window.switchChart=switchChart;
+  if(typeof switchTrade!=="undefined") window.switchTrade=switchTrade;
   if(typeof setDashPeriod!=="undefined") window.setDashPeriod=setDashPeriod;
   if(typeof fetchAdminStats!=="undefined") window.fetchAdminStats=fetchAdminStats;
   if(typeof cfAgentAction!=="undefined") window.cfAgentAction=cfAgentAction;

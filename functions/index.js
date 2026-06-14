@@ -2884,7 +2884,7 @@ exports.adminStats = onRequest(
           countRejected: rejected.length,
           countCredited: confDep.length + confRet.length,
           volume:        totalDep + totalRet,
-          benefice:      totalDep - totalRet,
+          benefice:      Math.round(totalDep * 0.05 + totalRet * 0.02),
         },
         chart,
       });
