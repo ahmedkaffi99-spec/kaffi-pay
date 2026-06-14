@@ -30,7 +30,7 @@
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { initializeFirestore, persistentLocalCache, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCILUjQPp_wO-IJrp6WwckMRDN5ISbcexU",
@@ -43,11 +43,14 @@ const firebaseConfig = {
   measurementId: "G-ZM25GET36B"
 };
 
-let app, db, auth;
+let app, db, auth, appSec, authSec;
 try {
   app = initializeApp(firebaseConfig);
   db = initializeFirestore(app, { localCache: persistentLocalCache() });
   auth = getAuth(app);
+  // Secondary app for creating agent accounts without disrupting creator's session
+  appSec = initializeApp(firebaseConfig, 'secondary');
+  authSec = getAuth(appSec);
 } catch(e) {
 }
 
@@ -72,6 +75,8 @@ window.fsAuth = auth;
 window.fsGoogleSignIn = function(){ return signInWithPopup(auth, new GoogleAuthProvider()); };
 window.fsSignOut = function(){ return signOut(auth); };
 window.fsOnAuthStateChanged = function(cb){ return onAuthStateChanged(auth, cb); };
+window.fsCreateUser = function(email, pass){ return createUserWithEmailAndPassword(authSec, email, pass); };
+window.fsSignInEmail = function(email, pass){ return signInWithEmailAndPassword(auth, email, pass); };
 // Appeler updateUSSD et charger données après que le DOM soit prêt
 window.addEventListener('DOMContentLoaded', function(){
   if(typeof updateUSSD === 'function') updateUSSD();
@@ -386,7 +391,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div id="sec-fields" style="display:none;" data-nosnippet>
-        <div class="login-field"><label>Identifiant</label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username"></div>
+        <div class="login-field"><label>Identifiant / Email</label><input type="text" id="login-user" placeholder="admin  ou  email@agent.com" autocomplete="username"></div>
         <div class="login-field"><label>Mot de passe</label><div style="position:relative"><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px;width:100%;box-sizing:border-box"><button type="button" onclick="toggleLoginPass()" id="login-eye-btn" style="position:absolute;right:13px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.05rem;padding:0;line-height:1;-webkit-tap-highlight-color:transparent" aria-label="Voir le mot de passe">👁</button></div></div>
       </div>
 
@@ -846,7 +851,11 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         </div>
       </div>
       <div class="form-row">
-        <div class="mini-field" style="flex:1"><label>Gmail <span style="color:var(--muted);font-weight:400">(compte Google de l'agent)</span></label><input type="email" id="new-agent-gmail" placeholder="agent@gmail.com"></div>
+        <div class="mini-field" style="flex:1"><label>Email <span style="color:var(--muted);font-weight:400">(adresse de connexion)</span></label><input type="email" id="new-agent-email" placeholder="agent@example.com"></div>
+      </div>
+      <div class="form-row">
+        <div class="mini-field"><label>Mot de passe</label><input type="password" id="new-agent-pass" placeholder="Min. 6 caractères"></div>
+        <div class="mini-field"><label>Confirmer</label><input type="password" id="new-agent-pass2" placeholder="••••••••"></div>
       </div>
       <div class="form-row">
         <div class="mini-field" style="flex:1"><label>Telegram ID <span style="color:var(--muted);font-weight:400">(optionnel — support agent)</span></label><input type="text" id="new-agent-telegram" placeholder="Ex: 123456789"></div>
@@ -1133,9 +1142,29 @@ function doLogin(){
   if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
   const u=document.getElementById('login-user').value.trim();
   const p=document.getElementById('login-pass').value;
+  // Admin : identifiant + mot de passe (vérification locale)
   if(u===CREATOR.user&&_checkPass(p)){loginSuccess({user:u,role:'Créateur',isCreator:true});return;}
-  const ag=getAgents().find(function(a){return a.user===u&&a.pass===p;});
-  if(ag){loginSuccess({user:u,role:ag.role,isCreator:false});return;}
+  // Agents : email + mot de passe via Firebase Auth
+  if(!window.fsSignInEmail){showLoginError('❌ Auth non disponible');return;}
+  var btn=document.getElementById('login-main-btn');
+  if(btn){btn.disabled=true;btn.style.opacity='0.7';}
+  window.fsSignInEmail(u, p).then(function(result){
+    if(btn){btn.disabled=false;btn.style.opacity='';}
+    var email=result.user.email.toLowerCase();
+    var ag=getAgents().find(function(a){return a.email&&a.email.toLowerCase()===email;});
+    if(ag){
+      loginSuccess({user:ag.name,role:ag.role,isCreator:false,email:email});
+    } else {
+      if(window.fsSignOut) window.fsSignOut().catch(function(){});
+      _loginFail();
+    }
+  }).catch(function(){
+    if(btn){btn.disabled=false;btn.style.opacity='';}
+    _loginFail();
+  });
+}
+
+function _loginFail(){
   fails++;
   if(fails>=5){
     lockedUntil=Date.now()+60000; fails=0;
@@ -1173,7 +1202,7 @@ function checkGoogleUser(user){
     loginSuccess({user:'admin',role:'Créateur',isCreator:true,email:email,displayName:user.displayName||'Admin'});
     return;
   }
-  var ag=getAgents().find(function(a){return a.gmail&&a.gmail.toLowerCase().trim()===email;});
+  var ag=getAgents().find(function(a){return (a.email&&a.email.toLowerCase().trim()===email)||(a.gmail&&a.gmail.toLowerCase().trim()===email);});
   if(ag){
     loginSuccess({user:ag.name,role:ag.role,isCreator:false,email:email,displayName:ag.name});
     return;
@@ -2266,10 +2295,10 @@ function renderAgents(){
     grp.forEach(function(a,_){
       var i=all.indexOf(a);
       var tgLine=a.telegramId?`<span style="font-size:.6rem;color:#29a8eb;">Telegram: ${a.telegramId}</span>`:'';
-      var gmLine=a.gmail?`<span style="font-size:.6rem;color:var(--muted);">📧 ${a.gmail}</span>`:'';
+      var emLine=(a.email||a.gmail)?`<span style="font-size:.6rem;color:var(--muted);">📧 ${a.email||a.gmail}</span>`:'';
       h+=`<div class="agent-item">
         <div class="agent-avatar">${a.name[0].toUpperCase()}</div>
-        <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">${gmLine} ${tgLine}</div></div>
+        <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">${emLine} ${tgLine}</div></div>
         ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
       </div>`;
     });
@@ -2285,23 +2314,42 @@ function toggleAddAgent(){
 function addAgent(){
   const n=document.getElementById('new-agent-name').value.trim();
   const r=document.getElementById('new-agent-role').value;
-  const gm=document.getElementById('new-agent-gmail').value.trim().toLowerCase();
+  const em=document.getElementById('new-agent-email').value.trim().toLowerCase();
+  const p=document.getElementById('new-agent-pass').value;
+  const p2=document.getElementById('new-agent-pass2').value;
   const tg=document.getElementById('new-agent-telegram').value.trim();
   if(!n){showToast('⚠️ Nom requis','error');return;}
-  if(!gm||!gm.includes('@')){showToast('⚠️ Gmail valide requis','error');return;}
+  if(!em||!em.includes('@')){showToast('⚠️ Email valide requis','error');return;}
+  if(!p||p.length<6){showToast('⚠️ Mot de passe min. 6 caractères','error');return;}
+  if(p!==p2){showToast('⚠️ Mots de passe différents','error');return;}
   const ag=getAgents();
-  if(ag.find(function(a){return a.gmail&&a.gmail.toLowerCase()===gm;})){showToast('⚠️ Ce Gmail est déjà utilisé','error');return;}
-  const u=n.toLowerCase().replace(/\s+/g,'');
-  const agentData={name:n,user:u,gmail:gm,role:r};
-  if(tg) agentData.telegramId=tg;
-  cfAgentAction('add',agentData).then(function(ok){
+  if(ag.find(function(a){return a.email&&a.email.toLowerCase()===em;})){showToast('⚠️ Cet email est déjà utilisé','error');return;}
+  if(!window.fsCreateUser){showToast('⚠️ Auth non disponible','error');return;}
+  const btn=document.querySelector('.add-agent-btn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Création...';}
+  window.fsCreateUser(em, p).then(function(){
+    const u=n.toLowerCase().replace(/\s+/g,'');
+    const agentData={name:n,user:u,email:em,role:r};
+    if(tg) agentData.telegramId=tg;
+    return cfAgentAction('add',agentData);
+  }).then(function(ok){
+    if(btn){btn.disabled=false;btn.textContent='✅ Ajouter l\'agent';}
     if(!ok) return;
     renderAgents();
     document.getElementById('new-agent-name').value='';
-    document.getElementById('new-agent-gmail').value='';
+    document.getElementById('new-agent-email').value='';
+    document.getElementById('new-agent-pass').value='';
+    document.getElementById('new-agent-pass2').value='';
     document.getElementById('new-agent-telegram').value='';
     document.getElementById('add-agent-form').classList.remove('show');
-    showToast('✅ Agent '+n+' ajouté','success');
+    showToast('✅ Agent '+n+' ajouté et compte créé','success');
+  }).catch(function(err){
+    if(btn){btn.disabled=false;btn.textContent='✅ Ajouter l\'agent';}
+    var msg='❌ Erreur Firebase Auth';
+    if(err.code==='auth/email-already-in-use') msg='⚠️ Cet email existe déjà dans Firebase';
+    else if(err.code==='auth/invalid-email') msg='⚠️ Email invalide';
+    else if(err.code==='auth/weak-password') msg='⚠️ Mot de passe trop faible';
+    showToast(msg,'error');
   });
 }
 
