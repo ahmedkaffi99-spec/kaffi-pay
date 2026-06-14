@@ -478,6 +478,38 @@ function traiterAdminBot(text, orders, notifs) {
 // ══════════════════════════════════════════════════════════════════
 // SECTION 10 — HELPERS
 // ══════════════════════════════════════════════════════════════════
+
+// Notifie tous les agents de paiement ayant un telegramId via le admin bot
+async function notifyPaiementAgents(token, text, keyboard) {
+  try {
+    const snap = await db.collection("config").doc("agents").get();
+    const list = snap.exists ? (snap.data().list || []) : [];
+    const agents = list.filter(a => a.role === "Agent de paiement" && a.telegramId);
+    for (const a of agents) {
+      if (keyboard && keyboard.length) {
+        await sendTelegramKeyboard(token, String(a.telegramId), text, keyboard).catch(() => {});
+      } else {
+        await sendTelegram(token, String(a.telegramId), text).catch(() => {});
+      }
+    }
+  } catch (e) { console.warn("notifyPaiementAgents:", e.message); }
+}
+
+// Notifie tous les agents de support ayant un telegramId via le support bot
+async function notifySupportAgents(supportToken, text, keyboard) {
+  try {
+    const snap = await db.collection("config").doc("agents").get();
+    const list = snap.exists ? (snap.data().list || []) : [];
+    const agents = list.filter(a => a.role === "Agent de support" && a.telegramId);
+    for (const a of agents) {
+      if (keyboard && keyboard.length) {
+        await sendTelegramKeyboard(supportToken, String(a.telegramId), text, keyboard).catch(() => {});
+      } else {
+        await sendTelegram(supportToken, String(a.telegramId), text).catch(() => {});
+      }
+    }
+  } catch (e) { console.warn("notifySupportAgents:", e.message); }
+}
 async function sendTelegram(token, chatId, text) {
   if (!token || !chatId) return;
   try {
@@ -898,18 +930,18 @@ exports.onNouvelRetrait = onDocumentCreated(
       }
 
       const ussd = `*200*${waafiNum}*${montantMobcash}#`;
-      // tel: URLs are rejected by Telegram Bot API — use only the callback button
-      await sendTelegramKeyboard(token, adminId,
+      const retraitMsg =
         `📤 <b>Retrait à payer — #${ordreId}</b>\n\n` +
         `Montant : <b>${montantMobcash.toLocaleString()} DJF</b>\n` +
         `N° Waafi : <code>${waafiNum}</code>\n` +
         `Code retrait : <code>${tidRetrait}</code>\n\n` +
         `📱 USSD : <code>${ussd}</code>\n\n` +
-        `<i>1. Copiez le USSD ci-dessus → 2. Composez → 3. Confirmez → 4. Cliquez Terminer.</i>`,
-        [
-          [{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }],
-        ]
-      );
+        `<i>1. Copiez le USSD → 2. Composez → 3. Confirmez → 4. Cliquez Terminer.</i>`;
+      const retraitKb = [[{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }]];
+      // Notifier admin
+      await sendTelegramKeyboard(token, adminId, retraitMsg, retraitKb);
+      // Notifier agents de paiement via admin bot
+      await notifyPaiementAgents(token, retraitMsg, retraitKb);
       logAudit("retrait_code_valide", { ordreId, waafiNum, montantMobcash });
 
     } catch (e) {
@@ -1042,17 +1074,22 @@ exports.onDepotUpdated = onDocumentUpdated(
         webhookErr: errMsg,
       });
       if (estPermanente) {
-        await sendTelegram(token, adminId,
+        const msgPerm =
           `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
           `ID 1xBet: <code>${userId1xBet}</code>\n` +
           `<code>${errMsg}</code>\n\n` +
           `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
-          `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement.`
-        );
+          `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement.`;
+        const kbPerm = [[{ text: "⚡ Recharger #" + ordreId, callback_data: `pay_recharge_${ordreId}` }]];
+        await sendTelegramKeyboard(token, adminId, msgPerm, kbPerm);
+        await notifyPaiementAgents(token, msgPerm, kbPerm);
       } else {
-        await sendTelegram(token, adminId,
+        const msgEch =
           `⚠️ <b>MobCash Dépôt échoué</b> — #${ordreId}\n<code>${errMsg}</code>\n` +
-          `<i>Le scheduler relancera dans 5 min (max 3 tentatives).</i>`);
+          `<i>Le scheduler relancera dans 5 min (max 3 tentatives).</i>`;
+        const kbEch = [[{ text: "⚡ Recharger #" + ordreId, callback_data: `pay_recharge_${ordreId}` }]];
+        await sendTelegramKeyboard(token, adminId, msgEch, kbEch);
+        await notifyPaiementAgents(token, msgEch, kbEch);
       }
       logAudit("depot_mobcash_echec", { ordreId, err: errMsg, permanent: estPermanente });
     }
