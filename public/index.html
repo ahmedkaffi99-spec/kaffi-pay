@@ -1474,7 +1474,14 @@ function listenTxs(){
         var tb = b.ts || (b.createdAt && b.createdAt.seconds ? b.createdAt.seconds*1000 : 0) || 0;
         return tb - ta;
       });
-      if(!_depotReady || !_retraitReady) return; // wait for both snapshots before notifying
+      // Mettre à jour l'UI immédiatement dès le premier snapshot (pas d'attente des deux)
+      if(currentUser){
+        updateStats();
+        renderRecentTx();
+        calcAndUpdateReserves();
+      }
+      if(suiviRef) renderSuivi();
+      if(!_depotReady || !_retraitReady) return; // attendre les deux avant les notifs et graphiques
       if(currentUser && _txsCache.length > prev && prev > 0){
         var latest = _txsCache[0];
         document.getElementById('notif-dot').classList.add('show');
@@ -1486,17 +1493,13 @@ function listenTxs(){
       }
       lastTxCount = _txsCache.length;
       if(currentUser){
-        updateStats();
-        renderRecentTx();
-        calcAndUpdateReserves();
         var dashPage = document.getElementById('page-dashboard');
-        if(dashPage && dashPage.classList.contains('active') && typeof initMainChart==='function') initMainChart('7j');
+        if(dashPage && dashPage.classList.contains('active') && typeof initMainChart==='function') initMainChart(_chartTf||'1D');
         var ordersPage = document.getElementById('page-orders');
         if(ordersPage && ordersPage.classList.contains('active')){
           renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:'');
         }
       }
-      if(suiviRef) renderSuivi();
       // Rafraîchit la modale admin si elle est ouverte sur un ordre qui vient de changer
       if(currentOdmRef){
         var modal = document.getElementById('order-detail-modal');
@@ -2354,7 +2357,7 @@ function showPage(p){
   if(p==='orders'){ renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:''); }
   if(p==='agents') renderAgents();
   if(p==='reserves') calcAndUpdateReserves();
-  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart(_chartTf); calcAndUpdateReserves(); if(_dashPeriod!=='today') fetchAdminStats(_dashPeriod); }
+  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart(_chartTf); calcAndUpdateReserves(); fetchAdminStats(_dashPeriod); }
   if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); listenWaafiSms(); }
 }
 
@@ -2363,8 +2366,7 @@ function initDashboard(){
   calcAndUpdateReserves();
   renderRecentTx();
   initMainChart(_chartTf);
-  // Charger stats backend seulement pour les périodes historiques (7j/30j)
-  if(_dashPeriod!=='today') fetchAdminStats(_dashPeriod);
+  fetchAdminStats(_dashPeriod);
 }
 function fetchAdminStats(period){
   fetch(CF_BASE+'/adminStats?period='+(period||'today')+'&_ak='+getAdminKey())
