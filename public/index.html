@@ -745,10 +745,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
   <!-- ORDRES -->
   <div class="page-section" id="page-orders">
-    <div class="export-btns">
-      <div class="export-btn" onclick="exportCSV()">📄 Export CSV</div>
-      <div class="export-btn" onclick="exportPDF()">📋 Export PDF</div>
-    </div>
     <div class="order-filter">
       <div class="filter-chip active" onclick="filterTx('tous',this)">Tous</div>
       <div class="filter-chip" onclick="filterTx('attente',this)">⏳ En attente</div>
@@ -2358,7 +2354,7 @@ function showPage(p){
   if(p==='orders'){ renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:''); }
   if(p==='agents') renderAgents();
   if(p==='reserves') calcAndUpdateReserves();
-  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart(_chartTf); calcAndUpdateReserves(); fetchAdminStats(_dashPeriod); }
+  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart(_chartTf); calcAndUpdateReserves(); if(_dashPeriod!=='today') fetchAdminStats(_dashPeriod); }
   if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); listenWaafiSms(); }
 }
 
@@ -2367,8 +2363,8 @@ function initDashboard(){
   calcAndUpdateReserves();
   renderRecentTx();
   initMainChart(_chartTf);
-  // Charger stats backend (serveur) pour valeurs précises au chargement
-  fetchAdminStats(_dashPeriod);
+  // Charger stats backend seulement pour les périodes historiques (7j/30j)
+  if(_dashPeriod!=='today') fetchAdminStats(_dashPeriod);
 }
 function fetchAdminStats(period){
   fetch(CF_BASE+'/adminStats?period='+(period||'today')+'&_ak='+getAdminKey())
@@ -3722,7 +3718,7 @@ function setDashPeriod(p,el){
   if(el) el.classList.add('active');
   updateStats();
   renderRecentTx();
-  if(p!=='today'&&p!=='all') fetchAdminStats(p);
+  if(p!=='all') fetchAdminStats(p);
 }
 
 // Expose all functions to window (required for type=module)
