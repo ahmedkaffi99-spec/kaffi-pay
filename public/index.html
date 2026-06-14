@@ -974,7 +974,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
 <!-- ══ MODAL DÉTAIL ORDRE ADMIN ══ -->
 <div class="modal-overlay" id="order-detail-modal">
-  <div class="modal" style="text-align:left;max-width:400px;">
+  <div class="modal" style="text-align:left;max-width:400px;max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <div id="odm-type-badge" style="font-size:0.75rem;font-weight:700;padding:5px 14px;border-radius:999px;"></div>
       <button onclick="document.getElementById('order-detail-modal').classList.remove('show')" style="background:transparent;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;">✕</button>
@@ -1003,7 +1003,11 @@ const ROLE_PERMS = {
 };
 function getRolePerms(){
   if(!currentUser) return {tabs:[], canAction:false, canDelete:false, canReserves:false};
-  return ROLE_PERMS[currentUser.role] || {tabs:['orders','notifs'], canAction:false, canDelete:false, canReserves:false};
+  var role=currentUser.role||'';
+  if(ROLE_PERMS[role]) return ROLE_PERMS[role];
+  // Correspondance insensible à la casse (ex: 'agent de paiement' → 'Agent de paiement')
+  var k=Object.keys(ROLE_PERMS).find(function(r){return r.toLowerCase()===role.toLowerCase();});
+  return k?ROLE_PERMS[k]:{tabs:['orders','notifs'],canAction:false,canDelete:false,canReserves:false};
 }
 function applyRolePerms(){
   var perms=getRolePerms();
@@ -2140,7 +2144,7 @@ function openOrderDetail(ref){
       +'<a href="'+ussdUrl+'" style="background:rgba(0,212,160,0.12);border:1px solid rgba(0,212,160,0.3);color:var(--success);border-radius:6px;padding:6px 10px;font-size:0.75rem;text-decoration:none;">📞</a>'
       +'</div></div>'
       +'<button onclick="terminerRetrait(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:14px;font-size:0.9rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">✅ Paiement Waafi effectué — Terminer</button>';
-  } else if(tx.status==='En attente'){
+  } else if(!tx.status||tx.status==='En attente'){
     var confirmLabel2 = isDepot ? '✅ Confirmer — Paiement reçu' : '✅ Valider code retrait';
     actDiv.innerHTML =
       '<div style="padding:8px 10px;background:rgba(255,170,0,0.08);border:1px solid rgba(255,170,0,0.25);border-radius:8px;margin-bottom:10px;font-size:0.76rem;color:#ffaa00;text-align:center;">🤖 Traitement auto en cours — intervenez si bloqué</div>'
