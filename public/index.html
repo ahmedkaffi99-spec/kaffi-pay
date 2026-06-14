@@ -3306,31 +3306,88 @@ function _tradeChartOpts(color){
     interaction:{mode:'nearest',intersect:false}
   };
 }
+var _kpCandlePlugin={
+  id:'kpCandle',
+  afterDatasetsDraw:function(chart){
+    var ctx=chart.ctx,ds=chart.data.datasets[0];
+    if(!ds||!ds._wicks)return;
+    var meta=chart.getDatasetMeta(0);
+    ctx.save();
+    ds._wicks.forEach(function(w,i){
+      if(!meta.data[i])return;
+      var x=meta.data[i].x;
+      var yH=chart.scales.y.getPixelForValue(w.h);
+      var yL=chart.scales.y.getPixelForValue(w.l);
+      var yTop=chart.scales.y.getPixelForValue(Math.max(w.o,w.c));
+      var yBot=chart.scales.y.getPixelForValue(Math.min(w.o,w.c));
+      var col=w.c>=w.o?'#00d4a0':'#ff4060';
+      ctx.strokeStyle=col; ctx.lineWidth=1;
+      if(w.h>Math.max(w.o,w.c)){ctx.beginPath();ctx.moveTo(x,yH);ctx.lineTo(x,yTop);ctx.stroke();}
+      if(w.l<Math.min(w.o,w.c)){ctx.beginPath();ctx.moveTo(x,yL);ctx.lineTo(x,yBot);ctx.stroke();}
+    });
+    ctx.restore();
+  }
+};
 function initMainChart(tf){
   if(typeof tf!=='string'||!['1h','4h','1d','1w'].includes(tf)) tf=_chartTf||'1h';
   _chartTf=tf;
-  const buckets=getTradeBuckets(tf);
-  const labels=buckets.map(function(b){return b.label;});
-  const vals=buckets.map(function(b){return b.vol;});
-  const nonZ=vals.filter(function(v){return v>0;});
-  const first=nonZ[0]||0, last=nonZ[nonZ.length-1]||0;
-  const rising=nonZ.length<2||last>=first;
-  const color=rising?'#00d4a0':'#ff4060';
-  const pct=first>0?((last-first)/first*100).toFixed(1):'0.0';
-  const sign=last>=first?'+':'';
-  const chEl=document.getElementById('vol-change');
-  if(chEl){chEl.textContent=sign+pct+'% '+(rising?'▲':'▼')+' · '+Number(vals.reduce(function(a,b){return a+b;},0)).toLocaleString()+' DJF';chEl.style.color=color;}
-  const ctx=document.getElementById('mainChart');
+  var buckets=getTradeBuckets(tf);
+  var labels=buckets.map(function(b){return b.label;});
+  var volumes=buckets.map(function(b){return b.vol;});
+  // OHLC: O = volume période précédente, C = volume cette période
+  var wicks=volumes.map(function(c,i){
+    var o=i>0?volumes[i-1]:0;
+    var maxV=Math.max(o,c), minV=Math.min(o,c);
+    var wick=maxV*0.12;
+    return{o:o,c:c,h:maxV+wick,l:Math.max(0,minV>0?minV-wick*0.5:0)};
+  });
+  var nonZ=volumes.filter(function(v){return v>0;});
+  var first=nonZ[0]||0,last=nonZ[nonZ.length-1]||0;
+  var rising=nonZ.length<2||last>=first;
+  var pct=first>0?((last-first)/first*100).toFixed(1):'0.0';
+  var sign=last>=first?'+':'';
+  var total=volumes.reduce(function(a,b){return a+b;},0);
+  var chEl=document.getElementById('vol-change');
+  if(chEl){chEl.textContent=sign+pct+'% '+(rising?'▲':'▼')+' · '+Number(total).toLocaleString()+' DJF';chEl.style.color=rising?'#00d4a0':'#ff4060';}
+  var ctx=document.getElementById('mainChart');
   if(!ctx)return;
-  const c2d=ctx.getContext('2d');
-  const h=ctx.parentElement.clientHeight||165;
-  const rgb=rising?'0,212,160':'255,64,96';
-  const grad=_makeGradient(c2d,h,rgb,rising);
   if(mChart)mChart.destroy();
-  mChart=new Chart(c2d,{
-    type:'line',
-    data:{labels,datasets:[{data:vals,borderColor:color,borderWidth:1.5,fill:true,backgroundColor:grad,tension:0.3,pointRadius:0,pointHoverRadius:4,pointHoverBackgroundColor:color}]},
-    options:_tradeChartOpts(color)
+  mChart=new Chart(ctx.getContext('2d'),{
+    type:'bar',
+    data:{
+      labels:labels,
+      datasets:[{
+        data:wicks.map(function(w){
+          if(w.o===0&&w.c===0)return[0,0];
+          return[Math.min(w.o,w.c),Math.max(w.o,w.c)];
+        }),
+        _wicks:wicks,
+        backgroundColor:wicks.map(function(w){return w.c>=w.o?'rgba(0,212,160,0.85)':'rgba(255,64,96,0.85)';}),
+        borderColor:wicks.map(function(w){return w.c>=w.o?'#00d4a0':'#ff4060';}),
+        borderWidth:1,borderSkipped:false,borderRadius:1,
+        barPercentage:0.55,categoryPercentage:0.85
+      }]
+    },
+    plugins:[_kpCandlePlugin],
+    options:{
+      responsive:true,maintainAspectRatio:false,animation:{duration:300},
+      plugins:{
+        legend:{display:false},
+        tooltip:{mode:'index',intersect:false,callbacks:{
+          label:function(c){
+            var w=wicks[c.dataIndex];
+            if(!w)return'';
+            var d=w.c>=w.o?'▲':'▼';
+            return[' Vol: '+Number(w.c).toLocaleString()+' DJF '+d,' Préc: '+Number(w.o).toLocaleString()+' DJF'];
+          }
+        }}
+      },
+      scales:{
+        x:{ticks:{color:'#4a6280',font:{size:7},maxTicksLimit:8},grid:{display:false},border:{display:false}},
+        y:{position:'right',ticks:{color:'#4a6280',font:{size:7},callback:function(v){return v>=1000?(v/1000).toFixed(1)+'k':v;}},grid:{color:'rgba(255,255,255,.035)'},border:{display:false}}
+      },
+      interaction:{mode:'nearest',intersect:false}
+    }
   });
   initBeneficeChart(buckets);
 }
