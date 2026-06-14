@@ -469,6 +469,7 @@ function traiterAdminBot(text, orders, notifs) {
     "❌ <code>rejetés</code> — ordres rejetés\n" +
     "👤 <code>client 77123456</code> — ordres d'un numéro\n" +
     "🤖 <code>statut support</code> — statut webhook bot client\n" +
+    "👥 <code>agents</code> — voir et tester les agents configurés\n" +
     "🔄 <code>test mobcash</code> — tester MobCash\n" +
     "📱 <code>test whatsapp +25377XXXXXX</code> — tester l'envoi WhatsApp\n\n" +
     "<i>Le système confirme et recharge automatiquement.</i>"
@@ -2601,6 +2602,67 @@ exports.adminBot = onRequest(
         await db.collection("circuit_breakers").doc("macrodroid").set({ etat: "closed", echecs: 0, resetAt: Date.now() });
         logAudit("circuit_reset", { adminId });
         await sendTelegram(token, replyId, "✅ Circuit breaker réinitialisé — <b>CLOSED</b>");
+        return;
+      }
+
+      // agents — diagnostic et test des agents configurés
+      if (t === "agents" || t === "/agents") {
+        const agSnap = await db.collection("config").doc("agents").get().catch(() => null);
+        const agList = agSnap && agSnap.exists ? (agSnap.data().list || []) : [];
+
+        if (!agList.length) {
+          await sendTelegram(token, replyId,
+            `⚠️ <b>Aucun agent configuré</b>\n\nDocument <code>config/agents</code> vide ou inexistant.\nAjoutez des agents depuis le panel admin → onglet Agents.`);
+          return;
+        }
+
+        const paiement = agList.filter(a => a.role === "Agent de paiement");
+        const support  = agList.filter(a => a.role === "Agent de support");
+
+        let lines = `👥 <b>Agents configurés (${agList.length})</b>\n\n`;
+        lines += `<b>🟡 Admin</b>\n• Chat ID : <code>${adminId}</code>\n\n`;
+
+        if (paiement.length) {
+          lines += `<b>💳 Agents de paiement (${paiement.length})</b>\n`;
+          for (const a of paiement) {
+            const tid = a.telegramId ? `<code>${a.telegramId}</code>` : `❌ <b>manquant</b>`;
+            lines += `• ${a.nom || a.name || "Sans nom"} — TelegramID: ${tid}\n`;
+          }
+          lines += "\n";
+        }
+
+        if (support.length) {
+          lines += `<b>🎧 Agents de support (${support.length})</b>\n`;
+          for (const a of support) {
+            const tid = a.telegramId ? `<code>${a.telegramId}</code>` : `❌ <b>manquant</b>`;
+            lines += `• ${a.nom || a.name || "Sans nom"} — TelegramID: ${tid}\n`;
+          }
+          lines += "\n";
+        }
+
+        const sansId = agList.filter(a => !a.telegramId);
+        if (sansId.length) {
+          lines += `⚠️ <b>${sansId.length} agent(s) sans Telegram ID</b> — ils ne recevront pas les notifications.\nAjoutez leur Chat ID dans le panel admin → onglet Agents.`;
+        } else {
+          lines += `✅ Tous les agents ont un Telegram ID.`;
+        }
+
+        await sendTelegram(token, replyId, lines);
+
+        // Test d'envoi à chaque agent de paiement
+        const agentsPaiement = paiement.filter(a => a.telegramId);
+        if (agentsPaiement.length) {
+          await sendTelegram(token, replyId, `🔄 Test d'envoi aux ${agentsPaiement.length} agent(s) de paiement...`);
+          for (const a of agentsPaiement) {
+            try {
+              await sendTelegram(token, String(a.telegramId),
+                `🔔 <b>Test Kaffi-Pay</b>\n\nVous êtes bien connecté en tant qu'agent de paiement.\nVous recevrez les notifications de commandes.`);
+              await sendTelegram(token, replyId, `✅ <code>${a.telegramId}</code> (${a.nom || a.name || "?"}) — message reçu`);
+            } catch (e) {
+              await sendTelegram(token, replyId, `❌ <code>${a.telegramId}</code> (${a.nom || a.name || "?"}) — échec : ${e.message}`);
+            }
+          }
+        }
         return;
       }
 
