@@ -703,7 +703,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         </div>
         <div style="font-size:.62rem;color:var(--muted)">×5% dépôts · ×2% retraits</div>
       </div>
-      <div style="height:115px"><canvas id="beneficeChart"></canvas></div>
+      <div style="height:145px"><canvas id="beneficeChart"></canvas></div>
     </div>
     <!-- Donut répartition ordres -->
     <div class="chart-card">
@@ -3369,51 +3369,77 @@ function initMainChart(tf){
       }]
     },
     plugins:[_kpCandlePlugin],
-    options:{
-      responsive:true,maintainAspectRatio:false,animation:{duration:300},
-      plugins:{
-        legend:{display:false},
-        tooltip:{mode:'index',intersect:false,callbacks:{
-          label:function(c){
-            var w=wicks[c.dataIndex];
-            if(!w)return'';
-            var d=w.c>=w.o?'▲':'▼';
-            return[' Vol: '+Number(w.c).toLocaleString()+' DJF '+d,' Préc: '+Number(w.o).toLocaleString()+' DJF'];
-          }
-        }}
-      },
-      scales:{
-        x:{ticks:{color:'#4a6280',font:{size:7},maxTicksLimit:8},grid:{display:false},border:{display:false}},
-        y:{position:'right',ticks:{color:'#4a6280',font:{size:7},callback:function(v){return v>=1000?(v/1000).toFixed(1)+'k':v;}},grid:{color:'rgba(255,255,255,.035)'},border:{display:false}}
-      },
-      interaction:{mode:'nearest',intersect:false}
-    }
+    options:_candleOpts()
   });
   initBeneficeChart(buckets);
 }
+function _candleOpts(){
+  return{
+    responsive:true,maintainAspectRatio:false,animation:{duration:300},
+    plugins:{
+      legend:{display:false},
+      tooltip:{mode:'index',intersect:false,callbacks:{
+        label:function(c){
+          var w=c.dataset._wicks&&c.dataset._wicks[c.dataIndex];
+          if(!w)return'';
+          var d=w.c>=w.o?'▲':'▼';
+          return[' '+Number(w.c).toLocaleString()+' DJF '+d,' Préc: '+Number(w.o).toLocaleString()+' DJF'];
+        }
+      }}
+    },
+    scales:{
+      x:{ticks:{color:'#4a6280',font:{size:7},maxTicksLimit:8},grid:{display:false},border:{display:false}},
+      y:{
+        position:'right',
+        ticks:{color:'#4a6280',font:{size:7},callback:function(v){
+          if(v>=100000)return(v/1000).toFixed(0)+'k';
+          if(v>=10000)return(v/1000).toFixed(1)+'k';
+          return v;
+        }},
+        grid:{color:'rgba(255,255,255,.03)'},border:{display:false}
+      }
+    },
+    interaction:{mode:'nearest',intersect:false}
+  };
+}
+function _buildCandles(values){
+  return values.map(function(c,i){
+    var o=i>0?values[i-1]:0;
+    var maxV=Math.max(o,c),minV=Math.min(o,c);
+    var wick=maxV>0?maxV*0.12:0;
+    return{o:o,c:c,h:maxV+wick,l:Math.max(0,minV>0?minV-wick*0.5:0)};
+  });
+}
 function initBeneficeChart(buckets){
-  const labels=buckets.map(function(b){return b.label;});
-  const vals=buckets.map(function(b){return b.ben;});
-  const total=vals.reduce(function(a,b){return a+b;},0);
-  const nonZ=vals.filter(function(v){return v>0;});
-  const first=nonZ[0]||0, last=nonZ[nonZ.length-1]||0;
-  const rising=nonZ.length<2||last>=first;
-  const color=rising?'#FFD700':'#ff4060';
-  const pct=first>0?((last-first)/first*100).toFixed(1):'0.0';
-  const sign=last>=first?'+':'';
-  const chEl=document.getElementById('ben-change');
-  if(chEl){chEl.textContent=sign+pct+'% '+(rising?'▲':'▼')+' · Total: '+total.toLocaleString()+' DJF';chEl.style.color=color;}
-  const ctx=document.getElementById('beneficeChart');
+  var labels=buckets.map(function(b){return b.label;});
+  var vals=buckets.map(function(b){return b.ben;});
+  var total=vals.reduce(function(a,b){return a+b;},0);
+  var nonZ=vals.filter(function(v){return v>0;});
+  var first=nonZ[0]||0,last=nonZ[nonZ.length-1]||0;
+  var rising=nonZ.length<2||last>=first;
+  var pct=first>0?((last-first)/first*100).toFixed(1):'0.0';
+  var sign=last>=first?'+':'';
+  var chEl=document.getElementById('ben-change');
+  if(chEl){chEl.textContent=sign+pct+'% '+(rising?'▲':'▼')+' · Total: '+total.toLocaleString()+' DJF';chEl.style.color=rising?'#FFD700':'#ff4060';}
+  var ctx=document.getElementById('beneficeChart');
   if(!ctx)return;
-  const c2d=ctx.getContext('2d');
-  const h=ctx.parentElement.clientHeight||115;
-  const rgb=rising?'255,215,0':'255,64,96';
-  const grad=_makeGradient(c2d,h,rgb,rising);
+  var wicks=_buildCandles(vals);
   if(bChart)bChart.destroy();
-  bChart=new Chart(c2d,{
-    type:'line',
-    data:{labels,datasets:[{data:vals,borderColor:color,borderWidth:1.5,fill:true,backgroundColor:grad,tension:0.3,pointRadius:0,pointHoverRadius:4,pointHoverBackgroundColor:color}]},
-    options:_tradeChartOpts(color)
+  bChart=new Chart(ctx.getContext('2d'),{
+    type:'bar',
+    data:{
+      labels:labels,
+      datasets:[{
+        data:wicks.map(function(w){return w.o===0&&w.c===0?[0,0]:[Math.min(w.o,w.c),Math.max(w.o,w.c)];}),
+        _wicks:wicks,
+        backgroundColor:wicks.map(function(w){return w.c>=w.o?'rgba(255,215,0,0.85)':'rgba(255,64,96,0.85)';}),
+        borderColor:wicks.map(function(w){return w.c>=w.o?'#FFD700':'#ff4060';}),
+        borderWidth:1,borderSkipped:false,borderRadius:1,
+        barPercentage:0.55,categoryPercentage:0.85
+      }]
+    },
+    plugins:[_kpCandlePlugin],
+    options:_candleOpts()
   });
 }
 function switchTrade(tf,el){
