@@ -1113,8 +1113,6 @@ function checkURLAdmin(){
     try{ window.history.replaceState(null,'',window.location.pathname.replace('/admin','/') || '/'); }catch(e){}
     if(_saved && _saved.user){
       loginSuccess(_saved);
-      // Vérifier silencieusement la session Firebase en arrière-plan
-      _verifyFirebaseAuth(_saved.email);
       return;
     }
     showAdminLogin();
