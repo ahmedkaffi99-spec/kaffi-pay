@@ -1990,7 +1990,8 @@ function txHTML(t,showActions){
     ?`<button onclick="event.stopPropagation();terminerRetrait('${t.ref}')" style="background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:5px 12px;font-size:0.68rem;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Terminer</button>`
     :'';
   const fraudBadge=isFraude?'<span style="color:#ff4040;font-size:0.62rem;font-weight:700;margin-left:6px;">🚨 FRAUDE</span>':'';
-  const ageMin=t.ts?(Math.round((Date.now()-Number(t.ts))/60000)):0;
+  const tsMs=t.ts?(typeof t.ts==='object'&&t.ts.toMillis?t.ts.toMillis():Number(t.ts)):0;
+  const ageMin=tsMs>0?Math.round((Date.now()-tsMs)/60000):0;
   const blocBadge=(t.status==='En attente'&&ageMin>30)?`<span style="color:#ff6040;font-size:0.62rem;font-weight:700;margin-left:6px;">⏰ ${ageMin}min</span>`:'';
 
   const flagLine=t.flagRaison?`<div style="font-size:0.63rem;color:#ffb347;margin-top:4px;word-break:break-word;">⚠️ ${t.flagRaison}</div>`:'';
@@ -2130,9 +2131,10 @@ function openOrderDetail(ref){
       +'</div></div>'
       +'<button onclick="terminerRetrait(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:14px;font-size:0.9rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">✅ Paiement Waafi effectué — Terminer</button>';
   } else if(tx.status==='En attente'){
-    var ageMs2 = Date.now() - Number(tx.ts || 0);
-    var isBlocked = tx.ts && ageMs2 > 30 * 60 * 1000;
-    var ageMinutes = tx.ts ? Math.round(ageMs2 / 60000) : 0;
+    var tsMs2 = tx.ts ? (typeof tx.ts==='object' && tx.ts.toMillis ? tx.ts.toMillis() : Number(tx.ts)) : 0;
+    var ageMs2 = tsMs2 > 0 ? (Date.now() - tsMs2) : 0;
+    var isBlocked = tsMs2 > 0 && ageMs2 > 30 * 60 * 1000;
+    var ageMinutes = tsMs2 > 0 ? Math.round(ageMs2 / 60000) : 0;
     if(isBlocked){
       var confirmLabel = isDepot ? '✅ Confirmer — Paiement reçu' : '✅ Valider code retrait';
       actDiv.innerHTML =
