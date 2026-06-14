@@ -318,14 +318,14 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
 
   logAudit("depot_paiement_confirme", { ordreId, transferId: notif.transferId, montant: montantNotif });
 
-  // Telegram admin — paiement confirmé, MobCash va créditer
-  await sendTelegram(token, adminId,
-    `💳 <b>Ordre paiement confirmé — Paiement Waafi validé</b>\n\n` +
+  // Telegram admin + agents de paiement — paiement confirmé, MobCash va créditer
+  const confirmeMsg = `💳 <b>Ordre paiement confirmé — Paiement Waafi validé</b>\n\n` +
     `Ordre: <b>#${ordreId}</b> | <b>${Number(montantNotif).toLocaleString()} DJF</b>\n` +
     `Transfer-ID: <code>${notif.transferId || "?"}</code> | N°: <code>${numReel}</code>` +
     (ordre.whatsapp ? `\nWhatsApp: <code>${ordre.whatsapp}</code>` : "") +
-    `\n\n<i>⏳ MobCash va créditer le compte 1xBet...</i>`
-  );
+    `\n\n<i>⏳ MobCash va créditer le compte 1xBet...</i>`;
+  await sendTelegram(token, adminId, confirmeMsg);
+  await notifyPaiementAgents(token, confirmeMsg).catch(() => {});
 
   const id1xbet = ordre.userId1xBet || ordre.id1x || "";
   if (!id1xbet) {
@@ -682,15 +682,15 @@ exports.onNouvelDepot = onDocumentCreated(
       return;
     }
 
-    // ── Telegram admin — nouvel ordre reçu ──
-    await sendTelegram(token, adminId,
-      `📥 <b>Nouvel ordre Dépôt</b> — <code>#${ordreId}</code>\n\n` +
+    // ── Telegram admin + agents de paiement — nouvel ordre reçu ──
+    const newDepotMsg = `📥 <b>Nouvel ordre Dépôt</b> — <code>#${ordreId}</code>\n\n` +
       `Montant : <b>${Number(tx.montant || 0).toLocaleString()} DJF</b>\n` +
       `ID 1xBet : <code>${tx.userId1xBet || tx.id1x || "—"}</code>\n` +
       `Transfer-ID : <code>${transferId || "—"}</code>\n` +
       `N° Waafi : <code>${phone || "—"}</code>${fraudeTag}\n\n` +
-      `<i>⏳ Vérification en cours...</i>`
-    );
+      `<i>⏳ Vérification en cours...</i>`;
+    await sendTelegram(token, adminId, newDepotMsg);
+    await notifyPaiementAgents(token, newDepotMsg).catch(() => {});
 
     // ── WhatsApp — accusé de réception immédiat ──
     if (tx.whatsapp) {
@@ -1020,8 +1020,9 @@ exports.onDepotUpdated = onDocumentUpdated(
     logAudit("depot_transition", { ordreId, de: before.status, vers: after.status, par: after.confirmedBy || "?" });
 
     if (after.status === "Crédité avec succès") {
-      await sendTelegram(token, adminId,
-        `✅ <b>Dépôt — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`);
+      const creditMsg = `✅ <b>Dépôt — Crédité avec succès</b>\n#${ordreId} — ${montant} DJF`;
+      await sendTelegram(token, adminId, creditMsg);
+      await notifyPaiementAgents(token, creditMsg).catch(() => {});
       if (after.whatsapp) {
         await sendWhatsApp(after.whatsapp,
           `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
@@ -1034,8 +1035,9 @@ exports.onDepotUpdated = onDocumentUpdated(
     }
 
     if (after.status === "Paiement Non Reçu") {
-      await sendTelegram(token, adminId,
-        `❌ <b>Dépôt — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`);
+      const nonRecuMsg = `❌ <b>Dépôt — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
+      await sendTelegram(token, adminId, nonRecuMsg);
+      await notifyPaiementAgents(token, nonRecuMsg).catch(() => {});
       if (after.whatsapp) {
         await sendWhatsApp(after.whatsapp,
           `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
