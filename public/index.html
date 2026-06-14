@@ -386,10 +386,19 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div id="sec-fields" style="display:none;" data-nosnippet>
-        <div style="text-align:center;padding:6px 0 2px;color:var(--muted);font-size:.8rem;letter-spacing:.3px;">Réservé au personnel Kaffi-Pay</div>
+        <div class="login-field"><label>Identifiant</label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username"></div>
+        <div class="login-field"><label>Mot de passe</label><div style="position:relative"><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px;width:100%;box-sizing:border-box"><button type="button" onclick="toggleLoginPass()" id="login-eye-btn" style="position:absolute;right:13px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.05rem;padding:0;line-height:1;-webkit-tap-highlight-color:transparent" aria-label="Voir le mot de passe">👁</button></div></div>
       </div>
 
-      <button class="login-btn" id="login-main-btn" onclick="doGoogleLogin()" style="display:none;background:linear-gradient(135deg,#4285f4,#1565c0);" data-nosnippet>
+      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;" data-nosnippet>🔓 Connexion</button>
+
+      <div id="login-or-sep" style="display:none;align-items:center;gap:8px;margin:10px 0;" data-nosnippet>
+        <div style="flex:1;height:1px;background:rgba(255,255,255,.1)"></div>
+        <span style="font-size:.72rem;color:var(--muted);white-space:nowrap">OU</span>
+        <div style="flex:1;height:1px;background:rgba(255,255,255,.1)"></div>
+      </div>
+
+      <button class="login-btn" id="login-google-btn" onclick="doGoogleLogin()" style="display:none;background:linear-gradient(135deg,#4285f4,#1565c0);margin-top:0;" data-nosnippet>
         <svg width="17" height="17" viewBox="0 0 48 48" style="vertical-align:middle;margin-right:6px;flex-shrink:0"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.1 8 3l5.7-5.7C34.5 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 19 12 24 12c3.1 0 5.9 1.1 8 3l5.7-5.7C34.5 6.1 29.6 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 10-.2 13.6-3.2l-6.3-4.8C29.3 37.7 26.8 38 24 38c-5.2 0-9.7-3.1-11.3-7.6L6 35.3C9.4 40.8 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.7l6.3 4.8C41.2 35 44 30 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
         Se connecter avec Google
       </button>
@@ -1003,7 +1012,10 @@ function showAdminLogin(){
   document.getElementById('screen-login').style.opacity='1';
   document.getElementById('sec-fields').style.display='block';
   document.getElementById('login-main-btn').style.display='block';
+  document.getElementById('login-or-sep').style.display='flex';
+  document.getElementById('login-google-btn').style.display='block';
   document.getElementById('login-error').style.display='none';
+  setTimeout(function(){var el=document.getElementById('login-user');if(el)el.focus();},100);
 }
 
 // Au chargement : client direct, sauf /admin
@@ -1105,12 +1117,44 @@ function switchLoginMode(mode){ loginMode=mode; }
 
 function handleLoginBtn(){
   if(loginMode==='client'){ showScreen('client'); return; }
-  doGoogleLogin();
+  doLogin();
+}
+
+function toggleLoginPass(){
+  var inp=document.getElementById('login-pass');
+  var btn=document.getElementById('login-eye-btn');
+  if(!inp)return;
+  inp.type=inp.type==='password'?'text':'password';
+  btn.textContent=inp.type==='password'?'👁':'🙈';
+}
+
+function doLogin(){
+  const now=Date.now();
+  if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
+  const u=document.getElementById('login-user').value.trim();
+  const p=document.getElementById('login-pass').value;
+  if(u===CREATOR.user&&_checkPass(p)){loginSuccess({user:u,role:'Créateur',isCreator:true});return;}
+  const ag=getAgents().find(function(a){return a.user===u&&a.pass===p;});
+  if(ag){loginSuccess({user:u,role:ag.role,isCreator:false});return;}
+  fails++;
+  if(fails>=5){
+    lockedUntil=Date.now()+60000; fails=0;
+    showLoginError('🔒 Trop de tentatives. Bloqué 60s');
+    const iv=setInterval(function(){
+      const s=Math.ceil((lockedUntil-Date.now())/1000);
+      if(s<=0){clearInterval(iv);document.getElementById('login-attempts').textContent='';document.getElementById('login-error').style.display='none';}
+      else document.getElementById('login-attempts').textContent='Déverrouillage dans '+s+'s';
+    },1000);
+    return;
+  }
+  const r=5-fails;
+  showLoginError('❌ Identifiants incorrects — '+r+' tentative'+(r>1?'s':'')+' restante'+(r>1?'s':''));
+  document.getElementById('login-pass').value='';
 }
 
 function doGoogleLogin(){
   if(!window.fsGoogleSignIn){showLoginError('⚠️ Auth non disponible');return;}
-  var btn=document.getElementById('login-main-btn');
+  var btn=document.getElementById('login-google-btn');
   if(btn){btn.disabled=true;btn.style.opacity='0.7';}
   window.fsGoogleSignIn().then(function(result){
     if(btn){btn.disabled=false;btn.style.opacity='';}
@@ -1147,6 +1191,8 @@ function loginSuccess(u){
   currentUser=u; fails=0;
   try{ localStorage.setItem('kp_session', JSON.stringify({user:u.user, role:u.role, isCreator:!!u.isCreator, email:u.email||''})); }catch(e){}
   document.getElementById('login-error').style.display='none';
+  var lu=document.getElementById('login-user');if(lu)lu.value='';
+  var lp=document.getElementById('login-pass');if(lp)lp.value='';
   document.getElementById('role-badge').textContent=u.role;
   document.getElementById('add-agent-btn-wrap').style.display=u.isCreator?'block':'none';
   showScreen('admin');
@@ -1175,7 +1221,11 @@ function doLogout(){
   if(window.fsSignOut) window.fsSignOut().catch(function(){});
   document.getElementById('sec-fields').style.display='none';
   document.getElementById('login-main-btn').style.display='none';
+  var sep=document.getElementById('login-or-sep');if(sep)sep.style.display='none';
+  var gb=document.getElementById('login-google-btn');if(gb)gb.style.display='none';
   document.getElementById('login-error').style.display='none';
+  var lu=document.getElementById('login-user');if(lu)lu.value='';
+  var lp=document.getElementById('login-pass');if(lp)lp.value='';
   showScreen('client');
   showToast('👋 Déconnecté','success');
 }
