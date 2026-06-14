@@ -2026,14 +2026,46 @@ exports.supportClient = onRequest(
       const ordreMatch = text.match(/(?:#\s*)?(\d{5,8})\b/i);
       const ordreId    = ordreMatch ? ordreMatch[1] : null;
 
-      // ── /start ──
-      if (t === "/start" || t === "start") {
+      // ── /start /menu ──
+      if (t === "/start" || t === "start" || t === "/menu" || t === "menu") {
         await replyKb(chatId,
           `👋 <b>Bienvenue chez Kaffi-Pay !</b>\n\n` +
           `Je suis votre assistant — service disponible <b>24h/24</b>.\n\n` +
-          `Comment puis-je vous aider ?`,
+          `Choisissez une option :`,
           MAIN_KB
         );
+        return;
+      }
+
+      // ── /suivi ──
+      if (t === "/suivi" || t === "suivi") {
+        await reply(chatId,
+          `📋 <b>Suivi de votre ordre</b>\n\nEnvoyez votre <b>numéro d'ordre</b> (5 à 8 chiffres).\nExemple : <code>#06111</code>`
+        );
+        return;
+      }
+
+      // ── /aide ──
+      if (t === "/aide" || t === "aide") {
+        await replyKb(chatId,
+          `❓ <b>Que souhaitez-vous faire ?</b>`,
+          [[{ text: "📥 Comment déposer", callback_data: "sc_depot" }, { text: "📤 Comment retirer", callback_data: "sc_retrait" }], ...BACK_KB]
+        );
+        return;
+      }
+
+      // ── /agent ──
+      if (t === "/agent" || t === "agent_cmd") {
+        await replyKb(chatId,
+          `👤 <b>Contacter un agent</b>\n\nUn agent humain va prendre en charge votre demande.\nÉcrivez votre problème en attendant.`,
+          [[{ text: "👤 Demander un agent humain", callback_data: "sc_agent" }], ...BACK_KB]
+        );
+        return;
+      }
+
+      // ── /tarifs ──
+      if (t === "/tarifs" || t === "tarifs_cmd") {
+        await replyKb(chatId, FAQ.tarifs, BACK_KB);
         return;
       }
 
@@ -2590,7 +2622,19 @@ exports.adminBot = onRequest(
         });
         const rj = await r.json().catch(() => ({}));
         if (rj.ok) {
-          await sendTelegram(token, replyId, `✅ Webhook support bot configuré :\n<code>${funcUrl}</code>\n<i>message + callback_query activés</i>`);
+          // Enregistrer le menu de commandes clients pour le support bot
+          await fetch(`https://api.telegram.org/bot${sToken}/setMyCommands`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ commands: [
+              { command: "start",  description: "Menu principal" },
+              { command: "suivi",  description: "Suivre mon ordre" },
+              { command: "aide",   description: "Comment faire un dépôt ou retrait" },
+              { command: "agent",  description: "Contacter un agent humain" },
+              { command: "tarifs", description: "Tarifs et informations" },
+            ]}),
+            signal: AbortSignal.timeout(8000),
+          }).catch(() => {});
+          await sendTelegram(token, replyId, `✅ Webhook support bot configuré :\n<code>${funcUrl}</code>\n✅ Menu commandes clients enregistré (/start /suivi /aide /agent /tarifs)`);
         } else {
           await sendTelegram(token, replyId, `❌ Erreur webhook : ${rj.description || r.status}`);
         }
@@ -2693,7 +2737,17 @@ exports.adminBot = onRequest(
         });
         const rj = await r.json().catch(() => ({}));
         if (rj.ok) {
-          await sendTelegram(token, replyId, `✅ Webhook admin bot configuré :\n<code>${funcUrl}</code>`);
+          // Enregistrer le menu de commandes admin
+          await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ commands: [
+              { command: "alerte",    description: "Ordres bloqués > 30 min" },
+              { command: "nonmatche", description: "SMS en attente de correspondance" },
+              { command: "circuit",   description: "État circuit breaker MacroDroid" },
+            ]}),
+            signal: AbortSignal.timeout(8000),
+          }).catch(() => {});
+          await sendTelegram(token, replyId, `✅ Webhook admin bot configuré :\n<code>${funcUrl}</code>\n✅ Menu commandes enregistré (/alerte /nonmatche /circuit)`);
         } else {
           await sendTelegram(token, replyId, `❌ Erreur webhook : ${rj.description || r.status}`);
         }
