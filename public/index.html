@@ -29,7 +29,7 @@
 // FIREBASE CONFIG — version 10.14.1 (stable)
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { initializeFirestore, persistentLocalCache, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, collection, doc, addDoc, getDocs, getDoc, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
 const firebaseConfig = {
@@ -67,6 +67,7 @@ window.fsOrderBy = orderBy;
 window.fsWhere = where;
 window.fsLimit = limit;
 window.fsSetDoc = setDoc;
+window.fsGetDoc = getDoc;
 window.fsEnableNetwork = enableNetwork;
 window.fsDeleteDoc = deleteDoc;
 window.fsDisableNetwork = disableNetwork;
@@ -1154,13 +1155,12 @@ function doLogin(){
       loginSuccess({user:'admin',role:'Créateur',isCreator:true,email:email});
       return;
     }
-    // Agent
+    // Agent — cache d'abord, puis Firestore directement si absent
     var ag=getAgents().find(function(a){return (a.email&&a.email.toLowerCase()===email)||(a.gmail&&a.gmail.toLowerCase()===email);});
     if(ag){
       loginSuccess({user:ag.name,role:ag.role,isCreator:false,email:email});
     } else {
-      if(window.fsSignOut) window.fsSignOut().catch(function(){});
-      showLoginError('⛔ Email non autorisé dans le panneau admin');
+      _loginFetchAgentFirestore(email);
     }
   }).catch(function(err){
     if(btn){btn.disabled=false;btn.style.opacity='';}
@@ -1182,6 +1182,29 @@ function doLogin(){
     } else {
       showLoginError('❌ '+code);
     }
+  });
+}
+
+function _loginFetchAgentFirestore(email){
+  if(!window.db||!window.fsDoc||!window.fsGetDoc){
+    if(window.fsSignOut) window.fsSignOut().catch(function(){});
+    showLoginError('⛔ Agent non trouvé — contacte l\'administrateur');
+    return;
+  }
+  showLoginError('⏳ Vérification…');
+  window.fsGetDoc(window.fsDoc(window.db,'config','agents')).then(function(snap){
+    var list=snap.exists()?(snap.data().list||[]):[];
+    _agentsCache=list; // mettre à jour le cache
+    var ag=list.find(function(a){return (a.email&&a.email.toLowerCase()===email)||(a.gmail&&a.gmail.toLowerCase()===email);});
+    if(ag){
+      loginSuccess({user:ag.name,role:ag.role,isCreator:false,email:email});
+    } else {
+      if(window.fsSignOut) window.fsSignOut().catch(function(){});
+      showLoginError('⛔ Agent non enregistré — contacte l\'administrateur');
+    }
+  }).catch(function(){
+    if(window.fsSignOut) window.fsSignOut().catch(function(){});
+    showLoginError('⛔ Erreur Firestore — réessaie');
   });
 }
 
@@ -2348,30 +2371,39 @@ function addAgent(){
   if(!window.fsCreateUser){showToast('⚠️ Auth non disponible','error');return;}
   const btn=document.querySelector('.add-agent-btn');
   if(btn){btn.disabled=true;btn.textContent='⏳ Création...';}
-  window.fsCreateUser(em, p).then(function(){
-    const u=n.toLowerCase().replace(/\s+/g,'');
-    const agentData={name:n,user:u,email:em,role:r};
-    if(tg) agentData.telegramId=tg;
-    return cfAgentAction('add',agentData);
-  }).then(function(ok){
-    if(btn){btn.disabled=false;btn.textContent='✅ Ajouter l\'agent';}
-    if(!ok) return;
-    renderAgents();
-    document.getElementById('new-agent-name').value='';
-    document.getElementById('new-agent-email').value='';
-    document.getElementById('new-agent-pass').value='';
-    document.getElementById('new-agent-pass2').value='';
-    document.getElementById('new-agent-telegram').value='';
-    document.getElementById('add-agent-form').classList.remove('show');
-    showToast('✅ Agent '+n+' ajouté et compte créé','success');
-  }).catch(function(err){
-    if(btn){btn.disabled=false;btn.textContent='✅ Ajouter l\'agent';}
-    var msg='❌ Erreur Firebase Auth';
-    if(err.code==='auth/email-already-in-use') msg='⚠️ Cet email existe déjà dans Firebase';
-    else if(err.code==='auth/invalid-email') msg='⚠️ Email invalide';
-    else if(err.code==='auth/weak-password') msg='⚠️ Mot de passe trop faible';
-    showToast(msg,'error');
-  });
+  const u=n.toLowerCase().replace(/\s+/g,'');
+  const agentData={name:n,user:u,email:em,role:r};
+  if(tg) agentData.telegramId=tg;
+  window.fsCreateUser(em, p)
+    .catch(function(err){
+      if(err.code==='auth/email-already-in-use'){
+        showToast('ℹ️ Compte Firebase existant — mise à jour Firestore','warning');
+        return; // continuer quand même pour sauvegarder dans Firestore
+      }
+      throw err;
+    })
+    .then(function(){
+      return cfAgentAction('add',agentData);
+    })
+    .then(function(ok){
+      if(btn){btn.disabled=false;btn.textContent='✅ Ajouter l\'agent';}
+      if(!ok) return;
+      renderAgents();
+      document.getElementById('new-agent-name').value='';
+      document.getElementById('new-agent-email').value='';
+      document.getElementById('new-agent-pass').value='';
+      document.getElementById('new-agent-pass2').value='';
+      document.getElementById('new-agent-telegram').value='';
+      document.getElementById('add-agent-form').classList.remove('show');
+      showToast('✅ Agent '+n+' ajouté','success');
+    })
+    .catch(function(err){
+      if(btn){btn.disabled=false;btn.textContent='✅ Ajouter l\'agent';}
+      var msg='❌ Erreur Firebase Auth';
+      if(err.code==='auth/invalid-email') msg='⚠️ Email invalide';
+      else if(err.code==='auth/weak-password') msg='⚠️ Mot de passe trop faible';
+      showToast(msg,'error');
+    });
 }
 
 function deleteAgent(i){
