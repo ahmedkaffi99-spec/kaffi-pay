@@ -1786,23 +1786,23 @@ exports.supportClient = onRequest(
             BACK_KB
           );
 
-          // Notifier les agents via SUPPORT BOT (pour qu'ils interagissent ici)
+          // Notifier les agents de paiement via ADMIN BOT
           const alertPay =
             `💳 <b>Intervention manuelle — Crédit échoué</b>\n` +
             `👤 ${cbName} | Ordre <b>#${oId3}</b>\n` +
             `ID 1xBet : <code>${o3.userId1xBet || o3.id1x || "?"}</code> | ${Number(o3.montant||0).toLocaleString()} DJF\n` +
             `Err: <code>${o3.webhookErr || o3.webhookStatus || "?"}</code>`;
           await sendTelegram(adminTokPay, adminIdPay,
-            alertPay + `\n\n<i>👉 relancer #${oId3} dans adminBot</i>`);
+            alertPay + `\n\n<i>👉 recharge #${oId3} pour relancer MobCash</i>`);
           try {
             const agentsSnap2 = await db.collection("config").doc("agents").get();
             const agentsList2 = agentsSnap2.exists ? (agentsSnap2.data().list || []) : [];
             const paiementAgents = agentsList2.filter(a => a.role === "Agent de paiement" && a.telegramId);
             for (const pa of paiementAgents) {
-              // Notif via SUPPORT BOT avec bouton "Prendre en charge"
-              await sendTelegramKeyboard(supportToken, String(pa.telegramId),
+              // Notif via ADMIN BOT avec commande recharge
+              await sendTelegramKeyboard(adminTokPay, String(pa.telegramId),
                 alertPay + SIG,
-                [[{ text: "📞 Prendre en charge", callback_data: `agent_take_${oId3}` }]]
+                [[{ text: "⚡ Recharger #" + oId3, callback_data: `pay_recharge_${oId3}` }]]
               ).catch(() => {});
             }
           } catch (e) { console.warn("sc_paiement notify:", e.message); }
@@ -2260,47 +2260,73 @@ exports.adminBot = onRequest(
         const cbData    = callbackQuery.data || "";
         const cbId      = callbackQuery.id;
 
-        if (fromId === cbAdminId && cbData.startsWith("terminer_")) {
+        // Vérifier si l'expéditeur est admin ou agent de paiement
+        const agSnapCb = await db.collection("config").doc("agents").get().catch(() => null);
+        const agListCb = agSnapCb && agSnapCb.exists ? (agSnapCb.data().list || []) : [];
+        const isPayAgentCb = agListCb.some(a => a.role === "Agent de paiement" && a.telegramId && String(a.telegramId) === fromId);
+        const cbAuthorized = fromId === cbAdminId || isPayAgentCb;
+
+        if (cbAuthorized && cbData.startsWith("terminer_")) {
           const ordreId = cbData.replace("terminer_", "");
 
           await answerCallback(cbToken, cbId, "✅ Retrait finalisé !");
 
           const doc = await findOrder(ordreId).catch(() => null);
           if (!doc) {
-            await sendTelegram(cbToken, cbAdminId, `❓ Ordre <b>#${ordreId}</b> introuvable.`);
+            await sendTelegram(cbToken, fromId, `❓ Ordre <b>#${ordreId}</b> introuvable.`);
             return;
           }
 
           const data = doc.data();
 
           if (data.status === "Payé") {
-            await sendTelegram(cbToken, cbAdminId, `ℹ️ Retrait <b>#${ordreId}</b> déjà finalisé.`);
+            await sendTelegram(cbToken, fromId, `ℹ️ Retrait <b>#${ordreId}</b> déjà finalisé.`);
             return;
           }
 
           if (!transitionValide(data.status, "Payé")) {
-            await sendTelegram(cbToken, cbAdminId,
+            await sendTelegram(cbToken, fromId,
               `⛔ Impossible de finaliser — statut actuel : <b>${data.status}</b>.`);
             return;
           }
 
           await doc.ref.update({
             status: "Payé",
-            finalisePar: "admin_terminer_button",
+            finalisePar: isPayAgentCb ? "agent_paiement_terminer" : "admin_terminer_button",
             finaliseAt: FieldValue.serverTimestamp(),
           });
-          // Archiver dans ordre_traite comme finalisé
           await db.collection("ordre_traite").add({
             ordreId,
             type: "Retrait",
             montant: data.montant || 0,
             waafiNumber: data.waafiNumber || data.tel || "",
-            finalisePar: "admin_terminer_button",
+            finalisePar: isPayAgentCb ? "agent_paiement_terminer" : "admin_terminer_button",
             finaliseAt: FieldValue.serverTimestamp(),
             status: "finalise",
           }).catch(() => {});
-          // onOrdreUpdated gère WhatsApp 3/3 + Telegram "Crédité avec succès" automatiquement.
-          logAudit("retrait_finalise_admin", { ordreId, adminId: cbAdminId });
+          logAudit("retrait_finalise_admin", { ordreId, adminId: cbAdminId, parAgent: isPayAgentCb });
+
+        } else if (cbAuthorized && cbData.startsWith("pay_recharge_")) {
+          // Agent de paiement recharge un ordre via bouton inline
+          const ordreId = cbData.replace("pay_recharge_", "");
+          await answerCallback(cbToken, cbId, "⚡ Relance en cours…");
+          const oDoc = await findOrder(ordreId).catch(() => null);
+          if (!oDoc) { await sendTelegram(cbToken, fromId, `❓ Ordre <b>#${ordreId}</b> introuvable.`); return; }
+          const oData = oDoc.data();
+          const id1xbet = oData.userId1xBet || oData.id1x || "";
+          const montantVal = oData.montant || 0;
+          if (!id1xbet) { await sendTelegram(cbToken, fromId, `⚠️ ID 1xBet manquant pour <b>#${ordreId}</b>.`); return; }
+          await sendTelegram(cbToken, fromId, `🔄 Relance MobCash — <b>#${ordreId}</b> | <code>${id1xbet}</code>…`);
+          try {
+            await callMobcash(oData.type || "Dépôt", id1xbet, montantVal, oData.withdrawalCode || "");
+            await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAgent: true });
+            logAudit("recharge_agent_paiement_ok", { ordreId, agentId: fromId, id1xbet });
+            await sendTelegram(cbToken, fromId,
+              `✅ <b>Recharge réussie !</b>\n#${ordreId} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
+          } catch (e) {
+            await sendTelegram(cbToken, fromId, `❌ Échec MobCash : <code>${e.message}</code>`);
+          }
+
         } else {
           await answerCallback(cbToken, cbId, "");
         }
@@ -2315,8 +2341,16 @@ exports.adminBot = onRequest(
       const adminId = String(TELEGRAM_ADMIN_ID.value());
       const token   = TELEGRAM_TOKEN.value();
 
-      if (chatId !== adminId || !text) return;
-      console.log(`adminBot: "${text}"`);
+      // Autoriser admin ET agents de paiement
+      let msgAuthorized = chatId === adminId;
+      if (!msgAuthorized && text) {
+        const agSnapMsg = await db.collection("config").doc("agents").get().catch(() => null);
+        const agListMsg = agSnapMsg && agSnapMsg.exists ? (agSnapMsg.data().list || []) : [];
+        msgAuthorized = agListMsg.some(a => a.role === "Agent de paiement" && a.telegramId && String(a.telegramId) === chatId);
+      }
+      if (!msgAuthorized || !text) return;
+      const replyId = chatId; // Répondre à l'expéditeur (admin ou agent de paiement)
+      console.log(`adminBot: "${text}" from ${chatId}`);
 
       const t = text.toLowerCase().trim();
 
@@ -2325,18 +2359,18 @@ exports.adminBot = onRequest(
       if (confirmMatch) {
         const num  = confirmMatch[1];
         const doc = await findOrder(num).catch(() => null);
-        if (!doc) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        if (!doc) { await sendTelegram(token, replyId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const data = doc.data();
-        if (data.status === "Crédité avec succès" || data.status === "Payé") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> déjà finalisé.`); return; }
+        if (data.status === "Crédité avec succès" || data.status === "Payé") { await sendTelegram(token, replyId, `ℹ️ <b>#${num}</b> déjà finalisé.`); return; }
         const montantVal = Number(data.montant || 0);
         if (data.type === "Retrait") {
-          if (!transitionValide(data.status, "Code Validé")) { await sendTelegram(token, adminId, `⛔ Impossible de confirmer — statut : <b>${data.status}</b>.`); return; }
+          if (!transitionValide(data.status, "Code Validé")) { await sendTelegram(token, replyId, `⛔ Impossible de confirmer — statut : <b>${data.status}</b>.`); return; }
           await doc.ref.update({ status: "Code Validé", confirmedBy: "admin_telegram", confirmedAt: FieldValue.serverTimestamp() });
-          await sendTelegram(token, adminId, `✅ Retrait <b>#${num}</b> — Code Validé — ${montantVal.toLocaleString()} DJF`);
+          await sendTelegram(token, replyId, `✅ Retrait <b>#${num}</b> — Code Validé — ${montantVal.toLocaleString()} DJF`);
         } else {
-          if (!transitionValide(data.status, "Paiement Reçu")) { await sendTelegram(token, adminId, `⛔ Impossible de confirmer — statut : <b>${data.status}</b>.`); return; }
+          if (!transitionValide(data.status, "Paiement Reçu")) { await sendTelegram(token, replyId, `⛔ Impossible de confirmer — statut : <b>${data.status}</b>.`); return; }
           await doc.ref.update({ status: "Paiement Reçu", confirmedBy: "admin_telegram", confirmedAt: FieldValue.serverTimestamp() });
-          await sendTelegram(token, adminId, `✅ Dépôt <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 MobCash en cours...`);
+          await sendTelegram(token, replyId, `✅ Dépôt <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 MobCash en cours...`);
         }
         logAudit("confirme_admin_telegram", { num, adminId, type: data.type });
         return;
@@ -2348,14 +2382,14 @@ exports.adminBot = onRequest(
         const num    = rejectMatch[1];
         const raison = (rejectMatch[2] || "Rejeté par admin").trim();
         const doc = await findOrder(num).catch(() => null);
-        if (!doc) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        if (!doc) { await sendTelegram(token, replyId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const data = doc.data();
-        if (data.status === "Paiement Non Reçu" || data.status === "Code Invalide") { await sendTelegram(token, adminId, `ℹ️ <b>#${num}</b> déjà rejeté.`); return; }
+        if (data.status === "Paiement Non Reçu" || data.status === "Code Invalide") { await sendTelegram(token, replyId, `ℹ️ <b>#${num}</b> déjà rejeté.`); return; }
         const rejetStatut = data.type === "Retrait" ? "Code Invalide" : "Paiement Non Reçu";
-        if (!transitionValide(data.status, rejetStatut)) { await sendTelegram(token, adminId, `⛔ Impossible de rejeter — statut : <b>${data.status}</b>.`); return; }
+        if (!transitionValide(data.status, rejetStatut)) { await sendTelegram(token, replyId, `⛔ Impossible de rejeter — statut : <b>${data.status}</b>.`); return; }
         await doc.ref.update({ status: rejetStatut, flagRaison: raison, rejectedBy: "admin_telegram", flaggedAt: FieldValue.serverTimestamp() });
         logAudit("rejete_admin_telegram", { num, raison, adminId, type: data.type });
-        await sendTelegram(token, adminId, `❌ Ordre <b>#${num}</b> — ${rejetStatut}.\nRaison : <i>${raison}</i>`);
+        await sendTelegram(token, replyId, `❌ Ordre <b>#${num}</b> — ${rejetStatut}.\nRaison : <i>${raison}</i>`);
         return;
       }
 
@@ -2364,14 +2398,14 @@ exports.adminBot = onRequest(
       if (remettreMatch) {
         const num  = remettreMatch[1];
         const doc = await findOrder(num).catch(() => null);
-        if (!doc) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        if (!doc) { await sendTelegram(token, replyId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const data = doc.data();
         if (!transitionValide(data.status, "En attente")) {
-          await sendTelegram(token, adminId, `⛔ Impossible de remettre en attente un ordre en statut <b>${data.status}</b>.`); return;
+          await sendTelegram(token, replyId, `⛔ Impossible de remettre en attente un ordre en statut <b>${data.status}</b>.`); return;
         }
         await doc.ref.update({ status: "En attente", remisEnAttenteBy: "admin_telegram", remisEnAttenteAt: FieldValue.serverTimestamp() });
         logAudit("remis_en_attente_admin", { num, adminId, ancienStatut: data.status });
-        await sendTelegram(token, adminId, `🔄 Ordre <b>#${num}</b> remis en attente.\nTu peux maintenant le confirmer après vérification.`);
+        await sendTelegram(token, replyId, `🔄 Ordre <b>#${num}</b> remis en attente.\nTu peux maintenant le confirmer après vérification.`);
         return;
       }
 
@@ -2385,9 +2419,9 @@ exports.adminBot = onRequest(
         ]);
         const snap = { docs: [...depotSnap2.docs, ...retraitSnap2.docs], empty: true };
         snap.empty = snap.docs.length === 0;
-        if (snap.empty) { await sendTelegram(token, adminId, `❓ Aucun ordre pour <code>${phone}</code>.`); return; }
+        if (snap.empty) { await sendTelegram(token, replyId, `❓ Aucun ordre pour <code>${phone}</code>.`); return; }
         const lignes = snap.docs.map((d) => { const o = d.data(); return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status}`; });
-        await sendTelegram(token, adminId, `👤 <b>Ordres ${phone} (${snap.docs.length})</b>\n\n${lignes.join("\n")}`);
+        await sendTelegram(token, replyId, `👤 <b>Ordres ${phone} (${snap.docs.length})</b>\n\n${lignes.join("\n")}`);
         return;
       }
 
@@ -2400,12 +2434,12 @@ exports.adminBot = onRequest(
         ]);
         const snap = { docs: [...depotAl.docs, ...retraitAl.docs] };
         const vieux = snap.docs.filter((d) => { const ts = d.data().ts; return ts && new Date(ts) < cutoff; });
-        if (!vieux.length) { await sendTelegram(token, adminId, "✅ Aucun ordre en attente > 30 min."); return; }
+        if (!vieux.length) { await sendTelegram(token, replyId, "✅ Aucun ordre en attente > 30 min."); return; }
         const lignes = vieux.map((d) => {
           const o = d.data(); const age = Math.round((Date.now() - o.ts) / 60000);
           return `• #${o.orderId || d.id} | ${o.montant} DJF | ⏱ ${age}min`;
         });
-        await sendTelegram(token, adminId, `⚠️ <b>Bloqués > 30 min (${vieux.length})</b>\n\n${lignes.join("\n")}\n\n<i>confirmer #ID | rejeter #ID raison</i>`);
+        await sendTelegram(token, replyId, `⚠️ <b>Bloqués > 30 min (${vieux.length})</b>\n\n${lignes.join("\n")}\n\n<i>confirmer #ID | rejeter #ID raison</i>`);
         return;
       }
 
@@ -2422,23 +2456,23 @@ exports.adminBot = onRequest(
           return n.processedAt && n.transferId && !tidTraites.has(n.transferId);
         }), empty: false };
         snap.empty = snap.docs.length === 0;
-        if (snap.empty) { await sendTelegram(token, adminId, "✅ Aucun SMS en attente."); return; }
+        if (snap.empty) { await sendTelegram(token, replyId, "✅ Aucun SMS en attente."); return; }
         const lignes = snap.docs.map((d) => {
           const n = d.data();
           return `• TID:${n.transferId || "?"} | ${n.montant || "?"}DJF | N°${n.numClient || "?"} | ${n.status}`;
         });
-        await sendTelegram(token, adminId, `📭 <b>SMS en attente (${snap.docs.length})</b>\n\n${lignes.join("\n")}`);
+        await sendTelegram(token, replyId, `📭 <b>SMS en attente (${snap.docs.length})</b>\n\n${lignes.join("\n")}`);
         return;
       }
 
       // test mobcash — vérifie que MobCash répond (login)
       if (t === "test mobcash" || t === "/test_mobcash" || t === "test macro" || t === "/test_macro") {
-        await sendTelegram(token, adminId, "🔄 Test MobCash (login)…");
+        await sendTelegram(token, replyId, "🔄 Test MobCash (login)…");
         try {
           await callMobcash("Dépôt", "TEST_NO_EXEC", 0, null);
-          await sendTelegram(token, adminId, "✅ MobCash répond correctement !");
+          await sendTelegram(token, replyId, "✅ MobCash répond correctement !");
         } catch (e) {
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `❌ MobCash : <code>${e.message}</code>\n\n` +
             "Vérifiez les secrets : MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN");
         }
@@ -2448,23 +2482,23 @@ exports.adminBot = onRequest(
       // test whatsapp — diagnostic Fonnte
       if (t.startsWith("test whatsapp")) {
         const numMatch = text.match(/(\+?\d{8,15})/);
-        if (!numMatch) { await sendTelegram(token, adminId, "Usage: <code>test whatsapp +25377XXXXXX</code>"); return; }
+        if (!numMatch) { await sendTelegram(token, replyId, "Usage: <code>test whatsapp +25377XXXXXX</code>"); return; }
         const fonnteToken = FONNTE_TOKEN.value();
         if (!fonnteToken) {
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             "❌ Secret Fonnte manquant :\n• FONNTE_TOKEN : ❌ non défini");
           return;
         }
-        await sendTelegram(token, adminId,
+        await sendTelegram(token, replyId,
           `🔍 <b>Diagnostic WhatsApp (Fonnte)</b>\n` +
           `Token (5 premiers car.) : <code>${fonnteToken.slice(0,5)}…</code>\n\n` +
           `📤 Envoi test vers <code>${numMatch[1]}</code>…`);
         const result = await sendWhatsApp(numMatch[1], "✅ Test Kaffi-Pay — WhatsApp fonctionne !");
         if (result && result.ok) {
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `✅ <b>Message envoyé avec succès !</b>\nRéponse Fonnte : <code>${JSON.stringify(result.body).slice(0,300)}</code>`);
         } else {
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `❌ <b>Échec envoi</b>\nHTTP status : <code>${result?.status || "N/A"}</code>\n` +
             `Raison : <code>${result?.reason || JSON.stringify(result?.body) || "inconnu"}</code>`);
         }
@@ -2474,17 +2508,17 @@ exports.adminBot = onRequest(
       // circuit
       if (t === "circuit" || t === "/circuit") {
         const snap = await db.collection("circuit_breakers").doc("macrodroid").get();
-        if (!snap.exists) { await sendTelegram(token, adminId, "✅ Circuit breaker: <b>closed</b>"); return; }
+        if (!snap.exists) { await sendTelegram(token, replyId, "✅ Circuit breaker: <b>closed</b>"); return; }
         const cb = snap.data();
         const ouvertDepuis = cb.ouvertA ? Math.round((Date.now() - cb.ouvertA) / 60000) : null;
-        await sendTelegram(token, adminId,
+        await sendTelegram(token, replyId,
           `🔌 <b>Circuit breaker MacroDroid</b>\n\nÉtat: <b>${cb.etat.toUpperCase()}</b>\n` +
           `Échecs: ${cb.echecs || 0}\n` +
           (ouvertDepuis ? `Ouvert depuis: ${ouvertDepuis} min\n` : "") +
           (cb.dernierEchec ? `Dernier échec: <i>${cb.dernierEchec}</i>` : "")
         );
         if (cb.etat === "open")
-          await sendTelegram(token, adminId, "Pour réinitialiser : <code>reset circuit</code>");
+          await sendTelegram(token, replyId, "Pour réinitialiser : <code>reset circuit</code>");
         return;
       }
 
@@ -2492,7 +2526,7 @@ exports.adminBot = onRequest(
       if (t === "reset circuit" || t === "/reset_circuit") {
         await db.collection("circuit_breakers").doc("macrodroid").set({ etat: "closed", echecs: 0, resetAt: Date.now() });
         logAudit("circuit_reset", { adminId });
-        await sendTelegram(token, adminId, "✅ Circuit breaker réinitialisé — <b>CLOSED</b>");
+        await sendTelegram(token, replyId, "✅ Circuit breaker réinitialisé — <b>CLOSED</b>");
         return;
       }
 
@@ -2500,7 +2534,7 @@ exports.adminBot = onRequest(
       if (t === "statut support" || t === "/statut_support") {
         const sToken = SUPPORT_BOT_TOKEN.value();
         if (!sToken) {
-          await sendTelegram(token, adminId, "❌ Secret <b>SUPPORT_BOT_TOKEN</b> non configuré dans Firebase Secrets.");
+          await sendTelegram(token, replyId, "❌ Secret <b>SUPPORT_BOT_TOKEN</b> non configuré dans Firebase Secrets.");
           return;
         }
         // getMe — vérifie que le token est valide
@@ -2512,7 +2546,7 @@ exports.adminBot = onRequest(
         const whJ  = await whR.json().catch(() => ({}));
         const bot  = meJ.result || {};
         const wh   = whJ.result || {};
-        await sendTelegram(token, adminId,
+        await sendTelegram(token, replyId,
           `🤖 <b>Support Bot — Diagnostic</b>\n\n` +
           `<b>Bot :</b> ${bot.first_name || "?"} (@${bot.username || "?"})\n` +
           `<b>Token :</b> ${meJ.ok ? "✅ valide" : "❌ invalide"}\n\n` +
@@ -2529,7 +2563,7 @@ exports.adminBot = onRequest(
       // webhook support — configure le webhook Telegram du bot support
       if (t === "webhook support" || t === "/webhook_support") {
         const sToken = SUPPORT_BOT_TOKEN.value();
-        if (!sToken) { await sendTelegram(token, adminId, "❌ Secret SUPPORT_BOT_TOKEN non configuré."); return; }
+        if (!sToken) { await sendTelegram(token, replyId, "❌ Secret SUPPORT_BOT_TOKEN non configuré."); return; }
         const funcUrl = "https://europe-west1-kaffi-pay.cloudfunctions.net/supportClient";
         const r = await fetch(`https://api.telegram.org/bot${sToken}/setWebhook`, {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -2538,9 +2572,9 @@ exports.adminBot = onRequest(
         });
         const rj = await r.json().catch(() => ({}));
         if (rj.ok) {
-          await sendTelegram(token, adminId, `✅ Webhook support bot configuré :\n<code>${funcUrl}</code>\n<i>message + callback_query activés</i>`);
+          await sendTelegram(token, replyId, `✅ Webhook support bot configuré :\n<code>${funcUrl}</code>\n<i>message + callback_query activés</i>`);
         } else {
-          await sendTelegram(token, adminId, `❌ Erreur webhook : ${rj.description || r.status}`);
+          await sendTelegram(token, replyId, `❌ Erreur webhook : ${rj.description || r.status}`);
         }
         return;
       }
@@ -2554,7 +2588,7 @@ exports.adminBot = onRequest(
         const numCli   = extractNumClient(smsText);
 
         if (!tid && !montant) {
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `❌ <b>SMS non reconnu</b>\nFormat attendu : Transfer-Id, Received DJF, numéro\n\n` +
             `SMS reçu :\n<code>${smsText.substring(0, 200)}</code>`);
           return;
@@ -2571,7 +2605,7 @@ exports.adminBot = onRequest(
         let docRef;
         if (existingDoc) {
           docRef = existingDoc.ref;
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `ℹ️ TID <code>${tid}</code> déjà enregistré — tentative de confirmation...`);
         } else {
           const newRef = await db.collection("waafi_notifications").add({
@@ -2581,7 +2615,7 @@ exports.adminBot = onRequest(
             createdAt: FieldValue.serverTimestamp(),
           });
           docRef = newRef;
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `📩 <b>SMS Waafi enregistré</b>\n\n` +
             `Transfer-ID: <code>${tid || "?"}</code>\n` +
             `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
@@ -2591,7 +2625,7 @@ exports.adminBot = onRequest(
 
         // Cherche un ordre En attente avec ce TID
         if (!tid) {
-          await sendTelegram(token, adminId, `⚠️ Transfer-ID non trouvé dans le SMS — confirmation manuelle requise.`);
+          await sendTelegram(token, replyId, `⚠️ Transfer-ID non trouvé dans le SMS — confirmation manuelle requise.`);
           return;
         }
 
@@ -2600,7 +2634,7 @@ exports.adminBot = onRequest(
           .where("status", "==", "En attente").limit(1).get();
 
         if (ordreSnap.empty) {
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `⏳ Aucun ordre "En attente" avec TID <code>${tid}</code> trouvé.\n` +
             `La notification est enregistrée — elle sera utilisée dès qu'un ordre correspondant sera soumis.`);
           return;
@@ -2609,7 +2643,7 @@ exports.adminBot = onRequest(
         const dejaTraite = await db.collection("ordre_traite")
           .where("transferId", "==", tid).where("status", "==", "credite").limit(1).get();
         if (!dejaTraite.empty) {
-          await sendTelegram(token, adminId, `⚠️ TID <code>${tid}</code> déjà crédité — doublon bloqué.`);
+          await sendTelegram(token, replyId, `⚠️ TID <code>${tid}</code> déjà crédité — doublon bloqué.`);
           return;
         }
 
@@ -2620,10 +2654,10 @@ exports.adminBot = onRequest(
 
         if (decision === "confirmer") {
           await confirmerDepot(ordreDoc, waafiSnap, token, adminId);
-          await sendTelegram(token, adminId, `✅ Ordre <b>#${ordreRef2}</b> confirmé via SMS manuel.`);
+          await sendTelegram(token, replyId, `✅ Ordre <b>#${ordreRef2}</b> confirmé via SMS manuel.`);
         } else {
           const raison = mismatchToRaison(mismatches);
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `❌ <b>Score ${score}/3 — ${raison}</b>\nOrdre <code>#${ordreRef2}</code>\n` +
             mismatches.map((m) => `• ${m}`).join("\n") +
             `\n\nUtilise <code>confirmer ${ordreRef2}</code> pour forcer si nécessaire.`);
@@ -2641,9 +2675,9 @@ exports.adminBot = onRequest(
         });
         const rj = await r.json().catch(() => ({}));
         if (rj.ok) {
-          await sendTelegram(token, adminId, `✅ Webhook admin bot configuré :\n<code>${funcUrl}</code>`);
+          await sendTelegram(token, replyId, `✅ Webhook admin bot configuré :\n<code>${funcUrl}</code>`);
         } else {
-          await sendTelegram(token, adminId, `❌ Erreur webhook : ${rj.description || r.status}`);
+          await sendTelegram(token, replyId, `❌ Erreur webhook : ${rj.description || r.status}`);
         }
         return;
       }
@@ -2653,25 +2687,25 @@ exports.adminBot = onRequest(
       if (rechargeMatch) {
         const num  = rechargeMatch[1];
         const oDoc = await findOrder(num).catch(() => null);
-        if (!oDoc) { await sendTelegram(token, adminId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
+        if (!oDoc) { await sendTelegram(token, replyId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const oData = oDoc.data();
         if (oData.status !== "Crédité avec succès") {
-          await sendTelegram(token, adminId, `⛔ Ordre <b>#${num}</b> non crédité (statut: <b>${oData.status}</b>).`); return;
+          await sendTelegram(token, replyId, `⛔ Ordre <b>#${num}</b> non crédité (statut: <b>${oData.status}</b>).`); return;
         }
         const id1xbet        = oData.userId1xBet || oData.id1x || oData.idBet || "";
         const montantVal     = oData.montant || oData.amount || 0;
         const orderType      = oData.type || "Dépôt";
         const withdrawalCode = oData.withdrawalCode || "";
-        if (!id1xbet) { await sendTelegram(token, adminId, `⚠️ ID 1xBet manquant pour <b>#${num}</b>.`); return; }
-        await sendTelegram(token, adminId, `🔄 Relance MobCash — <b>#${num}</b> | <code>${id1xbet}</code>…`);
+        if (!id1xbet) { await sendTelegram(token, replyId, `⚠️ ID 1xBet manquant pour <b>#${num}</b>.`); return; }
+        await sendTelegram(token, replyId, `🔄 Relance MobCash — <b>#${num}</b> | <code>${id1xbet}</code>…`);
         try {
           await callMobcash(orderType, id1xbet, montantVal, withdrawalCode);
           await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAdmin: true });
           logAudit("recharge_manuelle_ok", { num, adminId, id1xbet });
-          await sendTelegram(token, adminId,
+          await sendTelegram(token, replyId,
             `✅ <b>Recharge réussie !</b>\n#${num} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
         } catch (e) {
-          await sendTelegram(token, adminId, `❌ Échec MobCash : <code>${e.message}</code>`);
+          await sendTelegram(token, replyId, `❌ Échec MobCash : <code>${e.message}</code>`);
         }
         return;
       }
@@ -2695,7 +2729,7 @@ exports.adminBot = onRequest(
         return `• TID:${n.transferId || "?"} | ${n.montant || "?"}DJF | N°${n.numClient || "?"} | ${n.status}`;
       });
 
-      await sendTelegram(token, adminId, traiterAdminBot(text, orders, notifs));
+      await sendTelegram(token, replyId, traiterAdminBot(text, orders, notifs));
 
     } catch (e) { console.error("adminBot crash:", e.message, e.stack); }
   }
