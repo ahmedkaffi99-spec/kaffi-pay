@@ -2895,17 +2895,26 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // Requêtes générales
-      const [ordersSnap, notifSnap] = await Promise.all([
-        Promise.all([
-          db.collection("depot_orders").orderBy("ts", "desc").limit(10).get().catch(() => ({ docs: [] })),
-          db.collection("retrait_orders").orderBy("ts", "desc").limit(10).get().catch(() => ({ docs: [] })),
-        ]).then(([d, r]) => ({ docs: [...d.docs, ...r.docs].sort((a, b) => (b.data().ts||0) - (a.data().ts||0)).slice(0, 20) })),
+      // Requêtes générales — récents + tous les "En attente" (même anciens)
+      const [recentD, recentR, attenteD, attenteR, notifSnap] = await Promise.all([
+        db.collection("depot_orders").orderBy("ts", "desc").limit(10).get().catch(() => ({ docs: [] })),
+        db.collection("retrait_orders").orderBy("ts", "desc").limit(10).get().catch(() => ({ docs: [] })),
+        db.collection("depot_orders").where("status", "==", "En attente").get().catch(() => ({ docs: [] })),
+        db.collection("retrait_orders").where("status", "==", "En attente").get().catch(() => ({ docs: [] })),
         db.collection("waafi_notifications").orderBy("createdAt", "desc").limit(10).get()
           .catch(() => db.collection("waafi_notifications").limit(10).get()),
       ]);
+      // Fusionner sans doublons
+      const seen = new Set();
+      const allDocs = [...recentD.docs, ...recentR.docs, ...attenteD.docs, ...attenteR.docs]
+        .filter(d => { if(seen.has(d.id)) return false; seen.add(d.id); return true; })
+        .sort((a, b) => {
+          const ta = a.data().ts && typeof a.data().ts === 'object' && a.data().ts.toMillis ? a.data().ts.toMillis() : Number(a.data().ts||0);
+          const tb = b.data().ts && typeof b.data().ts === 'object' && b.data().ts.toMillis ? b.data().ts.toMillis() : Number(b.data().ts||0);
+          return tb - ta;
+        });
 
-      const orders = ordersSnap.docs.map((d) => {
+      const orders = allDocs.map((d) => {
         const o = d.data();
         return `• #${o.orderId || d.id} | ${o.type} | ${o.montant} DJF | ${o.status} | N°${o.numeroPayment || "?"} | ${o.flagRaison || ""}`;
       });
