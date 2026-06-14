@@ -1160,11 +1160,20 @@ function doLogin(){
       loginSuccess({user:ag.name,role:ag.role,isCreator:false,email:email});
     } else {
       if(window.fsSignOut) window.fsSignOut().catch(function(){});
-      _loginFail();
+      showLoginError('⛔ Email non autorisé dans le panneau admin');
     }
   }).catch(function(err){
     if(btn){btn.disabled=false;btn.style.opacity='';}
-    _loginFail();
+    var code=err.code||'';
+    if(code==='auth/user-not-found'||code==='auth/wrong-password'||code==='auth/invalid-credential'){
+      _loginFail();
+    } else if(code==='auth/too-many-requests'){
+      showLoginError('🔒 Trop de tentatives — réessaie plus tard');
+    } else if(code==='auth/network-request-failed'){
+      showLoginError('📡 Erreur réseau — vérifie ta connexion');
+    } else {
+      showLoginError('❌ '+code);
+    }
   });
 }
 
