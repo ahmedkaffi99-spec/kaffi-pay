@@ -856,7 +856,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="mini-field"><label>Confirmer</label><input type="password" id="new-agent-pass2" placeholder="••••••••"></div>
       </div>
       <div class="form-row">
-        <div class="mini-field" style="flex:1"><label>Telegram ID <span style="color:var(--muted);font-weight:400">(optionnel — support agent)</span></label><input type="text" id="new-agent-telegram" placeholder="Ex: 123456789"></div>
+        <div class="mini-field" style="flex:1"><label>Telegram ID <span style="color:var(--muted);font-weight:400">(optionnel — notifications bot)</span></label><input type="text" id="new-agent-telegram" placeholder="Ex: 123456789"></div>
       </div>
       <button class="add-agent-btn" onclick="addAgent()">✅ Ajouter l'agent</button>
     </div>
@@ -1940,7 +1940,7 @@ function renderAllTx(f,s){
   else if(f==='fraude') t=t.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
   else if(f==='bloque') t=t.filter(x=>
     ['echec','echec_max','echec_permanent'].includes(x.webhookStatus) ||
-    (x.status==='En attente' && x.ts && (Date.now()-Number(x.ts))>90*60*1000)
+    (x.status==='En attente' && x.ts && (Date.now()-Number(x.ts))>30*60*1000)
   );
   else if(f!=='tous') t=t.filter(x=>x.type===f||x.status===f);
   if(s) { var sl=s.toLowerCase(); t=t.filter(x=>
@@ -1990,6 +1990,9 @@ function txHTML(t,showActions){
     ?`<button onclick="event.stopPropagation();terminerRetrait('${t.ref}')" style="background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:5px 12px;font-size:0.68rem;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Terminer</button>`
     :'';
   const fraudBadge=isFraude?'<span style="color:#ff4040;font-size:0.62rem;font-weight:700;margin-left:6px;">🚨 FRAUDE</span>':'';
+  const ageMin=t.ts?(Math.round((Date.now()-Number(t.ts))/60000)):0;
+  const blocBadge=(t.status==='En attente'&&ageMin>30)?`<span style="color:#ff6040;font-size:0.62rem;font-weight:700;margin-left:6px;">⏰ ${ageMin}min</span>`:'';
+
   const flagLine=t.flagRaison?`<div style="font-size:0.63rem;color:#ffb347;margin-top:4px;word-break:break-word;">⚠️ ${t.flagRaison}</div>`:'';
   const numLine=(t.numeroPayment)?`<div style="font-size:0.63rem;color:var(--muted);margin-top:2px;">📱 ${t.numeroPayment}</div>`:'';
   const ussdLine=isRetraitPret?(function(){
@@ -2010,7 +2013,7 @@ function txHTML(t,showActions){
     <div class="tx-top">
       <div class="tx-icon ${d?'depot':'retrait'}">${d?'📥':'📤'}</div>
       <div class="tx-info">
-        <div class="tx-ref">#${t.orderId||t.ref||'N/A'}${fraudBadge}</div>
+        <div class="tx-ref">#${t.orderId||t.ref||'N/A'}${fraudBadge}${blocBadge}</div>
         <div class="tx-meta">${t.date||''}</div>
       </div>
       <div class="tx-right">
@@ -2127,7 +2130,18 @@ function openOrderDetail(ref){
       +'</div></div>'
       +'<button onclick="terminerRetrait(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:14px;font-size:0.9rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">✅ Paiement Waafi effectué — Terminer</button>';
   } else if(tx.status==='En attente'){
-    actDiv.innerHTML='<div style="padding:10px;text-align:center;color:var(--success);font-size:0.8rem;width:100%;">🤖 Traitement automatique en cours...</div>';
+    var ageMs2 = Date.now() - Number(tx.ts || 0);
+    var isBlocked = tx.ts && ageMs2 > 30 * 60 * 1000;
+    var ageMinutes = tx.ts ? Math.round(ageMs2 / 60000) : 0;
+    if(isBlocked){
+      var confirmLabel = isDepot ? '✅ Confirmer — Paiement reçu' : '✅ Valider code retrait';
+      actDiv.innerHTML =
+        '<div style="padding:8px 10px;background:rgba(255,96,64,0.1);border:1px solid rgba(255,96,64,0.3);border-radius:8px;margin-bottom:10px;font-size:0.76rem;color:#ff6040;text-align:center;">⏰ En attente depuis <b>'+ageMinutes+' min</b> — intervention manuelle requise</div>'
+        +'<button onclick="adminConfirmerOrdre(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:13px;font-size:0.88rem;font-weight:700;cursor:pointer;margin-bottom:8px;">'+confirmLabel+'</button>'
+        +'<button onclick="adminRejeterOrdre(\''+tx.ref+'\')" style="width:100%;background:rgba(255,64,96,0.12);border:1px solid rgba(255,64,96,0.3);color:#ff4060;border-radius:10px;padding:11px;font-size:0.85rem;font-weight:600;cursor:pointer;">❌ Rejeter l\'ordre</button>';
+    } else {
+      actDiv.innerHTML='<div style="padding:10px;text-align:center;color:var(--success);font-size:0.8rem;width:100%;">🤖 Traitement automatique en cours...</div>';
+    }
   } else if(isDepot && tx.status==='Paiement Reçu' && (tx.webhookStatus==='echec_permanent'||tx.webhookStatus==='echec_max'||tx.webhookStatus==='echec')){
     var currentId = tx.userId1xBet||tx.id1x||'';
     var errHint = tx.webhookStatus==='echec_permanent'
@@ -2175,6 +2189,34 @@ async function adminRetryDeposit(ref){
     showToast('❌ Erreur réseau : '+e.message, 'error');
     if(btn){ btn.disabled=false; btn.textContent='🔄 Relancer le crédit 1xBet'; }
   }
+}
+
+async function adminConfirmerOrdre(ref){
+  if(!window.db){ showToast('❌ Firebase non connecté','error'); return; }
+  if(!getRolePerms().canAction){ showToast('⛔ Accès non autorisé','error'); return; }
+  var tx=getTxs().find(function(t){ return t.ref===ref; });
+  if(!tx){ showToast('❌ Ordre introuvable','error'); return; }
+  var newStatus = tx.type==='Dépôt' ? 'Paiement Reçu' : 'Code Validé';
+  if(!confirm('Confirmer manuellement l\'ordre #'+(tx.orderId||ref)+' → '+newStatus+' ?')) return;
+  try{
+    await updateTxFirebase(ref, { status: newStatus, confirmedBy: 'admin_web_manuel', confirmedAt: new Date() });
+    odmClose();
+    showToast('✅ Ordre confirmé — '+(tx.type==='Dépôt'?'MobCash va créditer':'Procédez au paiement Waafi'), 'success');
+  }catch(e){ showToast('❌ Erreur : '+e.message,'error'); }
+}
+
+async function adminRejeterOrdre(ref){
+  if(!window.db){ showToast('❌ Firebase non connecté','error'); return; }
+  if(!getRolePerms().canAction){ showToast('⛔ Accès non autorisé','error'); return; }
+  var tx=getTxs().find(function(t){ return t.ref===ref; });
+  if(!tx){ showToast('❌ Ordre introuvable','error'); return; }
+  var raison = prompt('Raison du rejet (optionnel) :') || 'Rejeté manuellement après délai';
+  var rejetStatus = tx.type==='Dépôt' ? 'Paiement Non Reçu' : 'Code Invalide';
+  try{
+    await updateTxFirebase(ref, { status: rejetStatus, flagRaison: raison, rejectedBy: 'admin_web_manuel', flaggedAt: new Date() });
+    odmClose();
+    showToast('❌ Ordre rejeté', 'error');
+  }catch(e){ showToast('❌ Erreur : '+e.message,'error'); }
 }
 
 async function terminerRetrait(ref){
