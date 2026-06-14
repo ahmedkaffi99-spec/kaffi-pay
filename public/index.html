@@ -3392,8 +3392,7 @@ function _candleOpts(){
       y:{
         position:'right',
         ticks:{color:'#4a6280',font:{size:7},callback:function(v){
-          if(v>=100000)return(v/1000).toFixed(0)+'k';
-          if(v>=10000)return(v/1000).toFixed(1)+'k';
+          if(v>=1000){var k=v/1000;return(k===Math.floor(k)?k.toFixed(0):k.toFixed(1))+'k';}
           return v;
         }},
         grid:{color:'rgba(255,255,255,.03)'},border:{display:false}
