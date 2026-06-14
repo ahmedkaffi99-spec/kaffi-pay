@@ -1249,10 +1249,10 @@ exports.ordresBloques = onSchedule(
           const age = Math.round((Date.now() - o.ts) / 60000);
           return `• #${o.orderId || d.id} | ${o.montant} DJF | ⏱ ${age}min | TID:${o.waafitranfertID || "?"}`;
         });
-        await sendTelegram(token, adminId,
-          `⚠️ <b>${vieux.length} ordre(s) > 60 min sans SMS Waafi</b>\n\n${lignes.join("\n")}\n\n` +
-          `<i>SMS Waafi introuvable — vérifiez le paiement.</i>`
-        );
+        const alertMsg60 = `⚠️ <b>${vieux.length} ordre(s) > 60 min sans SMS Waafi</b>\n\n${lignes.join("\n")}\n\n` +
+          `<i>SMS Waafi introuvable — vérifiez le paiement.</i>`;
+        await sendTelegram(token, adminId, alertMsg60);
+        await notifyPaiementAgents(token, alertMsg60).catch(() => {});
         await alertRef.set({ ts: FieldValue.serverTimestamp(), count: vieux.length });
       }
     }
@@ -1428,14 +1428,14 @@ exports.onNouvelleNotifWaafi = onDocumentCreated(
       return;
     }
 
-    // Alerte admin — SMS reçu et parsé
-    await sendTelegram(token, adminId,
-      `📩 <b>SMS Waafi reçu (MacroDroid direct)</b>\n\n` +
+    // Alerte admin + agents de paiement — SMS reçu et parsé
+    const smsMsgDirect = `📩 <b>SMS Waafi reçu (MacroDroid direct)</b>\n\n` +
       `Transfer-ID: <code>${transferId || "?"}</code>\n` +
       `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
       `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
-      `<i>✅ En attente de l'ordre client...</i>`
-    ).catch(() => {});
+      `<i>✅ En attente de l'ordre client...</i>`;
+    await sendTelegram(token, adminId, smsMsgDirect).catch(() => {});
+    await notifyPaiementAgents(token, smsMsgDirect).catch(() => {});
 
     if (!transferId) return; // Pas de TID → pas de reverse-match possible
 
@@ -1471,10 +1471,10 @@ exports.onNouvelleNotifWaafi = onDocumentCreated(
         flagRaison: raison,
         flaggedAt: FieldValue.serverTimestamp(),
       });
-      await sendTelegram(token, adminId,
-        `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreDoc.data().orderId || ordreDoc.id}</code>\n` +
-        mismatches.map((m) => `• ${m}`).join("\n")
-      );
+      const rejetMsgDirect = `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreDoc.data().orderId || ordreDoc.id}</code>\n` +
+        mismatches.map((m) => `• ${m}`).join("\n");
+      await sendTelegram(token, adminId, rejetMsgDirect);
+      await notifyPaiementAgents(token, rejetMsgDirect).catch(() => {});
     }
   }
 );
@@ -1518,13 +1518,13 @@ exports.smsWebhook = onRequest(
 
     if (!transferId && !montant) return; // SMS non parsable
 
-    await sendTelegram(token, adminId,
-      `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
+    const smsMsgWebhook = `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
       `Transfer-ID: <code>${transferId || "?"}</code>\n` +
       `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
       `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
-      `<i>✅ En attente de l'ordre client — confirmation automatique dès soumission.</i>`
-    );
+      `<i>✅ En attente de l'ordre client — confirmation automatique dès soumission.</i>`;
+    await sendTelegram(token, adminId, smsMsgWebhook);
+    await notifyPaiementAgents(token, smsMsgWebhook).catch(() => {});
 
     // Cas rare : ordre déjà soumis avant que le SMS arrive
     if (!transferId) return;
@@ -1554,10 +1554,10 @@ exports.smsWebhook = onRequest(
         flagRaison: raison,
         flaggedAt: FieldValue.serverTimestamp(),
       });
-      await sendTelegram(token, adminId,
-        `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreRef2}</code>\n` +
-        mismatches.map((m) => `• ${m}`).join("\n")
-      );
+      const rejetMsgWebhook = `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreRef2}</code>\n` +
+        mismatches.map((m) => `• ${m}`).join("\n");
+      await sendTelegram(token, adminId, rejetMsgWebhook);
+      await notifyPaiementAgents(token, rejetMsgWebhook).catch(() => {});
     }
   }
 );
