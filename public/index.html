@@ -30,6 +30,7 @@
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { initializeFirestore, persistentLocalCache, collection, doc, addDoc, getDocs, updateDoc, onSnapshot, query, orderBy, setDoc, where, limit, enableNetwork, disableNetwork, deleteDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCILUjQPp_wO-IJrp6WwckMRDN5ISbcexU",
@@ -42,10 +43,11 @@ const firebaseConfig = {
   measurementId: "G-ZM25GET36B"
 };
 
-let app, db;
+let app, db, auth;
 try {
   app = initializeApp(firebaseConfig);
   db = initializeFirestore(app, { localCache: persistentLocalCache() });
+  auth = getAuth(app);
 } catch(e) {
 }
 
@@ -66,6 +68,10 @@ window.fsEnableNetwork = enableNetwork;
 window.fsDeleteDoc = deleteDoc;
 window.fsDisableNetwork = disableNetwork;
 window.fsRunTransaction = runTransaction;
+window.fsAuth = auth;
+window.fsGoogleSignIn = function(){ return signInWithPopup(auth, new GoogleAuthProvider()); };
+window.fsSignOut = function(){ return signOut(auth); };
+window.fsOnAuthStateChanged = function(cb){ return onAuthStateChanged(auth, cb); };
 // Appeler updateUSSD et charger données après que le DOM soit prêt
 window.addEventListener('DOMContentLoaded', function(){
   if(typeof updateUSSD === 'function') updateUSSD();
@@ -380,11 +386,13 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div id="sec-fields" style="display:none;" data-nosnippet>
-        <div class="login-field"><label>Identifiant</label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username"></div>
-        <div class="login-field"><label>Mot de passe</label><div style="position:relative"><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px;width:100%;box-sizing:border-box"><button type="button" onclick="toggleLoginPass()" id="login-eye-btn" style="position:absolute;right:13px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.05rem;padding:0;line-height:1;-webkit-tap-highlight-color:transparent" aria-label="Voir le mot de passe">👁</button></div></div>
+        <div style="text-align:center;padding:6px 0 2px;color:var(--muted);font-size:.8rem;letter-spacing:.3px;">Réservé au personnel Kaffi-Pay</div>
       </div>
 
-      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;" data-nosnippet>🔓 Connexion</button>
+      <button class="login-btn" id="login-main-btn" onclick="doGoogleLogin()" style="display:none;background:linear-gradient(135deg,#4285f4,#1565c0);" data-nosnippet>
+        <svg width="17" height="17" viewBox="0 0 48 48" style="vertical-align:middle;margin-right:6px;flex-shrink:0"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.1 8 3l5.7-5.7C34.5 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 19 12 24 12c3.1 0 5.9 1.1 8 3l5.7-5.7C34.5 6.1 29.6 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 10-.2 13.6-3.2l-6.3-4.8C29.3 37.7 26.8 38 24 38c-5.2 0-9.7-3.1-11.3-7.6L6 35.3C9.4 40.8 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.7l6.3 4.8C41.2 35 44 30 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
+        Se connecter avec Google
+      </button>
       <div class="login-error" id="login-error"></div>
       <div class="login-attempts" id="login-attempts"></div>
     </div>
@@ -829,8 +837,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         </div>
       </div>
       <div class="form-row">
-        <div class="mini-field"><label>Mot de passe</label><input type="password" id="new-agent-pass" placeholder="••••••••"></div>
-        <div class="mini-field"><label>Confirmer</label><input type="password" id="new-agent-pass2" placeholder="••••••••"></div>
+        <div class="mini-field" style="flex:1"><label>Gmail <span style="color:var(--muted);font-weight:400">(compte Google de l'agent)</span></label><input type="email" id="new-agent-gmail" placeholder="agent@gmail.com"></div>
       </div>
       <div class="form-row">
         <div class="mini-field" style="flex:1"><label>Telegram ID <span style="color:var(--muted);font-weight:400">(optionnel — support agent)</span></label><input type="text" id="new-agent-telegram" placeholder="Ex: 123456789"></div>
@@ -969,7 +976,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 // ═══════════════════════════════════════════════════
 // ÉTAT & CONSTANTES
 // ═══════════════════════════════════════════════════
-const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur'}; // hash hex
+const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur', email:'ahmedkaffi99@gmail.com'};
 function _checkPass(p){ return btoa(unescape(encodeURIComponent(p))).split('').map(function(c){return c.charCodeAt(0).toString(16);}).join('')===CREATOR._h; }
 let fails=0, lockedUntil=0, currentUser=null, loginMode='client';
 let mChart=null, dChart=null, bChart=null, currentFilter='tous', lastTxCount=0;
@@ -997,7 +1004,6 @@ function showAdminLogin(){
   document.getElementById('sec-fields').style.display='block';
   document.getElementById('login-main-btn').style.display='block';
   document.getElementById('login-error').style.display='none';
-  setTimeout(()=>document.getElementById('login-user').focus(),100);
 }
 
 // Au chargement : client direct, sauf /admin
@@ -1099,38 +1105,37 @@ function switchLoginMode(mode){ loginMode=mode; }
 
 function handleLoginBtn(){
   if(loginMode==='client'){ showScreen('client'); return; }
-  doLogin();
+  doGoogleLogin();
 }
 
-function toggleLoginPass(){
-  var inp=document.getElementById('login-pass');
-  var btn=document.getElementById('login-eye-btn');
-  if(!inp)return;
-  inp.type=inp.type==='password'?'text':'password';
-  btn.textContent=inp.type==='password'?'👁':'🙈';
+function doGoogleLogin(){
+  if(!window.fsGoogleSignIn){showLoginError('⚠️ Auth non disponible');return;}
+  var btn=document.getElementById('login-main-btn');
+  if(btn){btn.disabled=true;btn.style.opacity='0.7';}
+  window.fsGoogleSignIn().then(function(result){
+    if(btn){btn.disabled=false;btn.style.opacity='';}
+    checkGoogleUser(result.user);
+  }).catch(function(err){
+    if(btn){btn.disabled=false;btn.style.opacity='';}
+    if(err.code==='auth/popup-closed-by-user'||err.code==='auth/cancelled-popup-request') return;
+    showLoginError('❌ Erreur Google : '+err.message);
+  });
 }
-function doLogin(){
-  const now=Date.now();
-  if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
-  const u=document.getElementById('login-user').value.trim();
-  const p=document.getElementById('login-pass').value;
-  if(u===CREATOR.user&&_checkPass(p)){loginSuccess({user:u,role:'Créateur',isCreator:true});return;}
-  const ag=getAgents().find(a=>a.user===u&&a.pass===p);
-  if(ag){loginSuccess({user:u,role:ag.role,isCreator:false});return;}
-  fails++;
-  if(fails>=5){
-    lockedUntil=Date.now()+60000; fails=0;
-    showLoginError('🔒 Trop de tentatives. Bloqué 60s');
-    const iv=setInterval(()=>{
-      const s=Math.ceil((lockedUntil-Date.now())/1000);
-      if(s<=0){clearInterval(iv);document.getElementById('login-attempts').textContent='';document.getElementById('login-error').style.display='none';}
-      else document.getElementById('login-attempts').textContent='Déverrouillage dans '+s+'s';
-    },1000);
+
+function checkGoogleUser(user){
+  if(!user||!user.email){showLoginError('❌ Impossible de récupérer l\'email Google');return;}
+  var email=user.email.toLowerCase().trim();
+  if(email===CREATOR.email){
+    loginSuccess({user:'admin',role:'Créateur',isCreator:true,email:email,displayName:user.displayName||'Admin'});
     return;
   }
-  const r=5-fails;
-  showLoginError('❌ Identifiants incorrects — '+r+' tentative'+(r>1?'s':'')+' restante'+(r>1?'s':''));
-  document.getElementById('login-pass').value='';
+  var ag=getAgents().find(function(a){return a.gmail&&a.gmail.toLowerCase().trim()===email;});
+  if(ag){
+    loginSuccess({user:ag.name,role:ag.role,isCreator:false,email:email,displayName:ag.name});
+    return;
+  }
+  if(window.fsSignOut) window.fsSignOut().catch(function(){});
+  showLoginError('⛔ Accès refusé — email non autorisé');
 }
 
 function showLoginError(m){
@@ -1140,10 +1145,8 @@ function showLoginError(m){
 
 function loginSuccess(u){
   currentUser=u; fails=0;
-  try{ localStorage.setItem('kp_session', JSON.stringify({user:u.user, role:u.role, isCreator:!!u.isCreator})); }catch(e){}
+  try{ localStorage.setItem('kp_session', JSON.stringify({user:u.user, role:u.role, isCreator:!!u.isCreator, email:u.email||''})); }catch(e){}
   document.getElementById('login-error').style.display='none';
-  document.getElementById('login-user').value='';
-  document.getElementById('login-pass').value='';
   document.getElementById('role-badge').textContent=u.role;
   document.getElementById('add-agent-btn-wrap').style.display=u.isCreator?'block':'none';
   showScreen('admin');
@@ -1168,13 +1171,11 @@ function doLogout(){
   currentUser=null;
   loginMode='client';
   try{ localStorage.removeItem('kp_session'); }catch(e){}
-  // Arrêter le listener SMS à la déconnexion
   if(_smsListener){ _smsListener(); _smsListener=null; }
+  if(window.fsSignOut) window.fsSignOut().catch(function(){});
   document.getElementById('sec-fields').style.display='none';
   document.getElementById('login-main-btn').style.display='none';
   document.getElementById('login-error').style.display='none';
-  document.getElementById('login-user').value='';
-  document.getElementById('login-pass').value='';
   showScreen('client');
   showToast('👋 Déconnecté','success');
 }
@@ -2215,9 +2216,10 @@ function renderAgents(){
     grp.forEach(function(a,_){
       var i=all.indexOf(a);
       var tgLine=a.telegramId?`<span style="font-size:.6rem;color:#29a8eb;">Telegram: ${a.telegramId}</span>`:'';
+      var gmLine=a.gmail?`<span style="font-size:.6rem;color:var(--muted);">📧 ${a.gmail}</span>`:'';
       h+=`<div class="agent-item">
         <div class="agent-avatar">${a.name[0].toUpperCase()}</div>
-        <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">login: <code style="font-size:.68rem">${a.user}</code> ${tgLine}</div></div>
+        <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">${gmLine} ${tgLine}</div></div>
         ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
       </div>`;
     });
@@ -2233,22 +2235,20 @@ function toggleAddAgent(){
 function addAgent(){
   const n=document.getElementById('new-agent-name').value.trim();
   const r=document.getElementById('new-agent-role').value;
-  const p=document.getElementById('new-agent-pass').value;
-  const p2=document.getElementById('new-agent-pass2').value;
+  const gm=document.getElementById('new-agent-gmail').value.trim().toLowerCase();
   const tg=document.getElementById('new-agent-telegram').value.trim();
   if(!n){showToast('⚠️ Nom requis','error');return;}
-  if(!p||p.length<6){showToast('⚠️ Mot de passe min. 6 caractères','error');return;}
-  if(p!==p2){showToast('⚠️ Mots de passe différents','error');return;}
-  const ag=getAgents(), u=n.toLowerCase().replace(/\s+/g,'');
-  if(u==='admin'||ag.find(a=>a.user===u)){showToast('⚠️ Utilisateur déjà existant','error');return;}
-  const agentData={name:n,user:u,pass:p,role:r};
+  if(!gm||!gm.includes('@')){showToast('⚠️ Gmail valide requis','error');return;}
+  const ag=getAgents();
+  if(ag.find(function(a){return a.gmail&&a.gmail.toLowerCase()===gm;})){showToast('⚠️ Ce Gmail est déjà utilisé','error');return;}
+  const u=n.toLowerCase().replace(/\s+/g,'');
+  const agentData={name:n,user:u,gmail:gm,role:r};
   if(tg) agentData.telegramId=tg;
   cfAgentAction('add',agentData).then(function(ok){
     if(!ok) return;
     renderAgents();
     document.getElementById('new-agent-name').value='';
-    document.getElementById('new-agent-pass').value='';
-    document.getElementById('new-agent-pass2').value='';
+    document.getElementById('new-agent-gmail').value='';
     document.getElementById('new-agent-telegram').value='';
     document.getElementById('add-agent-form').classList.remove('show');
     showToast('✅ Agent '+n+' ajouté','success');
