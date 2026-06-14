@@ -996,6 +996,34 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 // ÉTAT & CONSTANTES
 // ═══════════════════════════════════════════════════
 const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur', email:'ahmedkaffi99@gmail.com'};
+
+// ─── Matrice de permissions par rôle ───────────────────────────────────────
+const ROLE_PERMS = {
+  'Créateur':               {tabs:['dashboard','orders','reserves','agents','notifs','testapi'], canAction:true,  canDelete:true,  canReserves:true},
+  'Agent de paiement':     {tabs:['orders','notifs','testapi'],                                  canAction:true,  canDelete:false, canReserves:false},
+  'Agent de surveillance': {tabs:['dashboard','orders','reserves','notifs'],                     canAction:false, canDelete:false, canReserves:false},
+  'Agent de support':      {tabs:['orders','notifs'],                                            canAction:false, canDelete:false, canReserves:false},
+};
+function getRolePerms(){
+  if(!currentUser) return {tabs:[], canAction:false, canDelete:false, canReserves:false};
+  return ROLE_PERMS[currentUser.role] || {tabs:['orders','notifs'], canAction:false, canDelete:false, canReserves:false};
+}
+function applyRolePerms(){
+  var perms=getRolePerms();
+  var all=['dashboard','orders','reserves','agents','notifs','testapi'];
+  all.forEach(function(tab){
+    var el=document.getElementById('ntab-'+tab);
+    if(el) el.style.display=(currentUser&&perms.tabs.indexOf(tab)>=0)?'':'none';
+  });
+  // Bouton "Ajouter agent" visible seulement pour créateur
+  var aaw=document.getElementById('add-agent-btn-wrap');
+  if(aaw) aaw.style.display=(currentUser&&currentUser.isCreator)?'block':'none';
+  // Boutons réserves visibles seulement si canReserves
+  var rsb=document.querySelectorAll('.reserve-save-btn');
+  rsb.forEach(function(b){ b.style.display=perms.canReserves?'':'none'; });
+  var ris=document.querySelectorAll('.reserve-input');
+  ris.forEach(function(i){ i.disabled=!perms.canReserves; });
+}
 function _checkPass(p){ return btoa(unescape(encodeURIComponent(p))).split('').map(function(c){return c.charCodeAt(0).toString(16);}).join('')===CREATOR._h; }
 let fails=0, lockedUntil=0, currentUser=null, loginMode='client';
 let mChart=null, dChart=null, bChart=null, currentFilter='tous', lastTxCount=0;
@@ -1267,19 +1295,21 @@ function loginSuccess(u){
   var lu=document.getElementById('login-user');if(lu)lu.value='';
   var lp=document.getElementById('login-pass');if(lp)lp.value='';
   document.getElementById('role-badge').textContent=u.role;
-  document.getElementById('add-agent-btn-wrap').style.display=u.isCreator?'block':'none';
   showScreen('admin');
-  initDashboard();
+  applyRolePerms();
   requestNotifPermission();
-  // Restaurer la page admin depuis le hash URL
+  // Aller sur le premier onglet autorisé
+  var perms=getRolePerms();
+  var firstTab=perms.tabs[0]||'orders';
+  // Restaurer depuis URL si autorisé
   try{
-    var h = window.location.hash;
-    if(h && h.startsWith('#admin-')){
-      var page = h.replace('#admin-','');
-      var validPages = ['dashboard','orders','reserves','agents'];
-      if(validPages.indexOf(page)>=0){ setTimeout(function(){ showPage(page); },300); }
+    var h=window.location.hash;
+    if(h&&h.startsWith('#admin-')){
+      var pg=h.replace('#admin-','');
+      if(perms.tabs.indexOf(pg)>=0) firstTab=pg;
     }
   }catch(e){}
+  setTimeout(function(){ showPage(firstTab); },200);
   // Démarrer l'écoute SMS Waafi automatique
   if(window._firebaseReady || window.firebaseReady){ startSmsListener(); }
   else{ window.addEventListener('firebase-ready', startSmsListener, {once:true}); }
@@ -1292,6 +1322,10 @@ function doLogout(){
   try{ localStorage.removeItem('kp_session'); }catch(e){}
   if(_smsListener){ _smsListener(); _smsListener=null; }
   if(window.fsSignOut) window.fsSignOut().catch(function(){});
+  // Rétablir tous les onglets visibles
+  ['dashboard','orders','reserves','agents','notifs','testapi'].forEach(function(tab){
+    var el=document.getElementById('ntab-'+tab); if(el) el.style.display='';
+  });
   document.getElementById('sec-fields').style.display='none';
   document.getElementById('login-main-btn').style.display='none';
   var sep=document.getElementById('login-or-sep');if(sep)sep.style.display='none';
@@ -2041,6 +2075,11 @@ function openOrderDetail(ref){
   // Actions
   var actDiv=document.getElementById('odm-actions');
   currentOdmRef=tx.ref;
+  if(!getRolePerms().canAction){
+    actDiv.innerHTML='<div style="padding:10px;text-align:center;color:var(--muted);font-size:0.78rem;line-height:1.5;">👁 Consultation seule<br><span style="font-size:0.68rem;">Actions réservées à l\'admin et l\'agent de paiement</span></div>';
+    document.getElementById('order-detail-modal').classList.add('show');
+    return;
+  }
   var isRetraitEnCours = !isDepot && tx.status==='Code Validé';
   if(isRetraitEnCours){
     var waafiNum=(tx.waafiNumber||tx.tel||'').replace(/\s/g,'');
@@ -2276,6 +2315,8 @@ async function testMobcashAPI(type){
 }
 
 function showPage(p){
+  var perms=getRolePerms();
+  if(currentUser&&perms.tabs.indexOf(p)<0){showToast('⛔ Accès non autorisé pour votre rôle','error');return;}
   document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('page-'+p).classList.add('active');
