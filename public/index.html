@@ -2131,27 +2131,11 @@ function openOrderDetail(ref){
       +'</div></div>'
       +'<button onclick="terminerRetrait(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:14px;font-size:0.9rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">✅ Paiement Waafi effectué — Terminer</button>';
   } else if(tx.status==='En attente'){
-    var tsMs2 = tx.ts ? (typeof tx.ts==='object' && tx.ts.toMillis ? tx.ts.toMillis() : Number(tx.ts)) : 0;
-    var ageMs2 = tsMs2 > 0 ? (Date.now() - tsMs2) : 0;
-    var isBlocked = tsMs2 > 0 && ageMs2 > 30 * 60 * 1000;
-    var ageMinutes = tsMs2 > 0 ? Math.round(ageMs2 / 60000) : 0;
-    // DEBUG TEMPORAIRE
-    actDiv.innerHTML = '<div style="font-size:0.68rem;color:#aaa;padding:8px;word-break:break-all;">'
-      +'ts='+JSON.stringify(tx.ts)+'<br>'
-      +'tsMs2='+tsMs2+'<br>'
-      +'ageMs2='+ageMs2+'<br>'
-      +'ageMin='+ageMinutes+'<br>'
-      +'isBlocked='+isBlocked
-      +'</div>';
-    if(isBlocked){
-      var confirmLabel = isDepot ? '✅ Confirmer — Paiement reçu' : '✅ Valider code retrait';
-      actDiv.innerHTML =
-        '<div style="padding:8px 10px;background:rgba(255,96,64,0.1);border:1px solid rgba(255,96,64,0.3);border-radius:8px;margin-bottom:10px;font-size:0.76rem;color:#ff6040;text-align:center;">⏰ En attente depuis <b>'+ageMinutes+' min</b> — intervention manuelle requise</div>'
-        +'<button onclick="adminConfirmerOrdre(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:13px;font-size:0.88rem;font-weight:700;cursor:pointer;margin-bottom:8px;">'+confirmLabel+'</button>'
-        +'<button onclick="adminRejeterOrdre(\''+tx.ref+'\')" style="width:100%;background:rgba(255,64,96,0.12);border:1px solid rgba(255,64,96,0.3);color:#ff4060;border-radius:10px;padding:11px;font-size:0.85rem;font-weight:600;cursor:pointer;">❌ Rejeter l\'ordre</button>';
-    } else {
-      actDiv.innerHTML='<div style="padding:10px;text-align:center;color:var(--success);font-size:0.8rem;width:100%;">🤖 Traitement automatique en cours...</div>';
-    }
+    var confirmLabel2 = isDepot ? '✅ Confirmer — Paiement reçu' : '✅ Valider code retrait';
+    actDiv.innerHTML =
+      '<div style="padding:8px 10px;background:rgba(255,170,0,0.08);border:1px solid rgba(255,170,0,0.25);border-radius:8px;margin-bottom:10px;font-size:0.76rem;color:#ffaa00;text-align:center;">🤖 Traitement auto en cours — intervenez si bloqué</div>'
+      +'<button onclick="adminConfirmerOrdre(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:13px;font-size:0.88rem;font-weight:700;cursor:pointer;margin-bottom:8px;">'+confirmLabel2+'</button>'
+      +'<button onclick="adminRejeterOrdre(\''+tx.ref+'\')" style="width:100%;background:rgba(255,64,96,0.12);border:1px solid rgba(255,64,96,0.3);color:#ff4060;border-radius:10px;padding:11px;font-size:0.85rem;font-weight:600;cursor:pointer;">❌ Rejeter l\'ordre</button>';
   } else if(isDepot && tx.status==='Paiement Reçu' && (tx.webhookStatus==='echec_permanent'||tx.webhookStatus==='echec_max'||tx.webhookStatus==='echec')){
     var currentId = tx.userId1xBet||tx.id1x||'';
     var errHint = tx.webhookStatus==='echec_permanent'
