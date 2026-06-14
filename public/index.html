@@ -381,7 +381,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
       <div id="sec-fields" style="display:none;" data-nosnippet>
         <div class="login-field"><label>Identifiant</label><input type="text" id="login-user" placeholder="Identifiant" autocomplete="username"></div>
-        <div class="login-field"><label>Mot de passe</label><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+        <div class="login-field"><label>Mot de passe</label><div style="position:relative"><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px;width:100%;box-sizing:border-box"><button type="button" onclick="toggleLoginPass()" id="login-eye-btn" style="position:absolute;right:13px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.05rem;padding:0;line-height:1;-webkit-tap-highlight-color:transparent" aria-label="Voir le mot de passe">👁</button></div></div>
       </div>
 
       <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;" data-nosnippet>🔓 Connexion</button>
@@ -1102,6 +1102,13 @@ function handleLoginBtn(){
   doLogin();
 }
 
+function toggleLoginPass(){
+  var inp=document.getElementById('login-pass');
+  var btn=document.getElementById('login-eye-btn');
+  if(!inp)return;
+  inp.type=inp.type==='password'?'text':'password';
+  btn.textContent=inp.type==='password'?'👁':'🙈';
+}
 function doLogin(){
   const now=Date.now();
   if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
@@ -3515,6 +3522,7 @@ try {
   if(typeof copyPromo!=="undefined") window.copyPromo=copyPromo;
   if(typeof deleteAgent!=="undefined") window.deleteAgent=deleteAgent;
   if(typeof doLogin!=="undefined") window.doLogin=doLogin;
+  if(typeof toggleLoginPass!=="undefined") window.toggleLoginPass=toggleLoginPass;
   if(typeof doLogout!=="undefined") window.doLogout=doLogout;
   if(typeof executerPaiementWaafi!=="undefined") window.executerPaiementWaafi=executerPaiementWaafi;
   if(typeof exportCSV!=="undefined") window.exportCSV=exportCSV;
