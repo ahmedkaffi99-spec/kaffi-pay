@@ -391,7 +391,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div id="sec-fields" style="display:none;" data-nosnippet>
-        <div class="login-field"><label>Identifiant / Email</label><input type="text" id="login-user" placeholder="admin  ou  email@agent.com" autocomplete="username"></div>
+        <div class="login-field"><label>Email</label><input type="email" id="login-user" placeholder="votre@email.com" autocomplete="email"></div>
         <div class="login-field"><label>Mot de passe</label><div style="position:relative"><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px;width:100%;box-sizing:border-box"><button type="button" onclick="toggleLoginPass()" id="login-eye-btn" style="position:absolute;right:13px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.05rem;padding:0;line-height:1;-webkit-tap-highlight-color:transparent" aria-label="Voir le mot de passe">👁</button></div></div>
       </div>
 
@@ -1140,25 +1140,29 @@ function toggleLoginPass(){
 function doLogin(){
   const now=Date.now();
   if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
-  const u=document.getElementById('login-user').value.trim();
+  const em=document.getElementById('login-user').value.trim().toLowerCase();
   const p=document.getElementById('login-pass').value;
-  // Admin : identifiant + mot de passe (vérification locale)
-  if(u===CREATOR.user&&_checkPass(p)){loginSuccess({user:u,role:'Créateur',isCreator:true});return;}
-  // Agents : email + mot de passe via Firebase Auth
+  if(!em||!p){showLoginError('⚠️ Email et mot de passe requis');return;}
   if(!window.fsSignInEmail){showLoginError('❌ Auth non disponible');return;}
   var btn=document.getElementById('login-main-btn');
   if(btn){btn.disabled=true;btn.style.opacity='0.7';}
-  window.fsSignInEmail(u, p).then(function(result){
+  window.fsSignInEmail(em, p).then(function(result){
     if(btn){btn.disabled=false;btn.style.opacity='';}
     var email=result.user.email.toLowerCase();
-    var ag=getAgents().find(function(a){return a.email&&a.email.toLowerCase()===email;});
+    // Admin
+    if(email===CREATOR.email){
+      loginSuccess({user:'admin',role:'Créateur',isCreator:true,email:email});
+      return;
+    }
+    // Agent
+    var ag=getAgents().find(function(a){return (a.email&&a.email.toLowerCase()===email)||(a.gmail&&a.gmail.toLowerCase()===email);});
     if(ag){
       loginSuccess({user:ag.name,role:ag.role,isCreator:false,email:email});
     } else {
       if(window.fsSignOut) window.fsSignOut().catch(function(){});
       _loginFail();
     }
-  }).catch(function(){
+  }).catch(function(err){
     if(btn){btn.disabled=false;btn.style.opacity='';}
     _loginFail();
   });
