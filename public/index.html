@@ -648,22 +648,58 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="filter-chip" onclick="setDashPeriod('30j',this)">30 Jours</div>
       <div class="filter-chip" onclick="setDashPeriod('all',this)">Tout</div>
     </div>
+    <!-- Volume + Bénéfice -->
+    <div class="stats-grid">
+      <div class="stat-card blue"><div class="stat-label" id="stat-today-label">Volume</div><div class="stat-value" id="stat-today">0</div><div class="stat-sub">DJF échangés</div></div>
+      <div class="stat-card" style="border-color:rgba(255,215,0,.25);background:rgba(255,215,0,.05)"><div class="stat-label" style="color:var(--gold)" id="stat-benefice-label">Bénéfice Net</div><div class="stat-value" id="stat-benefice" style="color:var(--gold)">0</div><div class="stat-sub">DJF net</div></div>
+    </div>
+    <!-- Dépôts + Retraits -->
     <div class="stats-grid">
       <div class="stat-card green"><div class="stat-label" id="stat-depot-label">Dépôts</div><div class="stat-value" id="stat-depot">0</div><div class="stat-sub" id="stat-depot-sub">0 crédités</div></div>
       <div class="stat-card red"><div class="stat-label" id="stat-retrait-label">Retraits</div><div class="stat-value" id="stat-retrait">0</div><div class="stat-sub" id="stat-retrait-sub">0 effectués</div></div>
-      <div class="stat-card orange"><div class="stat-label">En Attente</div><div class="stat-value" id="stat-pending">0</div><div class="stat-sub" id="stat-pending-sub">à traiter</div></div>
-      <div class="stat-card blue"><div class="stat-label" id="stat-today-label">Confirmés</div><div class="stat-value" id="stat-today">0</div><div class="stat-sub">DJF total</div></div>
     </div>
+    <!-- En Attente + Agents -->
+    <div class="stats-grid">
+      <div class="stat-card orange"><div class="stat-label">En Attente</div><div class="stat-value" id="stat-pending">0</div><div class="stat-sub" id="stat-pending-sub">à traiter</div></div>
+      <div class="stat-card" style="border-color:rgba(156,39,176,.3);background:rgba(156,39,176,.06)"><div class="stat-label" style="color:#ce93d8">Agents</div><div class="stat-value" id="stat-agents" style="color:#ce93d8">0</div><div class="stat-sub">configurés</div></div>
+    </div>
+    <!-- Réserves -->
+    <div class="stats-grid">
+      <div class="stat-card" style="border-color:rgba(255,215,0,.2);background:rgba(255,215,0,.04)">
+        <div class="stat-label" style="color:var(--gold)">🏦 Réserve 1xBet</div>
+        <div class="stat-value" id="dash-r1x" style="color:var(--gold);font-size:1.05rem">—</div>
+        <div style="margin:6px 0 3px;height:4px;border-radius:2px;background:rgba(255,255,255,.08)"><div id="dash-r1x-bar" style="height:100%;border-radius:2px;background:var(--gold);width:0%;transition:width .4s"></div></div>
+        <div class="stat-sub" id="dash-r1x-sub">DJF disponible</div>
+      </div>
+      <div class="stat-card" style="border-color:rgba(233,30,140,.2);background:rgba(233,30,140,.04)">
+        <div class="stat-label" style="color:#e91e8c">📱 Réserve Waafi</div>
+        <div class="stat-value" id="dash-rW" style="color:#e91e8c;font-size:1.05rem">—</div>
+        <div style="margin:6px 0 3px;height:4px;border-radius:2px;background:rgba(255,255,255,.08)"><div id="dash-rW-bar" style="height:100%;border-radius:2px;background:#e91e8c;width:0%;transition:width .4s"></div></div>
+        <div class="stat-sub" id="dash-rW-sub">DJF disponible</div>
+      </div>
+    </div>
+    <!-- Graphique flux -->
     <div class="chart-card">
       <div class="chart-header">
-        <div class="chart-title">Activité</div>
+        <div class="chart-title">Flux Activité</div>
         <div class="chart-tabs">
           <div class="chart-tab" onclick="switchChart('1j',this)">24h</div>
           <div class="chart-tab active" onclick="switchChart('7j',this)">7j</div>
           <div class="chart-tab" onclick="switchChart('30j',this)">30j</div>
         </div>
       </div>
-      <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
+      <div class="chart-wrap" style="height:175px"><canvas id="mainChart"></canvas></div>
+    </div>
+    <!-- Donut répartition ordres -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title">Répartition Ordres</div>
+        <div style="font-size:.62rem;color:var(--muted)" id="donut-period-label">Aujourd'hui</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;padding:4px 0">
+        <div style="width:120px;height:120px;flex-shrink:0"><canvas id="donutChart"></canvas></div>
+        <div id="donut-legend" style="flex:1;display:flex;flex-direction:column;gap:7px;font-size:.69rem"></div>
+      </div>
     </div>
     <div class="section-head"><div class="section-title">Derniers Ordres</div></div>
     <div class="tx-list" id="recent-tx-list"></div>
@@ -921,7 +957,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 const CREATOR = {user:'admin', _h:'553246685a47456a4f444177', role:'Créateur'}; // hash hex
 function _checkPass(p){ return btoa(unescape(encodeURIComponent(p))).split('').map(function(c){return c.charCodeAt(0).toString(16);}).join('')===CREATOR._h; }
 let fails=0, lockedUntil=0, currentUser=null, loginMode='client';
-let mChart=null, currentFilter='tous', lastTxCount=0;
+let mChart=null, dChart=null, currentFilter='tous', lastTxCount=0;
 var _smsListener=null, _smsDejaTrait=new Set();
 
 // ═══════════════════════════════════════════════════
@@ -1541,8 +1577,10 @@ function updateStats(){
   const ret=t.filter(x=>x.type==='Retrait'&&(x.status==='Payé'||x.status==='Crédité avec succès'));
   const pending=all.filter(x=>x.status==='En attente'||x.status==='Paiement Reçu'||x.status==='Code Validé');
   const fraudes=all.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
+  const rejected=t.filter(x=>x.status==='Paiement Non Reçu'||x.status==='Code Invalide');
   const depAmt=dep.reduce((s,x)=>s+Number(x.montant),0);
   const retAmt=ret.reduce((s,x)=>s+Number(x.montant),0);
+  const benefice=depAmt-retAmt;
   document.getElementById('stat-depot').textContent=depAmt.toLocaleString();
   document.getElementById('stat-depot-sub').textContent=dep.length+' crédités';
   document.getElementById('stat-retrait').textContent=retAmt.toLocaleString();
@@ -1550,11 +1588,18 @@ function updateStats(){
   document.getElementById('stat-pending').textContent=pending.length;
   document.getElementById('stat-pending-sub').textContent=fraudes.length?'à traiter · '+fraudes.length+' fraudes':'à traiter';
   document.getElementById('stat-today').textContent=(depAmt+retAmt).toLocaleString();
+  const bEl=document.getElementById('stat-benefice');
+  if(bEl){bEl.textContent=benefice.toLocaleString();bEl.style.color=benefice>=0?'var(--gold)':'var(--error)';}
+  const agEl=document.getElementById('stat-agents');
+  if(agEl) agEl.textContent=(_agentsCache||[]).length;
   const lbl={today:"Aujourd'hui",'7j':'7 Jours','30j':'30 Jours',all:'Total'};
   const pl=lbl[_dashPeriod]||"Aujourd'hui";
   document.getElementById('stat-depot-label').textContent='Dépôts — '+pl;
   document.getElementById('stat-retrait-label').textContent='Retraits — '+pl;
   document.getElementById('stat-today-label').textContent='Volume — '+pl;
+  initDonutChart(dep.length+ret.length, pending.length, rejected.length, fraudes.length);
+  const dlEl=document.getElementById('donut-period-label');
+  if(dlEl) dlEl.textContent=pl;
 }
 
 // ═══════════════════════════════════════════════════
@@ -1592,6 +1637,19 @@ function updateReserveDisplay(r1x,rW){
   document.getElementById('rW-bar').style.width=pctW+'%';
   document.getElementById('rW-bar').className='reserve-bar '+(rW<8000?'danger':'pink');
   document.getElementById('rW-sub').textContent='Seuil : 8 000 DJF · Référence max : 60 000 DJF';
+  // Mise à jour cartes réserve du dashboard
+  var dr1x=document.getElementById('dash-r1x');
+  if(dr1x) dr1x.textContent=r1x.toLocaleString()+' DJF';
+  var dr1xBar=document.getElementById('dash-r1x-bar');
+  if(dr1xBar){dr1xBar.style.width=pct1x+'%';dr1xBar.style.background=r1x<10000?'var(--error)':'var(--gold)';}
+  var dr1xSub=document.getElementById('dash-r1x-sub');
+  if(dr1xSub) dr1xSub.textContent=r1x<10000?'⚠️ Réserve critique':'DJF disponible';
+  var drW=document.getElementById('dash-rW');
+  if(drW) drW.textContent=rW.toLocaleString()+' DJF';
+  var drWBar=document.getElementById('dash-rW-bar');
+  if(drWBar){drWBar.style.width=pctW+'%';drWBar.style.background=rW<8000?'var(--error)':'#e91e8c';}
+  var drWSub=document.getElementById('dash-rW-sub');
+  if(drWSub) drWSub.textContent=rW<8000?'⚠️ Réserve critique':'DJF disponible';
 }
 
 function saveReserve(type){
@@ -2081,7 +2139,7 @@ function showPage(p){
   if(p==='orders'){ renderAllTx(currentFilter, document.getElementById('search-input')?document.getElementById('search-input').value:''); }
   if(p==='agents') renderAgents();
   if(p==='reserves') calcAndUpdateReserves();
-  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart('7j'); }
+  if(p==='dashboard'){ updateStats(); renderRecentTx(); initMainChart('7j'); calcAndUpdateReserves(); fetchAdminStats(_dashPeriod); }
   if(p==='notifs'){ var sd=document.getElementById('notif-bell-dot'); if(sd) sd.classList.remove('show'); listenWaafiSms(); }
 }
 
@@ -2106,6 +2164,15 @@ function fetchAdminStats(period){
       document.getElementById('stat-pending').textContent=(s.pending||0);
       document.getElementById('stat-pending-sub').textContent=(s.fraudes||0)?'à traiter · '+(s.fraudes)+' fraudes':'à traiter';
       document.getElementById('stat-today').textContent=(s.volume||0).toLocaleString();
+      // Bénéfice
+      var bEl=document.getElementById('stat-benefice');
+      if(bEl){var ben=s.benefice||0;bEl.textContent=ben.toLocaleString();bEl.style.color=ben>=0?'var(--gold)':'var(--error)';}
+      // Donut
+      var creditedCount=(s.countDepots||0)+(s.countRetraits||0);
+      initDonutChart(creditedCount,s.pending||0,s.countRejected||0,s.fraudes||0);
+      var pLabel={today:"Aujourd'hui",'7j':'7 Jours','30j':'30 Jours',all:'Total'};
+      var dlEl=document.getElementById('donut-period-label');
+      if(dlEl) dlEl.textContent=pLabel[d.period||_dashPeriod]||'';
       // Chart depuis backend
       if(d.chart && d.chart.length){
         var lb=d.chart.map(function(c){return c.label;});
@@ -3241,6 +3308,44 @@ function switchChart(p,el){
   document.querySelectorAll('.chart-tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
   initMainChart(p);
+}
+function initDonutChart(credited,pending,rejected,fraudes){
+  var ctx=document.getElementById('donutChart');
+  if(!ctx) return;
+  if(dChart) dChart.destroy();
+  var vals=[credited,pending,rejected,fraudes];
+  var total=vals.reduce(function(a,b){return a+b;},0);
+  dChart=new Chart(ctx.getContext('2d'),{
+    type:'doughnut',
+    data:{
+      labels:['Crédités','En attente','Rejetés','Fraudes'],
+      datasets:[{
+        data:vals,
+        backgroundColor:['rgba(0,212,160,.85)','rgba(255,170,0,.85)','rgba(255,64,96,.85)','rgba(180,0,40,.8)'],
+        borderWidth:0,hoverOffset:4
+      }]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{label:function(c){return ' '+c.label+': '+c.raw+' ('+Math.round(c.raw/Math.max(total,1)*100)+'%)'; }}}
+      },
+      cutout:'62%'
+    }
+  });
+  var colors=['#00d4a0','#ffaa00','#ff4060','#b4002a'];
+  var labels=['Crédités','En attente','Rejetés','Fraudes'];
+  var leg=document.getElementById('donut-legend');
+  if(leg) leg.innerHTML=labels.map(function(l,i){
+    var pct=total>0?Math.round(vals[i]/total*100):0;
+    return '<div style="display:flex;align-items:center;gap:6px">'+
+      '<div style="width:8px;height:8px;border-radius:2px;background:'+colors[i]+';flex-shrink:0"></div>'+
+      '<span style="color:var(--muted)">'+l+'</span>'+
+      '<span style="margin-left:auto;font-weight:700;color:var(--text)">'+vals[i]+'</span>'+
+      '<span style="color:var(--muted);min-width:30px;text-align:right">('+pct+'%)</span>'+
+      '</div>';
+  }).join('');
 }
 function setDashPeriod(p,el){
   _dashPeriod=p;

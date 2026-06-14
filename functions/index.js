@@ -2847,8 +2847,9 @@ exports.adminStats = onRequest(
 
       const confDep = depots.filter(x => x.status === "Crédité avec succès");
       const confRet = retraits.filter(x => x.status === "Payé" || x.status === "Crédité avec succès");
-      const pending = all.filter(x => ["En attente","Paiement Reçu","Code Validé"].includes(x.status));
-      const fraudes = all.filter(x => x.fraudType || (x.flagRaison && x.flagRaison.toUpperCase().includes("FRAUDE")));
+      const pending  = all.filter(x => ["En attente","Paiement Reçu","Code Validé"].includes(x.status));
+      const fraudes  = all.filter(x => x.fraudType || (x.flagRaison && x.flagRaison.toUpperCase().includes("FRAUDE")));
+      const rejected = all.filter(x => x.status === "Paiement Non Reçu" || x.status === "Code Invalide");
 
       const totalDep = confDep.reduce((s, x) => s + Number(x.montant || 0), 0);
       const totalRet = confRet.reduce((s, x) => s + Number(x.montant || 0), 0);
@@ -2874,13 +2875,16 @@ exports.adminStats = onRequest(
       res.json({
         ok: true, period,
         stats: {
-          totalDepots:  totalDep,
-          countDepots:  confDep.length,
+          totalDepots:   totalDep,
+          countDepots:   confDep.length,
           totalRetraits: totalRet,
           countRetraits: confRet.length,
-          pending:  pending.length,
-          fraudes:  fraudes.length,
-          volume:   totalDep + totalRet,
+          pending:       pending.length,
+          fraudes:       fraudes.length,
+          countRejected: rejected.length,
+          countCredited: confDep.length + confRet.length,
+          volume:        totalDep + totalRet,
+          benefice:      totalDep - totalRet,
         },
         chart,
       });
