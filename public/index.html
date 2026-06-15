@@ -668,7 +668,9 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   <div class="page-section active" id="page-dashboard">
     <div class="order-filter" style="margin-bottom:10px;">
       <div class="filter-chip active" onclick="setDashPeriod('today',this)">📅 Aujourd'hui</div>
+      <div class="filter-chip" onclick="setDashPeriod('hier',this)">Hier</div>
       <div class="filter-chip" onclick="setDashPeriod('7j',this)">7 Jours</div>
+      <div class="filter-chip" onclick="setDashPeriod('mois',this)">Mois</div>
       <div class="filter-chip" onclick="setDashPeriod('30j',this)">30 Jours</div>
       <div class="filter-chip" onclick="setDashPeriod('all',this)">Tout</div>
     </div>
@@ -1421,10 +1423,13 @@ var _txsCache = [];
 var _agentsCache = [];
 var _reservesCache = {r1x:0,rW:0,r1x_base:0,rW_base:0,r1x_dep_offset:0,r1x_ret_offset:0,rW_dep_offset:0,rW_ret_offset:0};
 var _dashPeriod = 'today';
+var _dashStatsSeq = 0;
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function filterTxByPeriod(txs,period){
   if(period==='all') return txs;
   if(period==='today'){ const s=isoDate(new Date()); return txs.filter(x=>x.date&&x.date.startsWith(s)); }
+  if(period==='hier'){ const y=new Date(); y.setDate(y.getDate()-1); const s=isoDate(y); return txs.filter(x=>x.date&&x.date.startsWith(s)); }
+  if(period==='mois'){ const s=isoDate(new Date()).slice(0,7); return txs.filter(x=>x.date&&x.date.slice(0,7)===s); }
   const days=period==='7j'?7:30;
   const cut=new Date(); cut.setDate(cut.getDate()-days+1); const cs=isoDate(cut);
   return txs.filter(x=>x.date&&x.date.slice(0,10)>=cs);
@@ -1834,7 +1839,7 @@ function updateStats(){
   if(bEl){bEl.textContent=benefice.toLocaleString();bEl.style.color=benefice>=0?'var(--gold)':'var(--error)';}
   const agEl=document.getElementById('stat-agents');
   if(agEl) agEl.textContent=(_agentsCache||[]).length;
-  const lbl={today:"Aujourd'hui",'7j':'7 Jours','30j':'30 Jours',all:'Total'};
+  const lbl={today:"Aujourd'hui",hier:'Hier','7j':'7 Jours',mois:'Ce Mois','30j':'30 Jours',all:'Total'};
   const pl=lbl[_dashPeriod]||"Aujourd'hui";
   document.getElementById('stat-depot-label').textContent='Dépôts — '+pl;
   document.getElementById('stat-retrait-label').textContent='Retraits — '+pl;
@@ -2487,9 +2492,11 @@ function initDashboard(){
   fetchAdminStats(_dashPeriod);
 }
 function fetchAdminStats(period){
+  var seq = ++_dashStatsSeq;
   fetch(CF_BASE+'/adminStats?period='+(period||'today')+'&_ak='+getAdminKey())
     .then(function(r){ return r.json(); })
     .then(function(d){
+      if(seq !== _dashStatsSeq) return; // stale response — period has changed
       if(!d.ok) return;
       var s=d.stats;
       document.getElementById('stat-depot').textContent=(s.totalDepots||0).toLocaleString();
@@ -2505,7 +2512,7 @@ function fetchAdminStats(period){
       // Donut
       var creditedCount=(s.countDepots||0)+(s.countRetraits||0);
       initDonutChart(creditedCount,s.pending||0,s.countRejected||0,s.fraudes||0);
-      var pLabel={today:"Aujourd'hui",'7j':'7 Jours','30j':'30 Jours',all:'Total'};
+      var pLabel={today:"Aujourd'hui",hier:'Hier','7j':'7 Jours',mois:'Ce Mois','30j':'30 Jours',all:'Total'};
       var dlEl=document.getElementById('donut-period-label');
       if(dlEl) dlEl.textContent=pLabel[d.period||_dashPeriod]||'';
     })
@@ -3838,7 +3845,9 @@ function setDashPeriod(p,el){
   if(el) el.classList.add('active');
   updateStats();
   renderRecentTx();
-  if(p!=='all') fetchAdminStats(p);
+  if(typeof initMainChart==='function') initMainChart(_chartTf||'1D');
+  // Only call CF for periods it understands; local filter handles 'hier' and 'mois'
+  if(['today','7j','30j'].indexOf(p)>=0) fetchAdminStats(p);
 }
 
 // Expose all functions to window (required for type=module)
