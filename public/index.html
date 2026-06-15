@@ -2063,11 +2063,10 @@ function adminCopy(btn, val){
 function openOrderDetail(ref){
   try{
   var sref=String(ref||'');
-  showToast('🔍 ref='+sref+' | cache='+getTxs().length,'warning');
   var tx=getTxs().find(function(t){
     return String(t.ref||'')===sref||String(t.orderId||'')===sref||String(t._fid||'')===sref;
   });
-  if(!tx || !sref){ showToast('❌ ordre introuvable ref='+sref,'error'); return; }
+  if(!tx || !sref){ return; }
   var isDepot=tx.type==='Dépôt';
   var modal=document.getElementById('order-detail-modal');
 
@@ -3829,6 +3828,15 @@ try {
   if(typeof switchTab!=="undefined") window.switchTab=switchTab;
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
+  // Fonctions modal ordres
+  if(typeof adminConfirmerOrdre!=="undefined") window.adminConfirmerOrdre=adminConfirmerOrdre;
+  if(typeof adminRejeterOrdre!=="undefined") window.adminRejeterOrdre=adminRejeterOrdre;
+  if(typeof terminerRetrait!=="undefined") window.terminerRetrait=terminerRetrait;
+  if(typeof odmClose!=="undefined") window.odmClose=odmClose;
+  if(typeof adminRetryDeposit!=="undefined") window.adminRetryDeposit=adminRetryDeposit;
+  if(typeof annulerOrdre!=="undefined") window.annulerOrdre=annulerOrdre;
+  if(typeof showSuivi!=="undefined") window.showSuivi=showSuivi;
+  if(typeof openOrderDetail!=="undefined") window.openOrderDetail=openOrderDetail;
 } catch(e) {}
 
 // Event delegation — click sur ordre (contourne les limites du type=module)
