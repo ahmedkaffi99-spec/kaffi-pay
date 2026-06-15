@@ -598,7 +598,10 @@ async function sendWhatsApp(phone, message) {
     return { ok: false, reason: "missing_config" };
   }
   try {
-    const chatId = phone.replace(/\D/g, "") + "@c.us";
+    const digits = phone.replace(/\D/g, "");
+    // Green API instance is Djibouti (+253) — use local 8-digit format
+    const localNum = (digits.startsWith("253") && digits.length >= 10) ? digits.slice(3) : digits;
+    const chatId = localNum + "@c.us";
     const apiUrl = `https://${instanceId.toString().slice(0,4)}.api.greenapi.com/waInstance${instanceId}/sendMessage/${token}`;
     const resp = await fetch(apiUrl, {
       method: "POST",
@@ -607,8 +610,8 @@ async function sendWhatsApp(phone, message) {
       signal: AbortSignal.timeout(30000),
     });
     const json = await resp.json().catch(() => ({}));
-    if (!resp.ok || json.status === false) {
-      console.warn("Green API error:", resp.status, json);
+    if (!resp.ok || json.error) {
+      console.error("Green API error:", resp.status, JSON.stringify(json), "chatId:", chatId);
       return { ok: false, status: resp.status, body: json };
     }
     return { ok: true, body: json };
