@@ -1109,8 +1109,30 @@ function checkURLAdmin(){
       loginSuccess(_saved);
       return;
     }
+    // Token URL valide mais pas de session locale — vérifier Firebase Auth
     showAdminLogin();
     document.getElementById('screen-login').style.opacity='1';
+    function _autoRestoreSession(){
+      if(!window.fsOnAuthStateChanged) return;
+      var unsub = window.fsOnAuthStateChanged(function(fbUser){
+        try{ unsub && unsub(); }catch(e){}
+        if(!fbUser) return;
+        var email = (fbUser.email||'').toLowerCase();
+        if(email===CREATOR.email){
+          loginSuccess({user:CREATOR.user, role:CREATOR.role, isCreator:true, email:email});
+          return;
+        }
+        // Chercher dans les agents Firestore
+        if(!window.db||!window.fsGetDoc||!window.fsDoc) return;
+        window.fsGetDoc(window.fsDoc(window.db,'config','agents')).then(function(snap){
+          var agents=(snap.exists()?(snap.data().list||[]):[]);
+          var ag=agents.find(function(a){ return a.email&&a.email.toLowerCase()===email; });
+          if(ag) loginSuccess({user:ag.name, role:ag.role, isCreator:false, email:email});
+        }).catch(function(){});
+      });
+    }
+    if(window.db && window.fsOnAuthStateChanged){ _autoRestoreSession(); }
+    else { window.addEventListener('firebase-ready', _autoRestoreSession, {once:true}); }
   } else if(hash.startsWith('#suivi-')){
     // Restaurer la page suivi après refresh
     window._pendingSuiviRef = decodeURIComponent(hash.replace('#suivi-',''));
