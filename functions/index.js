@@ -40,7 +40,8 @@ const TELEGRAM_TOKEN    = defineSecret("TELEGRAM_TOKEN");
 const TELEGRAM_ADMIN_ID = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
 const MACRO_SECRET      = defineSecret("MACRODROID_SECRET"); // smsWebhook auth only
 const SUPPORT_BOT_TOKEN  = defineSecret("SUPPORT_BOT_TOKEN");
-const FONNTE_TOKEN       = defineSecret("FONNTE_TOKEN");
+const GREEN_API_ID    = defineSecret("GREEN_API_ID");
+const GREEN_API_TOKEN = defineSecret("GREEN_API_TOKEN");
 const MOBCASH_HASH       = defineSecret("MOBCASH_HASH");
 const MOBCASH_CASHIERPASS = defineSecret("MOBCASH_CASHIERPASS");
 const MOBCASH_CASHDESKID = defineSecret("MOBCASH_CASHDESKID");
@@ -590,21 +591,24 @@ async function copyTelegramMsg(token, toChatId, fromChatId, messageId, caption) 
 }
 
 async function sendWhatsApp(phone, message) {
-  const token = FONNTE_TOKEN.value();
-  if (!token || !phone) {
-    console.warn("WhatsApp skipped: missing config or phone", { token: !!token, phone: !!phone });
+  const instanceId = GREEN_API_ID.value();
+  const token = GREEN_API_TOKEN.value();
+  if (!instanceId || !token || !phone) {
+    console.warn("WhatsApp skipped: missing config or phone", { instanceId: !!instanceId, token: !!token, phone: !!phone });
     return { ok: false, reason: "missing_config" };
   }
   try {
-    const resp = await fetch("https://api.fonnte.com/send", {
+    const chatId = phone.replace(/\D/g, "") + "@c.us";
+    const apiUrl = `https://${instanceId.toString().slice(0,4)}.api.greenapi.com/waInstance${instanceId}/sendMessage/${token}`;
+    const resp = await fetch(apiUrl, {
       method: "POST",
-      headers: { "Authorization": token, "Content-Type": "application/json" },
-      body: JSON.stringify({ target: phone, message }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chatId, message }),
       signal: AbortSignal.timeout(30000),
     });
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok || json.status === false) {
-      console.warn("Fonnte error:", resp.status, json);
+      console.warn("Green API error:", resp.status, json);
       return { ok: false, status: resp.status, body: json };
     }
     return { ok: true, body: json };
@@ -654,7 +658,7 @@ function extractNumClient(text, own = "77275572") {
 exports.onNouvelDepot = onDocumentCreated(
   {
     document: "depot_orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
@@ -875,7 +879,7 @@ exports.onNouvelDepot = onDocumentCreated(
 exports.onNouvelRetrait = onDocumentCreated(
   {
     document: "retrait_orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
@@ -1011,7 +1015,7 @@ exports.onNouvelRetrait = onDocumentCreated(
 exports.onDepotUpdated = onDocumentUpdated(
   {
     document: "depot_orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN],
     timeoutSeconds: 60,
   },
@@ -1137,7 +1141,7 @@ exports.onDepotUpdated = onDocumentUpdated(
 exports.onRetraitUpdated = onDocumentUpdated(
   {
     document: "retrait_orders/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN],
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN],
     timeoutSeconds: 30,
   },
   async (event) => {
@@ -1191,7 +1195,7 @@ exports.onRetraitUpdated = onDocumentUpdated(
 // ══════════════════════════════════════════════════════════════════
 exports.ordresBloques = onSchedule(
   { schedule: "every 5 minutes", region: REGION, timeoutSeconds: 120,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN,
               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN] },
   async () => {
     const token   = TELEGRAM_TOKEN.value();
@@ -1500,7 +1504,7 @@ exports.onNouvelleNotifWaafi = onDocumentCreated(
 // confirme directement (ordre soumis avant l'arrivée du SMS).
 // ══════════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
-  { region: REGION, invoker: "public", secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN] },
+  { region: REGION, invoker: "public", secrets: [MACRO_SECRET, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1635,10 +1639,10 @@ exports.testMobcash = onRequest(
 );
 
 // HTTP — WHATSAPP RECAP (appelé par le bouton "Recevoir les détails")
-// Envoie automatiquement via Fonnte — pas de wa.me manuel.
+// Envoie automatiquement via Green API (WhatsApp).
 // ══════════════════════════════════════════════════════════════════
 exports.waRecap = onRequest(
-  { region: REGION, invoker: "public", secrets: [FONNTE_TOKEN] },
+  { region: REGION, invoker: "public", secrets: [GREEN_API_ID, GREEN_API_TOKEN] },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1705,7 +1709,7 @@ exports.waRecap = onRequest(
 // Flux simple : client donne numéro d'ordre → Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
 exports.supportClient = onRequest(
-  { region: REGION, invoker: "public", secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, FONNTE_TOKEN,
+  { region: REGION, invoker: "public", secrets: [SUPPORT_BOT_TOKEN, TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN,
                               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
@@ -2340,7 +2344,7 @@ exports.supportClient = onRequest(
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
   { region: REGION, invoker: "public", secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, SUPPORT_BOT_TOKEN, MACRO_SECRET,
-                              FONNTE_TOKEN,
+                              GREEN_API_ID, GREEN_API_TOKEN,
                               MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN], timeoutSeconds: 60 },
   async (req, res) => {
     res.status(200).send("OK");
@@ -2580,24 +2584,25 @@ exports.adminBot = onRequest(
         return;
       }
 
-      // test whatsapp — diagnostic Fonnte
+      // test whatsapp — diagnostic Green API
       if (t.startsWith("test whatsapp")) {
         const numMatch = text.match(/(\+?\d{8,15})/);
         if (!numMatch) { await sendTelegram(token, replyId, "Usage: <code>test whatsapp +25377XXXXXX</code>"); return; }
-        const fonnteToken = FONNTE_TOKEN.value();
-        if (!fonnteToken) {
+        const greenId = GREEN_API_ID.value();
+        const greenTok = GREEN_API_TOKEN.value();
+        if (!greenId || !greenTok) {
           await sendTelegram(token, replyId,
-            "❌ Secret Fonnte manquant :\n• FONNTE_TOKEN : ❌ non défini");
+            "❌ Secrets Green API manquants :\n• GREEN_API_ID : " + (greenId ? "✅" : "❌") + "\n• GREEN_API_TOKEN : " + (greenTok ? "✅" : "❌"));
           return;
         }
         await sendTelegram(token, replyId,
-          `🔍 <b>Diagnostic WhatsApp (Fonnte)</b>\n` +
-          `Token (5 premiers car.) : <code>${fonnteToken.slice(0,5)}…</code>\n\n` +
+          `🔍 <b>Diagnostic WhatsApp (Green API)</b>\n` +
+          `Instance : <code>${greenId}</code>\n\n` +
           `📤 Envoi test vers <code>${numMatch[1]}</code>…`);
         const result = await sendWhatsApp(numMatch[1], "✅ Test Kaffi-Pay — WhatsApp fonctionne !");
         if (result && result.ok) {
           await sendTelegram(token, replyId,
-            `✅ <b>Message envoyé avec succès !</b>\nRéponse Fonnte : <code>${JSON.stringify(result.body).slice(0,300)}</code>`);
+            `✅ <b>Message envoyé avec succès !</b>\nRéponse Green API : <code>${JSON.stringify(result.body).slice(0,300)}</code>`);
         } else {
           await sendTelegram(token, replyId,
             `❌ <b>Échec envoi</b>\nHTTP status : <code>${result?.status || "N/A"}</code>\n` +
