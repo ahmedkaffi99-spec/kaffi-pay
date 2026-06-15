@@ -1090,8 +1090,18 @@ function checkURLAdmin(){
   var _saved = null;
   try{ _saved = JSON.parse(localStorage.getItem('kp_session')); }catch(e){}
 
-  // Accès admin : URL secrète ?kp=9f3aXmQ7 uniquement (ou session active)
-  var isAdmin = params.get('kp') === '9f3aXmQ7';
+  // Accès admin : URL secrète ?kp=TOKEN — 7 tokens uniques (1 par personne)
+  // Créateur : 9f3aXmQ7 | Agents : kA1-kA6 (modifier pour révoquer un accès)
+  var KP_TOKENS = [
+    '9f3aXmQ7',  // Créateur
+    'kA1Bx9mP',  // Agent 1
+    'kA2Ry7nV',  // Agent 2
+    'kA3Tz5wQ',  // Agent 3
+    'kA4Gv3kL',  // Agent 4
+    'kA5Hm8pX',  // Agent 5
+    'kA6Jc2fN',  // Agent 6
+  ];
+  var isAdmin = KP_TOKENS.includes(params.get('kp'));
 
   if(isAdmin || (_saved && _saved.user)){
     try{ window.history.replaceState(null,'','/'); }catch(e){}
