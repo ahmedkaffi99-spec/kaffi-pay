@@ -769,11 +769,12 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
   <!-- TEST API -->
   <div class="page-section" id="page-testapi">
-    <div style="padding:4px 0 16px;font-size:0.75rem;color:var(--muted);">Traitement manuel des paiements MobCash (Dépôt & Retrait).</div>
+    <div style="padding:4px 0 16px;font-size:0.75rem;color:var(--muted);">Traitement manuel des paiements MobCash (Dépôt & Retrait). Les opérations réussies sont archivées comme ordres traités manuellement.</div>
 
     <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;margin-bottom:16px;">
       <div style="font-weight:700;font-size:0.85rem;color:var(--gold);margin-bottom:12px;">📥 Dépôt Manuel</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
+        <input type="text" id="test-depot-orderid" placeholder="N° Ordre lié (ex: 06152) — optionnel" style="background:rgba(255,215,0,0.05);border:1px solid rgba(255,215,0,0.2);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="text" id="test-depot-userid" placeholder="ID 1xBet du joueur (ex: 123456)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="number" id="test-depot-montant" placeholder="Montant (ex: 100)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <button onclick="testMobcashAPI('depot')" style="background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:11px;font-size:0.82rem;font-weight:700;cursor:pointer;">✅ Effectuer le Dépôt</button>
@@ -784,6 +785,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;">
       <div style="font-weight:700;font-size:0.85rem;color:#e91e8c;margin-bottom:12px;">📤 Retrait Manuel</div>
       <div style="display:flex;flex-direction:column;gap:10px;">
+        <input type="text" id="test-retrait-orderid" placeholder="N° Ordre lié (ex: 06148) — optionnel" style="background:rgba(233,30,140,0.05);border:1px solid rgba(233,30,140,0.2);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="tel" id="test-retrait-userid" placeholder="ID 1xBet du joueur (ex: 1234567890)" inputmode="numeric" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         <input type="text" id="test-retrait-code" placeholder="Code retrait 1xBet (ex: Ab3c)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
         <input type="number" id="test-retrait-montant" placeholder="Montant (ex: 250)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:var(--text);font-size:0.82rem;width:100%;box-sizing:border-box;">
@@ -2354,6 +2356,35 @@ async function testMobcashAPI(type){
       pre.style.color='#7fff9a';
       var d=data.data||{};
       var lines=['✅ SUCCÈS MobCash',''];
+      // Archiver l'opération manuelle dans ordre_traite
+      var orderId = (document.getElementById('test-'+type+'-orderid')||{}).value||'';
+      orderId = orderId.trim().replace(/^0+/,'').replace(/[^0-9A-Za-z]/g,'');
+      var opId0 = d.OperationId ?? d.operationId ?? d.MessageId ?? d.messageId ?? null;
+      if(window.db && window.fsAddDoc && window.fsCollection){
+        window.fsAddDoc(window.fsCollection(window.db,'ordre_traite'),{
+          _ak: getAdminKey(),
+          source: 'manuel',
+          type: type==='depot'?'Dépôt':'Retrait',
+          montant: montant,
+          userId1xBet: userId,
+          ordreId: orderId||('MANUEL-'+Date.now()),
+          agentEmail: currentUser&&currentUser.email||'',
+          agentNom: currentUser&&currentUser.user||'',
+          mobcashOpId: String(opId0||''),
+          finaliseAt: new Date(),
+          status: 'finalise',
+        }).catch(function(){});
+      }
+      // Si N° Ordre lié → confirmer l'ordre via CF (met à jour statut + notifs)
+      if(orderId && window.CF_BASE){
+        fetch(CF_BASE+'/adminActionOrdre',{method:'POST',headers:cfHeaders(),
+          body:JSON.stringify({_ak:getAdminKey(),orderId:orderId,action:'confirmer'})
+        }).then(function(r){return r.json();}).then(function(res){
+          if(res.ok) lines.unshift('🔗 Ordre #'+orderId+' → '+res.status+'\n');
+          else lines.unshift('⚠️ Mise à jour ordre #'+orderId+' : '+res.error+'\n');
+          pre.textContent=lines.join('\n');
+        }).catch(function(){});
+      }
       var summa   = d.Summa     ?? d.summa;
       var success = d.Success   ?? d.success;
       var opId    = d.OperationId ?? d.operationId ?? d.MessageId ?? d.messageId;
