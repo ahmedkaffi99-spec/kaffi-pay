@@ -825,7 +825,14 @@ exports.onNouvelDepot = onDocumentCreated(
         flagRaison: raison,
         flaggedAt: FieldValue.serverTimestamp(),
       });
-      // WA client géré par onDepotUpdated (évite double notification)
+      if (tx.whatsapp) {
+        await sendWhatsApp(tx.whatsapp,
+          `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+          `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+          `Raison : ${raison}\n\n` +
+          `Vérifiez les informations et soumettez un nouvel ordre sur kaffi-pay.com`
+        );
+      }
       await sendTelegram(token, adminId,
         `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\n\n` +
         `Ordre <code>#${ordreId}</code>\n${mismatches.map((m) => `• ${m}`).join("\n")}`
@@ -843,7 +850,14 @@ exports.onNouvelDepot = onDocumentCreated(
       flagRaison: raisonIntrouvable,
       flaggedAt: FieldValue.serverTimestamp(),
     });
-    // WA client géré par onDepotUpdated (évite double notification)
+    if (tx.whatsapp) {
+      await sendWhatsApp(tx.whatsapp,
+        `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+        `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+        `Raison : Transfer ID introuvable\n\n` +
+        `Vérifiez votre Transfer ID Waafi et soumettez un nouvel ordre sur kaffi-pay.com`
+      );
+    }
     await sendTelegram(token, adminId,
       `❌ <b>Dépôt rejeté — TID introuvable</b>\n\n` +
       `Ordre: <code>#${ordreId}</code>\n` +
