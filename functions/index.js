@@ -3265,21 +3265,61 @@ exports.adminActionOrdre = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════
-// DEBUG TEMPORAIRE — structure ordres En attente
+// HTTP — PURGE ORDRES ANCIENS : supprime les "En attente" > 24h
+// POST { _ak, heures? }  (heures défaut = 24)
 // ══════════════════════════════════════════════════════════════
-exports.debugOrdresAttente = onRequest(
-  { region: REGION, invoker: "public" },
+exports.purgeOrdresAnciens = onRequest(
+  { region: REGION, invoker: "public",
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
   async (req, res) => {
     adminCors(res);
-    if (!checkAdminKey(req)) { res.status(403).json({ ok: false }); return; }
-    const [d, r] = await Promise.all([
-      db.collection("depot_orders").where("status","==","En attente").limit(5).get().catch(()=>({docs:[]})),
-      db.collection("retrait_orders").where("status","==","En attente").limit(5).get().catch(()=>({docs:[]})),
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST")    { res.status(405).json({ ok: false, error: "POST requis" }); return; }
+    if (!checkAdminKey(req))      { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
+
+    const heures = Number((req.body || {}).heures) || 24;
+    const cutoff = Date.now() - heures * 60 * 60 * 1000;
+
+    const [depotSnap, retraitSnap] = await Promise.all([
+      db.collection("depot_orders").where("status", "==", "En attente").get().catch(() => ({ docs: [] })),
+      db.collection("retrait_orders").where("status", "==", "En attente").get().catch(() => ({ docs: [] })),
     ]);
-    const fmt = docs => docs.map(doc => {
-      const o = doc.data();
-      return { _fid: doc.id, ref: o.ref, orderId: o.orderId, type: o.type, status: o.status, ts: String(o.ts), fields: Object.keys(o) };
-    });
-    res.json({ depot: fmt(d.docs), retrait: fmt(r.docs) });
+
+    const toDelete = [];
+    const getMs = (o) => {
+      const v = o.ts || o.createdAt;
+      if (!v) return 0;
+      if (v && typeof v.toMillis === "function") return v.toMillis();
+      if (v && v.seconds) return v.seconds * 1000;
+      const n = Number(v);
+      return isNaN(n) ? 0 : n;
+    };
+
+    for (const doc of [...depotSnap.docs, ...retraitSnap.docs]) {
+      const tsMs = getMs(doc.data());
+      if (tsMs > 0 && tsMs < cutoff) toDelete.push(doc);
+    }
+
+    if (toDelete.length === 0) {
+      res.json({ ok: true, deleted: 0, message: `Aucun ordre "En attente" de plus de ${heures}h trouvé` });
+      return;
+    }
+
+    // Supprimer en batch (limite 500 par batch)
+    let deleted = 0;
+    const BATCH_SIZE = 499;
+    for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+      const batch = db.batch();
+      toDelete.slice(i, i + BATCH_SIZE).forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      deleted += Math.min(BATCH_SIZE, toDelete.length - i);
+    }
+
+    const token   = TELEGRAM_TOKEN.value();
+    const adminId = TELEGRAM_ADMIN_ID.value();
+    const msg = `🗑️ Purge ordres anciens\n${deleted} ordre(s) "En attente" de plus de ${heures}h supprimé(s)`;
+    await sendTelegram(token, adminId, msg).catch(() => {});
+
+    res.json({ ok: true, deleted, message: msg });
   }
 );

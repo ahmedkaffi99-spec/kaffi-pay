@@ -757,6 +757,9 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="filter-chip" onclick="filterTx('fraude',this)">🚨 Fraudes</div>
       <div class="filter-chip" onclick="filterTx('bloque',this)">🔴 Bloqués</div>
     </div>
+    <div style="text-align:right;padding:4px 0 6px;">
+      <button onclick="purgeOrdresAnciens24h()" style="background:rgba(255,60,60,0.12);border:1px solid rgba(255,60,60,0.35);color:#ff6060;padding:5px 12px;border-radius:8px;font-size:0.73rem;cursor:pointer;">🗑️ Supprimer ordres bloqués &gt;24h</button>
+    </div>
     <div class="search-wrap">
       <span class="search-icon">🔍</span>
       <input type="text" placeholder="Référence, ID, numéro..." id="search-input" oninput="searchTx(this.value)">
@@ -2232,6 +2235,19 @@ async function adminRejeterOrdre(ref){
     if(!d.ok) throw new Error(d.error||'Erreur serveur');
     odmClose();
     showToast('❌ Ordre rejeté','error');
+  }catch(e){ showToast('❌ '+e.message,'error'); }
+}
+
+async function purgeOrdresAnciens24h(){
+  if(!getRolePerms().canAction){ showToast('⛔ Accès non autorisé','error'); return; }
+  if(!confirm('⚠️ Supprimer TOUS les ordres "En attente" de plus de 24h ?\nCette action est irréversible.')) return;
+  try{
+    showToast('⏳ Purge en cours...','');
+    var r=await fetch(CF_BASE+'/purgeOrdresAnciens',{method:'POST',headers:cfHeaders(),
+      body:JSON.stringify({_ak:getAdminKey(),heures:24})});
+    var d=await r.json();
+    if(!d.ok) throw new Error(d.error||'Erreur serveur');
+    showToast('🗑️ '+d.message,'success');
   }catch(e){ showToast('❌ '+e.message,'error'); }
 }
 
@@ -3831,6 +3847,7 @@ try {
   // Fonctions modal ordres
   if(typeof adminConfirmerOrdre!=="undefined") window.adminConfirmerOrdre=adminConfirmerOrdre;
   if(typeof adminRejeterOrdre!=="undefined") window.adminRejeterOrdre=adminRejeterOrdre;
+  if(typeof purgeOrdresAnciens24h!=="undefined") window.purgeOrdresAnciens24h=purgeOrdresAnciens24h;
   if(typeof terminerRetrait!=="undefined") window.terminerRetrait=terminerRetrait;
   if(typeof odmClose!=="undefined") window.odmClose=odmClose;
   if(typeof adminRetryDeposit!=="undefined") window.adminRetryDeposit=adminRetryDeposit;
