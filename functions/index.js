@@ -3265,7 +3265,7 @@ exports.adminActionOrdre = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════
-// HTTP — PURGE ORDRES ANCIENS : supprime les "En attente" > 24h
+// HTTP — PURGE ORDRES ANCIENS : supprime "En attente" + erreurs webhook > 24h
 // POST { _ak, heures? }  (heures défaut = 24)
 // ══════════════════════════════════════════════════════════════
 exports.purgeOrdresAnciens = onRequest(
@@ -3279,13 +3279,21 @@ exports.purgeOrdresAnciens = onRequest(
 
     const heures = Number((req.body || {}).heures) || 24;
     const cutoff = Date.now() - heures * 60 * 60 * 1000;
+    const WEBHOOK_ERRORS = ["echec", "echec_max", "echec_permanent"];
 
-    const [depotSnap, retraitSnap] = await Promise.all([
+    const [depotAttenteSnap, retraitAttenteSnap,
+           depotEchecSnap, retraitEchecSnap] = await Promise.all([
       db.collection("depot_orders").where("status", "==", "En attente").get().catch(() => ({ docs: [] })),
       db.collection("retrait_orders").where("status", "==", "En attente").get().catch(() => ({ docs: [] })),
+      db.collection("depot_orders").where("webhookStatus", "in", WEBHOOK_ERRORS).get().catch(() => ({ docs: [] })),
+      db.collection("retrait_orders").where("webhookStatus", "in", WEBHOOK_ERRORS).get().catch(() => ({ docs: [] })),
     ]);
 
-    const toDelete = [];
+    const seen = new Set();
+    const allDocs = [...depotAttenteSnap.docs, ...retraitAttenteSnap.docs,
+                     ...depotEchecSnap.docs, ...retraitEchecSnap.docs]
+      .filter(d => { if (seen.has(d.id)) return false; seen.add(d.id); return true; });
+
     const getMs = (o) => {
       const v = o.ts || o.createdAt;
       if (!v) return 0;
@@ -3295,13 +3303,13 @@ exports.purgeOrdresAnciens = onRequest(
       return isNaN(n) ? 0 : n;
     };
 
-    for (const doc of [...depotSnap.docs, ...retraitSnap.docs]) {
+    const toDelete = allDocs.filter(doc => {
       const tsMs = getMs(doc.data());
-      if (tsMs > 0 && tsMs < cutoff) toDelete.push(doc);
-    }
+      return tsMs > 0 && tsMs < cutoff;
+    });
 
     if (toDelete.length === 0) {
-      res.json({ ok: true, deleted: 0, message: `Aucun ordre "En attente" de plus de ${heures}h trouvé` });
+      res.json({ ok: true, deleted: 0, message: `Aucun ordre bloqué de plus de ${heures}h trouvé` });
       return;
     }
 
@@ -3317,7 +3325,7 @@ exports.purgeOrdresAnciens = onRequest(
 
     const token   = TELEGRAM_TOKEN.value();
     const adminId = TELEGRAM_ADMIN_ID.value();
-    const msg = `🗑️ Purge ordres anciens\n${deleted} ordre(s) "En attente" de plus de ${heures}h supprimé(s)`;
+    const msg = `🗑️ Purge ordres anciens\n${deleted} ordre(s) bloqués de plus de ${heures}h supprimé(s)`;
     await sendTelegram(token, adminId, msg).catch(() => {});
 
     res.json({ ok: true, deleted, message: msg });
