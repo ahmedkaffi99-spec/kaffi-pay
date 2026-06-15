@@ -1403,7 +1403,7 @@ exports.ordresBloques = onSchedule(
 // ══════════════════════════════════════════════════════════════════
 exports.onNouvelleNotifWaafi = onDocumentCreated(
   { document: "waafi_notifications/{docId}", region: REGION,
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN] },
   async (event) => {
     const data  = event.data.data();
 
@@ -3139,7 +3139,7 @@ exports.adminStats = onRequest(
 exports.adminRetryDeposit = onRequest(
   { region: REGION, invoker: "public",
     secrets: [MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN,
-              TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+              TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN] },
   async (req, res) => {
     setCorsHeaders(res);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -3220,7 +3220,7 @@ exports.adminRetryDeposit = onRequest(
 // ══════════════════════════════════════════════════════════════════
 exports.adminActionOrdre = onRequest(
   { region: REGION, invoker: "public",
-    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN] },
   async (req, res) => {
     adminCors(res);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
