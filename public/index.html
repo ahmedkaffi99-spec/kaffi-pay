@@ -2061,11 +2061,13 @@ function adminCopy(btn, val){
 }
 
 function openOrderDetail(ref){
+  try{
   var sref=String(ref||'');
+  showToast('🔍 ref='+sref+' | cache='+getTxs().length,'warning');
   var tx=getTxs().find(function(t){
     return String(t.ref||'')===sref||String(t.orderId||'')===sref||String(t._fid||'')===sref;
   });
-  if(!tx || !sref){ return; }
+  if(!tx || !sref){ showToast('❌ ordre introuvable ref='+sref,'error'); return; }
   var isDepot=tx.type==='Dépôt';
   var modal=document.getElementById('order-detail-modal');
 
@@ -2170,6 +2172,7 @@ function openOrderDetail(ref){
   }
 
   modal.classList.add('show');
+  }catch(err){ showToast('💥 ERREUR: '+err.message,'error'); }
 }
 
 var currentOdmRef=null;
