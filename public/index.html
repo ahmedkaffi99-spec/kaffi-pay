@@ -2024,7 +2024,8 @@ function txHTML(t,showActions){
       +'<a href="'+ussdTel+'" onclick="event.stopPropagation();" style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:8px;padding:9px;font-size:0.82rem;font-weight:700;text-decoration:none;box-sizing:border-box;letter-spacing:0.2px;">📞 Paiement Waafi | '+mt.toLocaleString()+' DJF</a>'
       +'</div>';
   })():'';
-  return `<div class="tx-item ${t.type==='Dépôt'?'depot-item':'retrait-item'}" onclick="openOrderDetail('${t.ref}')" style="cursor:pointer;${isFraude?'border-left:3px solid #ff4040;':''}">
+  var _txKey=String(t.ref||t.orderId||t._fid||'');
+  return `<div class="tx-item ${t.type==='Dépôt'?'depot-item':'retrait-item'}" onclick="openOrderDetail('${_txKey}')" style="cursor:pointer;${isFraude?'border-left:3px solid #ff4040;':''}">
     <div class="tx-top">
       <div class="tx-icon ${d?'depot':'retrait'}">${d?'📥':'📤'}</div>
       <div class="tx-info">
@@ -2060,8 +2061,11 @@ function adminCopy(btn, val){
 }
 
 function openOrderDetail(ref){
-  var tx=getTxs().find(function(t){ return t.ref===ref; });
-  if(!tx) return;
+  var sref=String(ref||'');
+  var tx=getTxs().find(function(t){
+    return String(t.ref||'')===sref||String(t.orderId||'')===sref||String(t._fid||'')===sref;
+  });
+  if(!tx || !sref){ return; }
   var isDepot=tx.type==='Dépôt';
   var modal=document.getElementById('order-detail-modal');
 
