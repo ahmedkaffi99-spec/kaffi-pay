@@ -2025,7 +2025,7 @@ function txHTML(t,showActions){
       +'</div>';
   })():'';
   var _txKey=String(t.ref||t.orderId||t._fid||'');
-  return `<div class="tx-item ${t.type==='Dépôt'?'depot-item':'retrait-item'}" onclick="openOrderDetail('${_txKey}')" style="cursor:pointer;${isFraude?'border-left:3px solid #ff4040;':''}">
+  return `<div class="tx-item ${t.type==='Dépôt'?'depot-item':'retrait-item'}" data-txref="${_txKey}" style="cursor:pointer;${isFraude?'border-left:3px solid #ff4040;':''}">
     <div class="tx-top">
       <div class="tx-icon ${d?'depot':'retrait'}">${d?'📥':'📤'}</div>
       <div class="tx-info">
@@ -3830,6 +3830,15 @@ try {
   if(typeof toggleAddAgent!=="undefined") window.toggleAddAgent=toggleAddAgent;
   if(typeof updateUSSD!=="undefined") window.updateUSSD=updateUSSD;
 } catch(e) {}
+
+// Event delegation — click sur ordre (contourne les limites du type=module)
+document.addEventListener('click', function(e){
+  var item = e.target.closest('[data-txref]');
+  if(item){
+    var ref = item.getAttribute('data-txref');
+    if(ref) openOrderDetail(ref);
+  }
+});
 
 // ── Thème clair / sombre ──
 (function(){
