@@ -3204,3 +3204,62 @@ exports.adminRetryDeposit = onRequest(
     }
   }
 );
+
+// ══════════════════════════════════════════════════════════════════
+// HTTP — ADMIN ACTION ORDRE : confirmer ou rejeter manuellement
+// POST { _ak, orderId, action: 'confirmer'|'rejeter', raison? }
+// ══════════════════════════════════════════════════════════════════
+exports.adminActionOrdre = onRequest(
+  { region: REGION, invoker: "public",
+    secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  async (req, res) => {
+    adminCors(res);
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST")    { res.status(405).json({ ok: false, error: "POST requis" }); return; }
+    if (!checkAdminKey(req))      { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
+
+    const { orderId, action, raison } = req.body || {};
+    if (!orderId || !action) {
+      res.status(400).json({ ok: false, error: "orderId et action requis" }); return;
+    }
+    if (!["confirmer", "rejeter"].includes(action)) {
+      res.status(400).json({ ok: false, error: "action doit être confirmer ou rejeter" }); return;
+    }
+
+    const token   = TELEGRAM_TOKEN.value();
+    const adminId = TELEGRAM_ADMIN_ID.value();
+
+    // Chercher dans les deux collections
+    const [depotSnap, retraitSnap] = await Promise.all([
+      db.collection("depot_orders").where("orderId", "==", orderId).limit(1).get().catch(() => ({ empty: true, docs: [] })),
+      db.collection("retrait_orders").where("orderId", "==", orderId).limit(1).get().catch(() => ({ empty: true, docs: [] })),
+    ]);
+
+    const doc = (!depotSnap.empty && depotSnap.docs[0]) || (!retraitSnap.empty && retraitSnap.docs[0]);
+    if (!doc) { res.status(404).json({ ok: false, error: `Ordre #${orderId} introuvable` }); return; }
+
+    const o = doc.data();
+    const isDepot = doc.ref.parent.id === "depot_orders";
+
+    if (action === "confirmer") {
+      const newStatus = isDepot ? "Paiement Reçu" : "Code Validé";
+      await doc.ref.update({ status: newStatus, confirmedBy: "admin_web_manuel", confirmedAt: new Date() });
+      const msg = `✅ Ordre #${orderId} confirmé manuellement\n` +
+                  `Type : ${o.type} | Montant : ${o.montant} DJF\n` +
+                  `→ Statut : ${newStatus}`;
+      await sendTelegram(token, adminId, msg).catch(() => {});
+      await notifyPaiementAgents(token, msg).catch(() => {});
+      res.json({ ok: true, status: newStatus });
+    } else {
+      const raisonText = raison || "Rejeté manuellement après délai";
+      const rejetStatus = isDepot ? "Paiement Non Reçu" : "Code Invalide";
+      await doc.ref.update({ status: rejetStatus, flagRaison: raisonText, rejectedBy: "admin_web_manuel", flaggedAt: new Date() });
+      const msg = `❌ Ordre #${orderId} rejeté manuellement\n` +
+                  `Type : ${o.type} | Montant : ${o.montant} DJF\n` +
+                  `Raison : ${raisonText}`;
+      await sendTelegram(token, adminId, msg).catch(() => {});
+      await notifyPaiementAgents(token, msg).catch(() => {});
+      res.json({ ok: true, status: rejetStatus });
+    }
+  }
+);

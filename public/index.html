@@ -2200,31 +2200,33 @@ async function adminRetryDeposit(ref){
 }
 
 async function adminConfirmerOrdre(ref){
-  if(!window.db){ showToast('❌ Firebase non connecté','error'); return; }
   if(!getRolePerms().canAction){ showToast('⛔ Accès non autorisé','error'); return; }
-  var tx=getTxs().find(function(t){ return t.ref===ref; });
-  if(!tx){ showToast('❌ Ordre introuvable','error'); return; }
-  var newStatus = tx.type==='Dépôt' ? 'Paiement Reçu' : 'Code Validé';
-  if(!confirm('Confirmer manuellement l\'ordre #'+(tx.orderId||ref)+' → '+newStatus+' ?')) return;
+  var tx=getTxs().find(function(t){ return t.ref===ref||t.orderId===ref; });
+  var orderId=tx?(tx.orderId||tx.ref):ref;
+  if(!confirm('Confirmer manuellement l\'ordre #'+orderId+' ?')) return;
   try{
-    await updateTxFirebase(ref, { status: newStatus, confirmedBy: 'admin_web_manuel', confirmedAt: new Date() });
+    var r=await fetch(CF_BASE+'/adminActionOrdre',{method:'POST',headers:cfHeaders(),
+      body:JSON.stringify({_ak:getAdminKey(),orderId:orderId,action:'confirmer'})});
+    var d=await r.json();
+    if(!d.ok) throw new Error(d.error||'Erreur serveur');
     odmClose();
-    showToast('✅ Ordre confirmé — '+(tx.type==='Dépôt'?'MobCash va créditer':'Procédez au paiement Waafi'), 'success');
-  }catch(e){ showToast('❌ Erreur : '+e.message,'error'); }
+    showToast('✅ Ordre confirmé → '+d.status,'success');
+  }catch(e){ showToast('❌ '+e.message,'error'); }
 }
 
 async function adminRejeterOrdre(ref){
-  if(!window.db){ showToast('❌ Firebase non connecté','error'); return; }
   if(!getRolePerms().canAction){ showToast('⛔ Accès non autorisé','error'); return; }
-  var tx=getTxs().find(function(t){ return t.ref===ref; });
-  if(!tx){ showToast('❌ Ordre introuvable','error'); return; }
-  var raison = prompt('Raison du rejet (optionnel) :') || 'Rejeté manuellement après délai';
-  var rejetStatus = tx.type==='Dépôt' ? 'Paiement Non Reçu' : 'Code Invalide';
+  var tx=getTxs().find(function(t){ return t.ref===ref||t.orderId===ref; });
+  var orderId=tx?(tx.orderId||tx.ref):ref;
+  var raison=prompt('Raison du rejet (optionnel) :')||'Rejeté manuellement après délai';
   try{
-    await updateTxFirebase(ref, { status: rejetStatus, flagRaison: raison, rejectedBy: 'admin_web_manuel', flaggedAt: new Date() });
+    var r=await fetch(CF_BASE+'/adminActionOrdre',{method:'POST',headers:cfHeaders(),
+      body:JSON.stringify({_ak:getAdminKey(),orderId:orderId,action:'rejeter',raison:raison})});
+    var d=await r.json();
+    if(!d.ok) throw new Error(d.error||'Erreur serveur');
     odmClose();
-    showToast('❌ Ordre rejeté', 'error');
-  }catch(e){ showToast('❌ Erreur : '+e.message,'error'); }
+    showToast('❌ Ordre rejeté','error');
+  }catch(e){ showToast('❌ '+e.message,'error'); }
 }
 
 async function terminerRetrait(ref){
