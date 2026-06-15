@@ -600,9 +600,9 @@ async function sendWhatsApp(phone, message) {
   }
   try {
     const digits = phone.replace(/\D/g, "");
-    // Green API instance is Djibouti (+253) — use local 8-digit format
-    const localNum = (digits.startsWith("253") && digits.length >= 10) ? digits.slice(3) : digits;
-    const chatId = localNum + "@c.us";
+    // Green API chatId requires full international format: 25377123456@c.us
+    const fullNum = digits.startsWith("253") ? digits : "253" + digits;
+    const chatId = fullNum + "@c.us";
     const apiUrl = `https://${instanceId.toString().slice(0,4)}.api.greenapi.com/waInstance${instanceId}/sendMessage/${token}`;
     const resp = await fetch(apiUrl, {
       method: "POST",
