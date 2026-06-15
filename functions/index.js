@@ -3263,3 +3263,23 @@ exports.adminActionOrdre = onRequest(
     }
   }
 );
+
+// ══════════════════════════════════════════════════════════════
+// DEBUG TEMPORAIRE — structure ordres En attente
+// ══════════════════════════════════════════════════════════════
+exports.debugOrdresAttente = onRequest(
+  { region: REGION, invoker: "public" },
+  async (req, res) => {
+    adminCors(res);
+    if (!checkAdminKey(req)) { res.status(403).json({ ok: false }); return; }
+    const [d, r] = await Promise.all([
+      db.collection("depot_orders").where("status","==","En attente").limit(5).get().catch(()=>({docs:[]})),
+      db.collection("retrait_orders").where("status","==","En attente").limit(5).get().catch(()=>({docs:[]})),
+    ]);
+    const fmt = docs => docs.map(doc => {
+      const o = doc.data();
+      return { _fid: doc.id, ref: o.ref, orderId: o.orderId, type: o.type, status: o.status, ts: String(o.ts), fields: Object.keys(o) };
+    });
+    res.json({ depot: fmt(d.docs), retrait: fmt(r.docs) });
+  }
+);
