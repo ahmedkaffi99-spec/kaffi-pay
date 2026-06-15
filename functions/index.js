@@ -1161,13 +1161,18 @@ exports.onRetraitUpdated = onDocumentUpdated(
     logAudit("retrait_transition", { ordreId, de: before.status, vers: after.status });
 
     if (after.status === "Payé") {
-      await sendTelegram(token, adminId,
-        `✅ <b>Retrait — Payé</b>\n#${ordreId} — ${montant} DJF`);
+      const payeMsg = `✅ <b>Retrait — Payé</b>\n\n` +
+        `Ordre : <b>#${ordreId}</b> | <b>${montant} DJF</b>\n` +
+        `N° Waafi : <code>${after.waafiNumber || after.tel || "—"}</code>` +
+        (after.whatsapp ? `\nWhatsApp : <code>${after.whatsapp}</code>` : "");
+      await sendTelegram(token, adminId, payeMsg);
+      await notifyPaiementAgents(token, payeMsg).catch(() => {});
       if (after.whatsapp) {
         await sendWhatsApp(after.whatsapp,
-          `✅ *Kaffi-Pay — Retrait Payé*\n\nOrdre *#${ordreId}* — *${montant} DJF*\n\n` +
-          `📝 *Statut : Payé*\n` +
-          `Note : Paiement envoyé avec succès. Veuillez vérifier votre solde Waafi. Merci de votre confiance.\n\n` +
+          `✅ *Kaffi-Pay — Retrait Payé !* 🎉\n\n` +
+          `Votre retrait *#${ordreId}* de *${montant} DJF* a été effectué avec succès.\n\n` +
+          `💸 *Statut : Payé*\n` +
+          `Vérifiez votre solde Waafi. Merci de votre confiance !\n\n` +
           `📲 kaffi-pay.com/#suivi-${ordreId}`
         );
       }
@@ -2299,8 +2304,8 @@ exports.adminBot = onRequest(
             status: "finalise",
           }).catch(() => {});
           logAudit("retrait_finalise_admin", { ordreId, adminId: cbAdminId, parAgent: isPayAgentCb });
-          await sendTelegram(cbToken, fromId, `✅ Retrait <b>#${ordreId}</b> — Payé (finalisé).`);
-          await broadcastAction(cbToken, cbAdminId, fromId, `✅ Retrait <b>#${ordreId}</b> finalisé — Payé.`);
+          // Confirmation à l'agent/admin qui a cliqué seulement — Telegram + WA sont gérés par onRetraitUpdated
+          await sendTelegram(cbToken, fromId, `✅ Retrait <b>#${ordreId}</b> — Payé. Notifications client en cours…`);
 
         } else if (cbAuthorized && cbData.startsWith("pay_recharge_")) {
           // Agent de paiement recharge un ordre via bouton inline
