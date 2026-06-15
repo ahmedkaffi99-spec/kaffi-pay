@@ -273,8 +273,9 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
       tx.get(traitRef),
     ]);
     if (!ordreSnap.exists || ordreSnap.data().status !== "En attente") return false;
-    // Allow reuse if previous confirmation was never credited (e.g. MobCash failed)
-    if (traitSnap.exists && traitSnap.data().status === "credite") return false;
+    // Reject if TID already claimed by any order, regardless of status (confirme or credite)
+    // Prevents double MobCash credit when a second order re-uses the same Transfer-ID
+    if (traitSnap.exists) return false;
 
     tx.update(ordreDoc.ref, {
       status: "Paiement Reçu",
