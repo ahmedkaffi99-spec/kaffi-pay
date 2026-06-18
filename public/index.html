@@ -378,6 +378,15 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
 
+.faq-section{margin-top:20px;}
+.faq-title{font-family:'Playfair Display',serif;font-size:.95rem;font-weight:700;color:var(--text);margin-bottom:12px;text-align:center;}
+.faq-item{border-radius:14px;border:1px solid rgba(255,215,0,.08);background:rgba(255,255,255,.02);margin-bottom:8px;overflow:hidden;}
+.faq-question{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:.82rem;font-weight:600;color:var(--text);gap:10px;user-select:none;}
+.faq-icon{font-size:1rem;color:var(--gold);flex-shrink:0;transition:transform .25s;}
+.faq-item.open .faq-icon{transform:rotate(45deg);}
+.faq-answer{max-height:0;overflow:hidden;transition:max-height .3s ease,padding .3s ease;font-family:'DM Sans',sans-serif;font-size:.78rem;color:var(--muted);line-height:1.6;padding:0 15px;}
+.faq-item.open .faq-answer{max-height:200px;padding:0 15px 13px;}
+
 </style>
 </head>
 <body>
@@ -622,6 +631,37 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   <a class="support-btn" href="https://t.me/kaffipay_support_bot" target="_blank" data-i18n="support-btn">
     💬 Support Kaffi-Pay
   </a>
+
+  <!-- ══ FAQ ══ -->
+  <div class="faq-section">
+    <div class="faq-title">❓ Questions fréquentes</div>
+
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><span>Comment effectuer un dépôt 1xBet ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer">Saisissez le montant, votre ID 1xBet et le Transfer ID Waafi. Envoyez d'abord votre paiement au numéro Waafi indiqué, puis soumettez le formulaire. Votre compte sera crédité après vérification.</div>
+    </div>
+
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><span>Quels sont les délais de traitement ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer">Les ordres sont traités en moins de 15 minutes pendant les heures d'ouverture (8h–22h, heure de Djibouti). En dehors de ces horaires, votre ordre sera traité dès le lendemain matin.</div>
+    </div>
+
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><span>Y a-t-il des frais sur les échanges ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer">Non, Kaffi-Pay ne prend aucun frais supplémentaire. Le montant que vous envoyez correspond exactement au montant crédité sur votre compte 1xBet.</div>
+    </div>
+
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><span>Mon paiement n'est pas confirmé, que faire ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer">Vérifiez que le Transfer ID Waafi saisi est correct. Si votre ordre reste en attente plus de 30 minutes, contactez le support via le bouton WhatsApp/Telegram ci-dessus avec votre numéro d'ordre.</div>
+    </div>
+
+    <div class="faq-item" onclick="toggleFaq(this)">
+      <div class="faq-question"><span>Quel est le montant minimum et maximum ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer">Le minimum est de 50 DJF pour un dépôt et 250 DJF pour un retrait. Il n'y a pas de maximum fixe, mais les ordres élevés peuvent nécessiter une vérification supplémentaire.</div>
+    </div>
+
+  </div>
 
 </div>
 </div>
@@ -1613,6 +1653,12 @@ function switchTab(tab){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('content-'+tab).classList.add('active');
   document.getElementById('tab-'+tab).classList.add('active');
+}
+
+function toggleFaq(item){
+  var isOpen = item.classList.contains('open');
+  document.querySelectorAll('.faq-item.open').forEach(function(el){ el.classList.remove('open'); });
+  if(!isOpen) item.classList.add('open');
 }
 
 function copyPromo(){
