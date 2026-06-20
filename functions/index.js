@@ -679,6 +679,17 @@ exports.onNouvelDepot = onDocumentCreated(
 
     logAudit("nouvel_depot", { ordreId, montant: tx.montant, phone });
 
+    if (await checkRateLimit(phone)) {
+      await db.collection("depot_orders").doc(docId).update({
+        status: "Paiement Non Reçu",
+        flagRaison: "Limite horaire dépassée (max 5 ordres/heure par numéro)",
+        fraudType: "rate_limit",
+        flaggedAt: FieldValue.serverTimestamp(),
+      });
+      logAudit("depot_rate_limited", { ordreId, phone });
+      return;
+    }
+
     // ── Analyse fraude ──
     const fraude = analyserFraude(tx, transferId);
     const fraudeTag = fraude.score >= 70
@@ -899,6 +910,17 @@ exports.onNouvelRetrait = onDocumentCreated(
     const adminId    = TELEGRAM_ADMIN_ID.value();
 
     logAudit("nouvel_retrait", { ordreId, montant: montantVal, waafiNum });
+
+    if (await checkRateLimit(waafiNum)) {
+      await db.collection("retrait_orders").doc(docId).update({
+        status: "Code Invalide",
+        flagRaison: "Limite horaire dépassée (max 5 ordres/heure par numéro)",
+        fraudType: "rate_limit",
+        flaggedAt: FieldValue.serverTimestamp(),
+      });
+      logAudit("retrait_rate_limited", { ordreId, waafiNum });
+      return;
+    }
 
     // ── WhatsApp — accusé de réception "En attente" ──
     if (tx.whatsapp) {
@@ -2841,8 +2863,13 @@ exports.adminBot = onRequest(
 // POST → action: 'add' | 'delete'  +  agent: {name,user,pass,role}
 // ══════════════════════════════════════════════════════════════════
 const ADMIN_KEY = "kp2026_9f3aXmQ7";
-function adminCors(res) {
-  res.set("Access-Control-Allow-Origin", "*");
+const ADMIN_ORIGINS = ["https://kaffi-pay.com", "https://kaffi-pay.web.app"];
+function adminCors(res, req) {
+  const origin = (req && req.headers && req.headers.origin) || "";
+  if (ADMIN_ORIGINS.includes(origin)) {
+    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Vary", "Origin");
+  }
   res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type, X-Admin-Key");
 }
@@ -2851,10 +2878,29 @@ function checkAdminKey(req) {
   return ak === ADMIN_KEY;
 }
 
+async function checkRateLimit(phone) {
+  if (!phone) return false;
+  const now = new Date();
+  const bucket = `${phone}_${now.getUTCFullYear()}${String(now.getUTCMonth()+1).padStart(2,"0")}${String(now.getUTCDate()).padStart(2,"0")}${String(now.getUTCHours()).padStart(2,"0")}`;
+  const ref = db.collection("rate_limits").doc(bucket);
+  try {
+    const count = await db.runTransaction(async t => {
+      const snap = await t.get(ref);
+      const n = snap.exists ? ((snap.data().count || 0) + 1) : 1;
+      t.set(ref, { phone, count: n, updatedAt: FieldValue.serverTimestamp() });
+      return n;
+    });
+    return count > 5;
+  } catch (e) {
+    console.warn("Rate limit check failed:", e.message);
+    return false;
+  }
+}
+
 exports.adminAgents = onRequest(
   { region: REGION, invoker: "public" },
   async (req, res) => {
-    adminCors(res);
+    adminCors(res, req);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (!checkAdminKey(req)) { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
 
@@ -2905,7 +2951,7 @@ exports.adminAgents = onRequest(
 exports.adminReserves = onRequest(
   { region: REGION, invoker: "public" },
   async (req, res) => {
-    adminCors(res);
+    adminCors(res, req);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (!checkAdminKey(req)) { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
 
@@ -2945,7 +2991,7 @@ exports.adminReserves = onRequest(
 exports.adminStats = onRequest(
   { region: REGION, invoker: "public" },
   async (req, res) => {
-    adminCors(res);
+    adminCors(res, req);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (!checkAdminKey(req)) { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
 
@@ -3038,7 +3084,7 @@ exports.adminRetryDeposit = onRequest(
     secrets: [MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN,
               TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN] },
   async (req, res) => {
-    setCorsHeaders(res);
+    adminCors(res, req);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (req.method !== "POST")    { res.status(405).json({ ok: false, error: "POST requis" }); return; }
     if (!checkAdminKey(req))      { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
@@ -3119,7 +3165,7 @@ exports.adminActionOrdre = onRequest(
   { region: REGION, invoker: "public",
     secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, GREEN_API_ID, GREEN_API_TOKEN] },
   async (req, res) => {
-    adminCors(res);
+    adminCors(res, req);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (req.method !== "POST")    { res.status(405).json({ ok: false, error: "POST requis" }); return; }
     if (!checkAdminKey(req))      { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
@@ -3179,7 +3225,7 @@ exports.purgeOrdresAnciens = onRequest(
   { region: REGION, invoker: "public",
     secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
   async (req, res) => {
-    adminCors(res);
+    adminCors(res, req);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (req.method !== "POST")    { res.status(405).json({ ok: false, error: "POST requis" }); return; }
     if (!checkAdminKey(req))      { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
