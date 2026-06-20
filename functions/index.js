@@ -679,17 +679,6 @@ exports.onNouvelDepot = onDocumentCreated(
 
     logAudit("nouvel_depot", { ordreId, montant: tx.montant, phone });
 
-    if (await checkRateLimit(phone)) {
-      await db.collection("depot_orders").doc(docId).update({
-        status: "Paiement Non Reçu",
-        flagRaison: "Limite horaire dépassée (max 5 ordres/heure par numéro)",
-        fraudType: "rate_limit",
-        flaggedAt: FieldValue.serverTimestamp(),
-      });
-      logAudit("depot_rate_limited", { ordreId, phone });
-      return;
-    }
-
     // ── Analyse fraude ──
     const fraude = analyserFraude(tx, transferId);
     const fraudeTag = fraude.score >= 70
@@ -910,17 +899,6 @@ exports.onNouvelRetrait = onDocumentCreated(
     const adminId    = TELEGRAM_ADMIN_ID.value();
 
     logAudit("nouvel_retrait", { ordreId, montant: montantVal, waafiNum });
-
-    if (await checkRateLimit(waafiNum)) {
-      await db.collection("retrait_orders").doc(docId).update({
-        status: "Code Invalide",
-        flagRaison: "Limite horaire dépassée (max 5 ordres/heure par numéro)",
-        fraudType: "rate_limit",
-        flaggedAt: FieldValue.serverTimestamp(),
-      });
-      logAudit("retrait_rate_limited", { ordreId, waafiNum });
-      return;
-    }
 
     // ── WhatsApp — accusé de réception "En attente" ──
     if (tx.whatsapp) {
@@ -2878,24 +2856,6 @@ function checkAdminKey(req) {
   return ak === ADMIN_KEY;
 }
 
-async function checkRateLimit(phone) {
-  if (!phone) return false;
-  const now = new Date();
-  const bucket = `${phone}_${now.getUTCFullYear()}${String(now.getUTCMonth()+1).padStart(2,"0")}${String(now.getUTCDate()).padStart(2,"0")}${String(now.getUTCHours()).padStart(2,"0")}`;
-  const ref = db.collection("rate_limits").doc(bucket);
-  try {
-    const count = await db.runTransaction(async t => {
-      const snap = await t.get(ref);
-      const n = snap.exists ? ((snap.data().count || 0) + 1) : 1;
-      t.set(ref, { phone, count: n, updatedAt: FieldValue.serverTimestamp() });
-      return n;
-    });
-    return count > 5;
-  } catch (e) {
-    console.warn("Rate limit check failed:", e.message);
-    return false;
-  }
-}
 
 exports.adminAgents = onRequest(
   { region: REGION, invoker: "public" },
