@@ -380,22 +380,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 @keyframes spin{to{transform:rotate(360deg);}}
 @keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
 
-.service-choice{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60dvh;gap:18px;padding:20px 0;}
-.service-choice-title{font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:var(--text);text-align:center;margin-bottom:6px;}
-.service-choice-sub{font-family:'DM Sans',sans-serif;font-size:.78rem;color:var(--muted);text-align:center;margin-bottom:10px;}
-.service-btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;width:100%;}
-.service-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border-radius:22px;padding:28px 14px;border:1px solid rgba(255,215,0,.18);background:var(--card-bg);cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .25s;text-decoration:none;}
-.service-btn:hover{border-color:rgba(255,215,0,.5);transform:translateY(-3px);box-shadow:0 8px 24px rgba(255,215,0,.15);}
-body.light .service-btn{border-color:rgba(26,111,212,.25);box-shadow:0 2px 10px rgba(0,0,0,.06);}
-body.light .service-btn:hover{border-color:rgba(26,111,212,.55);box-shadow:0 8px 24px rgba(26,111,212,.15);}
-.service-btn-icon{font-size:2.2rem;}
-.service-btn-label{font-size:.88rem;font-weight:700;color:var(--text);}
-.service-btn-desc{font-size:.67rem;color:var(--muted);text-align:center;line-height:1.4;}
-.service-btn.exchange-btn{border-color:rgba(99,179,237,.25);}
-.service-btn.exchange-btn:hover{border-color:rgba(99,179,237,.6);box-shadow:0 8px 24px rgba(99,179,237,.15);}
-.service-btn.exchange-btn .service-btn-label{color:#63b3ed;}
-body.light .service-btn.exchange-btn{border-color:rgba(49,130,206,.3);}
-body.light .service-btn.exchange-btn .service-btn-label{color:#2b6cb0;}
 .faq-section{margin-top:20px;}
 .faq-title{font-family:'Playfair Display',serif;font-size:.95rem;font-weight:700;color:var(--text);margin-bottom:12px;text-align:center;}
 .faq-item{border-radius:14px;border:1px solid rgba(255,215,0,.08);background:rgba(255,255,255,.02);margin-bottom:8px;overflow:hidden;}
@@ -466,26 +450,6 @@ body.light .service-btn.exchange-btn .service-btn-label{color:#2b6cb0;}
     </div>
   </div>
 
-  <!-- ══ CHOIX DE SERVICE (accueil) ══ -->
-  <div id="service-choice-screen" class="service-choice">
-    <div class="service-choice-title" data-i18n="choice-title">Choisissez votre service</div>
-    <div class="service-choice-sub" data-i18n="choice-sub">Que souhaitez-vous faire aujourd'hui ?</div>
-    <div class="service-btn-grid">
-      <button class="service-btn" onclick="showServiceContent()">
-        <span class="service-btn-icon">🎯</span>
-        <span class="service-btn-label">1xBet</span>
-        <span class="service-btn-desc" data-i18n="choice-1xbet-desc">Dépôt & Retrait 1xBet via Waafi</span>
-      </button>
-      <a class="service-btn exchange-btn" href="https://kaffi.exchange" target="_blank" rel="noopener">
-        <span class="service-btn-icon">🔄</span>
-        <span class="service-btn-label">Exchange</span>
-        <span class="service-btn-desc" data-i18n="choice-exchange-desc">Échange crypto DJF ↔ USDT/USDC</span>
-      </a>
-    </div>
-  </div>
-
-  <!-- ══ CONTENU 1xBet (caché initialement) ══ -->
-  <div id="service-content" style="display:none;">
 
   <section class="hero">
     <div class="hero-desc">
@@ -672,7 +636,6 @@ body.light .service-btn.exchange-btn .service-btn-label{color:#2b6cb0;}
   </a>
 
   <!-- ══ FAQ ══ -->
-  </div><!-- fin service-content -->
   <div class="faq-section">
     <div class="faq-title">❓ Questions fréquentes</div>
 
@@ -1693,13 +1656,6 @@ function switchTab(tab){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('content-'+tab).classList.add('active');
   document.getElementById('tab-'+tab).classList.add('active');
-}
-
-function showServiceContent(){
-  var choice = document.getElementById('service-choice-screen');
-  var content = document.getElementById('service-content');
-  if(choice) choice.style.display = 'none';
-  if(content) content.style.display = 'block';
 }
 
 function toggleFaq(item){
@@ -4058,10 +4014,6 @@ var KP_LANGS = {
   fr: {
     'slogan':              'Échange 1xBet ↔ Waafi · Djibouti',
     'hero':                'Bienvenue sur <strong style="color:var(--text)">Kaffi-Pay</strong> — une plateforme d\'échange conçue pour la rapidité et l\'automatique. Échangez vos fonds en toute confiance.',
-    'choice-title':        'Choisissez votre service',
-    'choice-sub':          'Que souhaitez-vous faire aujourd\'hui ?',
-    'choice-1xbet-desc':   'Dépôt & Retrait 1xBet via Waafi',
-    'choice-exchange-desc':'Échange crypto DJF ↔ USDT/USDC',
     'promo-label':         '🎁 Code promo pour réduire vos pertes :',
     'tab-depot':           '📥 Dépôt 1xBet',
     'tab-retrait':         '📤 Retrait 1xBet',
@@ -4099,10 +4051,6 @@ var KP_LANGS = {
   en: {
     'slogan':              '1xBet ↔ Waafi Exchange · Djibouti',
     'hero':                'Welcome to <strong style="color:var(--text)">Kaffi-Pay</strong> — an exchange platform built for speed and automation. Exchange your funds with confidence.',
-    'choice-title':        'Choose your service',
-    'choice-sub':          'What would you like to do today?',
-    'choice-1xbet-desc':   '1xBet Deposit & Withdrawal via Waafi',
-    'choice-exchange-desc':'Crypto exchange DJF ↔ USDT/USDC',
     'promo-label':         '🎁 Promo code to reduce your fees:',
     'tab-depot':           '📥 1xBet Deposit',
     'tab-retrait':         '📤 1xBet Withdrawal',
@@ -4140,10 +4088,6 @@ var KP_LANGS = {
   so: {
     'slogan':              '1xBet ↔ Waafi Beddelka · Jabuuti',
     'hero':                '<strong style="color:var(--text)">Kaffi-Pay</strong> ku soo dhawow — xarunta beddelka ee degdegga ah iyo xisaabinta otomaatig. Lacagtaada si ammaan ah u beddel.',
-    'choice-title':        'Adeegaaga dooro',
-    'choice-sub':          'Maanta maxaad samayn jeceshahay?',
-    'choice-1xbet-desc':   'Gelinta & Bixinta 1xBet via Waafi',
-    'choice-exchange-desc':'Beddelka crypto DJF ↔ USDT/USDC',
     'promo-label':         '🎁 Koodhka dhimista lacagta:',
     'tab-depot':           '📥 Gelinta 1xBet',
     'tab-retrait':         '📤 Bixinta 1xBet',
