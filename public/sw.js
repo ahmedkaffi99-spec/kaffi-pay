@@ -1,5 +1,6 @@
-// Baki-Pay — Service Worker v8.0
-const CACHE = 'bakipay-v3';
+// Baki-Pay — Service Worker v9.0
+const CACHE = 'bakipay-v4';
+const ICON_URLS = ['/icon-192.png', '/icon-512.png', '/favicon.ico'];
 
 self.addEventListener('install', function(e){
   e.waitUntil(
@@ -28,8 +29,11 @@ self.addEventListener('fetch', function(e){
   if(e.request.url.includes('firestore') ||
      e.request.url.includes('firebase') ||
      e.request.url.includes('googleapis')) return;
+  var url = new URL(e.request.url);
+  var isIcon = ICON_URLS.indexOf(url.pathname) !== -1;
+  var req = isIcon ? new Request(e.request, {cache: 'no-store'}) : e.request;
   e.respondWith(
-    fetch(e.request).then(function(resp){
+    fetch(req).then(function(resp){
       var clone = resp.clone();
       caches.open(CACHE).then(function(c){ c.put(e.request, clone); });
       return resp;
