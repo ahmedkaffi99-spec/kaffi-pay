@@ -1,5 +1,5 @@
-// Baki-Pay — Service Worker v6.0
-const CACHE = 'bakipay-v1';
+// Baki-Pay — Service Worker v7.0
+const CACHE = 'bakipay-v2';
 
 self.addEventListener('install', function(e){
   e.waitUntil(
