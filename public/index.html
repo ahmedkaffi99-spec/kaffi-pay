@@ -24,7 +24,6 @@
 <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 
 <script type="module">
 // ═══════════════════════════════════════════════════
@@ -535,17 +534,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
 
-      <div style="margin-top:14px;display:flex;justify-content:center;">
-        <div class="cf-turnstile" id="ts-depot"
-             data-sitekey="0x4AAAAAADiBCInulptSk3m6"
-             data-callback="onTsDepot"
-             data-expired-callback="onTsExpiredDepot"
-             data-error-callback="onTsError"
-             data-theme="dark"
-             data-size="normal"></div>
-      </div>
-
-      <button class="submit-btn" onclick="submitDepot()" id="depot-btn" disabled style="opacity:0.45;cursor:not-allowed;">
+      <button class="submit-btn" onclick="submitDepot()" id="depot-btn">
         <span id="depot-btn-text" data-i18n="submit-order">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="depot-spinner"></div>
       </button>
@@ -614,17 +603,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
 
-      <div style="margin-top:14px;display:flex;justify-content:center;">
-        <div class="cf-turnstile" id="ts-retrait"
-             data-sitekey="0x4AAAAAADiBCInulptSk3m6"
-             data-callback="onTsRetrait"
-             data-expired-callback="onTsExpiredRetrait"
-             data-error-callback="onTsError"
-             data-theme="dark"
-             data-size="normal"></div>
-      </div>
-
-      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn" disabled style="opacity:0.45;cursor:not-allowed;">
+      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn">
         <span id="retrait-btn-text" data-i18n="submit-order">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="retrait-spinner"></div>
       </button>
@@ -1718,30 +1697,10 @@ async function genererOrderId(){
   return dayKey+n;
 }
 
-// Turnstile — verification avant chaque soumission
-var _tsDepotOk=false;
-var _tsRetraitOk=false;
-
-function _tsEnableBtn(id){ var b=document.getElementById(id); if(b){b.disabled=false;b.style.opacity='1';b.style.cursor='pointer';} }
-function _tsDisableBtn(id){ var b=document.getElementById(id); if(b){b.disabled=true;b.style.opacity='0.45';b.style.cursor='not-allowed';} }
-
-function onTsDepot(){ _tsDepotOk=true; _tsEnableBtn('depot-btn'); }
-function onTsRetrait(){ _tsRetraitOk=true; _tsEnableBtn('retrait-btn'); }
-function onTsExpiredDepot(){ _tsDepotOk=false; _tsDisableBtn('depot-btn'); }
-function onTsExpiredRetrait(){ _tsRetraitOk=false; _tsDisableBtn('retrait-btn'); }
-function onTsError(){ showToast('⚠️ Vérification échouée — réessayez','error'); }
-
-function _resetTsDepot(){
-  _tsDepotOk=false; _tsDisableBtn('depot-btn');
-  if(window.turnstile) window.turnstile.reset(document.getElementById('ts-depot'));
-}
-function _resetTsRetrait(){
-  _tsRetraitOk=false; _tsDisableBtn('retrait-btn');
-  if(window.turnstile) window.turnstile.reset(document.getElementById('ts-retrait'));
-}
+function _resetTsDepot(){}
+function _resetTsRetrait(){}
 
 async function submitDepot(){
-  if(!_tsDepotOk){ showToast('⚠️ Cochez la vérification avant de soumettre','error'); return; }
   const m=document.getElementById('depot-montant').value;
   const id=document.getElementById('depot-id').value.trim();
   const h=document.getElementById('depot-hash').value.trim();
@@ -1799,7 +1758,6 @@ async function submitDepot(){
 }
 
 async function submitRetrait(){
-  if(!_tsRetraitOk){ showToast('⚠️ Cochez la vérification avant de soumettre','error'); return; }
   const id1x=document.getElementById('retrait-id1x').value.trim();
   const c=document.getElementById('retrait-code').value.trim();
   const t=document.getElementById('retrait-tel').value.trim();
