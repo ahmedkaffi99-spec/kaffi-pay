@@ -878,7 +878,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div style="margin-bottom:8px;">
         <div style="font-size:0.68rem;color:var(--muted);margin-bottom:4px;">URL (HTTP Request)</div>
         <div style="display:flex;gap:6px;align-items:stretch;">
-          <div style="flex:1;background:rgba(0,0,0,0.3);border-radius:8px;padding:8px 10px;font-size:0.65rem;color:#adf;word-break:break-all;font-family:monospace;">https://firestore.googleapis.com/v1/projects/kaffi-pay/databases/(default)/documents/waafi_notifications</div>
+          <div style="flex:1;background:rgba(0,0,0,0.3);border-radius:8px;padding:8px 10px;font-size:0.65rem;color:#adf;word-break:break-all;font-family:monospace;">https://europe-west1-kaffi-pay.cloudfunctions.net/smsWebhook</div>
           <button id="copy-macro-url-btn" onclick="copyMacroUrl()" style="background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:8px 10px;font-size:0.7rem;cursor:pointer;white-space:nowrap;">📋 Copier URL</button>
         </div>
       </div>
@@ -886,7 +886,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div style="margin-bottom:10px;">
         <div style="font-size:0.68rem;color:var(--muted);margin-bottom:4px;">Body (Content-Type: application/json)</div>
         <div style="display:flex;gap:6px;align-items:stretch;">
-          <div style="flex:1;background:rgba(0,0,0,0.3);border-radius:8px;padding:8px 10px;font-size:0.65rem;color:#adf;word-break:break-all;font-family:monospace;">{"fields":{"not_title":{"stringValue":"{not_title}"},"notification":{"stringValue":"{notification}"},"status":{"stringValue":"nouveau"}}}</div>
+          <div id="macro-body-text" style="flex:1;background:rgba(0,0,0,0.3);border-radius:8px;padding:8px 10px;font-size:0.65rem;color:#adf;word-break:break-all;font-family:monospace;">{"notification":"{notification}","secret":"Kafia&amp;77105640"}</div>
           <button id="copy-macro-body-btn" onclick="copyMacroBody()" style="background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:8px 10px;font-size:0.7rem;cursor:pointer;white-space:nowrap;">📋 Copier Body</button>
         </div>
       </div>
@@ -3276,7 +3276,7 @@ function listenWaafiSms(){
     var page = document.getElementById('page-notifs');
     var dot  = document.getElementById('notif-bell-dot');
     if(dot && !(page && page.classList.contains('active'))){
-      var hasNew = docs.some(function(d){ var s=d.data().status; return s==='nouveau'||s==='new'; });
+      var hasNew = docs.some(function(d){ var s=d.data().status; return s==='nouveau'||s==='new'||s==='reçu'||s==='pending'; });
       if(hasNew) dot.classList.add('show');
     }
   });
@@ -3332,8 +3332,8 @@ function clearNotifs(){ /* removed */ }
 // ══════════════════════════════════════════════════════════════════
 // MACRODROID HELPERS — Config & Test
 // ══════════════════════════════════════════════════════════════════
-var MACRO_URL = 'https://firestore.googleapis.com/v1/projects/kaffi-pay/databases/(default)/documents/waafi_notifications';
-var MACRO_BODY = '{"fields":{"not_title":{"stringValue":"{not_title}"},"notification":{"stringValue":"{notification}"},"status":{"stringValue":"nouveau"}}}';
+var MACRO_URL = 'https://europe-west1-kaffi-pay.cloudfunctions.net/smsWebhook';
+var MACRO_BODY = document.getElementById('macro-body-text') ? document.getElementById('macro-body-text').textContent : '';
 
 function copyMacroUrl(){
   var btn = document.getElementById('copy-macro-url-btn');
@@ -3366,18 +3366,11 @@ function copyMacroBody(){
 async function testMacroDroid(){
   var st = document.getElementById('macro-status');
   if(st){ st.style.display='block'; st.textContent = '⏳ Test en cours...'; st.style.color='var(--warning)'; }
-  showToast('⏳ Envoi SMS test vers Firestore...', 'warning');
+  showToast('⏳ Envoi SMS test vers smsWebhook...', 'warning');
 
-  // Simuler un SMS Waafi réel pour tester le pipeline complet
-  // ✅ Même format exact que MacroDroid : {not_title}{notification}
-  var testData = {
-    fields: {
-      not_title:    { stringValue: 'WAAFI' },
-      notification: { stringValue: 'Transfer-Id: 99999999, You have Received DJF 1000 from Test Client(77000000), Your Balance is: DJF 1000.' },
-      status:       { stringValue: 'nouveau' },
-      source:       { stringValue: 'test_macrodroid' }
-    }
-  };
+  var bodyTpl = (document.getElementById('macro-body-text')||{}).textContent||'';
+  var testNotif = 'Transfer-Id: 99999999, You have Received DJF 1000 from Test Client(77000000), Your Balance is: DJF 1000.';
+  var testData = JSON.parse(bodyTpl.replace('{notification}', testNotif).replace(/{[^}]+}/g,'test'));
 
   try {
     var resp = await fetch(MACRO_URL, {
@@ -3386,14 +3379,13 @@ async function testMacroDroid(){
       body: JSON.stringify(testData)
     });
     var result = await resp.json();
-    if(resp.ok){
-      if(st){ st.textContent = '✅ Document envoyé ! Vérifiez les notifications ci-dessous.'; st.style.color='var(--success)'; }
-      showToast('✅ Test MacroDroid réussi — SMS simulé envoyé !', 'success');
-      pushNotif('sms_recu', '🧪 SMS test envoyé avec succès (Transfer-Id: 99999999, DJF 1000). Le listener va le traiter.', null, 1000);
+    if(resp.ok && result.success){
+      if(st){ st.textContent = '✅ Test réussi ! SMS simulé reçu — vérifiez Telegram et la liste ci-dessous.'; st.style.color='var(--success)'; }
+      showToast('✅ Test MacroDroid réussi — Telegram devrait recevoir la notification !', 'success');
     } else {
-      var errMsg = result.error ? result.error.message : JSON.stringify(result);
+      var errMsg = result.error || JSON.stringify(result);
       if(st){ st.textContent = '❌ Erreur: ' + errMsg; st.style.color='var(--error)'; }
-      showToast('❌ Erreur Firestore: ' + errMsg.substring(0,60), 'error');
+      showToast('❌ Erreur: ' + String(errMsg).substring(0,60), 'error');
     }
   } catch(e) {
     if(st){ st.textContent = '❌ Erreur réseau: ' + e.message; st.style.color='var(--error)'; }
