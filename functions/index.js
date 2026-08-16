@@ -1509,6 +1509,41 @@ exports.healthCheck = onRequest(
 );
 
 // ══════════════════════════════════════════════════════════════════
+// HTTP — TEST TELEGRAM (admin only)
+// ══════════════════════════════════════════════════════════════════
+exports.testTelegram = onRequest(
+  { region: REGION, invoker: "public", secrets: [TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID] },
+  async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    const ak = (req.body || {})._ak || req.query._ak || "";
+    if (ak !== "kp2026_9f3aXmQ7") { res.status(403).json({ ok: false, error: "Non autorisé" }); return; }
+
+    const token   = TELEGRAM_TOKEN.value();
+    const adminId = TELEGRAM_ADMIN_ID.value();
+
+    if (!token)   { res.json({ ok: false, error: "TELEGRAM_TOKEN non configuré" }); return; }
+    if (!adminId) { res.json({ ok: false, error: "TELEGRAM_ADMIN_CHAT_ID non configuré" }); return; }
+
+    try {
+      const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: adminId, text: "✅ Test Baki-Pay — Telegram opérationnel !", parse_mode: "HTML" }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        res.json({ ok: true, message: "Message envoyé avec succès !", chat_id: adminId });
+      } else {
+        res.json({ ok: false, telegram_error: data, token_preview: token.substring(0, 10) + "...", chat_id: adminId });
+      }
+    } catch (e) {
+      res.json({ ok: false, error: e.message });
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
 // HTTP — TEST MOBCASH (admin only)
 // ══════════════════════════════════════════════════════════════════
 exports.testMobcash = onRequest(
