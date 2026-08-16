@@ -3273,6 +3273,7 @@ function renderWaafiSms(docs){
     'en_cours':      {icon:'⏳', color:'#5b9cff',        label:'EN COURS'},
     'ignoré_format': {icon:'➖', color:'var(--muted)',   label:'IGNORÉ'},
     'pending':       {icon:'📩', color:'#5b9cff',        label:'EN ATTENTE'},
+    'reçu':          {icon:'📩', color:'#5b9cff',        label:'REÇU'},
   };
   el.innerHTML = docs.map(function(d){
     var n = d.data();
@@ -3362,8 +3363,8 @@ function startSmsListener(){
           // Ignorer déjà traités
           if(_smsDejaTrait.has(docId)) return;
 
-          // Ne traiter que les docs sans statut ou en attente — sauter tout le reste
-          if(data.status && !['nouveau','new','pending'].includes(data.status)) return;
+          // Ne traiter que les docs non encore traités (accepte aussi 'reçu' de la Cloud Function)
+          if(data.status && !['nouveau','new','pending','reçu'].includes(data.status)) return;
 
           // ✅ FIX: Accepter TOUS les noms de champs possibles envoyés par MacroDroid
           var texte = data.texte      // champ standard
