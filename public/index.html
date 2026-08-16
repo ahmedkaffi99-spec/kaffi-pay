@@ -867,34 +867,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div id="waafi-sms-count" style="font-size:0.65rem;color:var(--muted);"></div>
     </div>
 
-    <!-- MacroDroid Setup -->
-    <div style="background:rgba(255,215,0,0.04);border:1px solid rgba(255,215,0,0.2);border-radius:14px;padding:14px;margin-bottom:14px;">
-      <div style="font-weight:700;font-size:0.8rem;color:var(--gold);margin-bottom:10px;">⚙️ Configuration MacroDroid</div>
-      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px;line-height:1.6;">
-        Dans MacroDroid : <b style="color:var(--text)">Déclencheur → Notification reçue → App : Waafi</b><br>
-        Action → <b style="color:var(--text)">HTTP Request → POST</b> avec l'URL et le Body ci-dessous.
-      </div>
-
-      <div style="margin-bottom:8px;">
-        <div style="font-size:0.68rem;color:var(--muted);margin-bottom:4px;">URL (HTTP Request)</div>
-        <div style="display:flex;gap:6px;align-items:stretch;">
-          <div style="flex:1;background:rgba(0,0,0,0.3);border-radius:8px;padding:8px 10px;font-size:0.65rem;color:#adf;word-break:break-all;font-family:monospace;">https://europe-west1-kaffi-pay.cloudfunctions.net/smsWebhook</div>
-          <button id="copy-macro-url-btn" onclick="copyMacroUrl()" style="background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:8px 10px;font-size:0.7rem;cursor:pointer;white-space:nowrap;">📋 Copier URL</button>
-        </div>
-      </div>
-
-      <div style="margin-bottom:10px;">
-        <div style="font-size:0.68rem;color:var(--muted);margin-bottom:4px;">Body (Content-Type: application/json)</div>
-        <div style="display:flex;gap:6px;align-items:stretch;">
-          <div id="macro-body-text" style="flex:1;background:rgba(0,0,0,0.3);border-radius:8px;padding:8px 10px;font-size:0.65rem;color:#adf;word-break:break-all;font-family:monospace;">{"notification":"{notification}","secret":"Kafia&amp;77105640"}</div>
-          <button id="copy-macro-body-btn" onclick="copyMacroBody()" style="background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:8px 10px;font-size:0.7rem;cursor:pointer;white-space:nowrap;">📋 Copier Body</button>
-        </div>
-      </div>
-
-      <button onclick="testMacroDroid()" style="width:100%;background:rgba(0,212,160,0.15);border:1px solid rgba(0,212,160,0.3);color:#00d4a0;border-radius:8px;padding:9px;font-size:0.76rem;font-weight:600;cursor:pointer;">🧪 Tester la connexion MacroDroid</button>
-      <div id="macro-status" style="display:none;margin-top:8px;font-size:0.72rem;text-align:center;padding:6px;border-radius:6px;background:rgba(0,0,0,0.2);"></div>
-    </div>
-
     <div id="waafi-sms-list" style="display:flex;flex-direction:column;gap:7px;">
       <div style="text-align:center;padding:30px;color:var(--muted);font-size:0.78rem;">
         <div style="font-size:1.8rem;margin-bottom:8px;">📡</div>
@@ -3330,70 +3302,6 @@ function renderNotifs(){ /* removed */ }
 function clearNotifs(){ /* removed */ }
 
 // ══════════════════════════════════════════════════════════════════
-// MACRODROID HELPERS — Config & Test
-// ══════════════════════════════════════════════════════════════════
-var MACRO_URL = 'https://europe-west1-kaffi-pay.cloudfunctions.net/smsWebhook';
-var MACRO_BODY = document.getElementById('macro-body-text') ? document.getElementById('macro-body-text').textContent : '';
-
-function copyMacroUrl(){
-  var btn = document.getElementById('copy-macro-url-btn');
-  navigator.clipboard.writeText(MACRO_URL).then(function(){
-    btn.textContent = '✅ Copié !';
-    setTimeout(function(){ btn.textContent = '📋 Copier URL'; }, 2000);
-    showToast('✅ URL copiée !', 'success');
-  }).catch(function(){
-    var el=document.createElement('input');el.value=MACRO_URL;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);
-    btn.textContent = '✅ Copié !';
-    setTimeout(function(){ btn.textContent = '📋 Copier URL'; }, 2000);
-    showToast('✅ URL copiée !', 'success');
-  });
-}
-
-function copyMacroBody(){
-  var btn = document.getElementById('copy-macro-body-btn');
-  navigator.clipboard.writeText(MACRO_BODY).then(function(){
-    btn.textContent = '✅ Copié !';
-    setTimeout(function(){ btn.textContent = '📋 Copier Body'; }, 2000);
-    showToast('✅ Body copié !', 'success');
-  }).catch(function(){
-    var el=document.createElement('input');el.value=MACRO_BODY;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);
-    btn.textContent = '✅ Copié !';
-    setTimeout(function(){ btn.textContent = '📋 Copier Body'; }, 2000);
-    showToast('✅ Body copié !', 'success');
-  });
-}
-
-async function testMacroDroid(){
-  var st = document.getElementById('macro-status');
-  if(st){ st.style.display='block'; st.textContent = '⏳ Test en cours...'; st.style.color='var(--warning)'; }
-  showToast('⏳ Envoi SMS test vers smsWebhook...', 'warning');
-
-  var bodyTpl = (document.getElementById('macro-body-text')||{}).textContent||'';
-  var testNotif = 'Transfer-Id: 99999999, You have Received DJF 1000 from Test Client(77000000), Your Balance is: DJF 1000.';
-  var testData = JSON.parse(bodyTpl.replace('{notification}', testNotif).replace(/{[^}]+}/g,'test'));
-
-  try {
-    var resp = await fetch(MACRO_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(testData)
-    });
-    var result = await resp.json();
-    if(resp.ok && result.success){
-      if(st){ st.textContent = '✅ Test réussi ! SMS simulé reçu — vérifiez Telegram et la liste ci-dessous.'; st.style.color='var(--success)'; }
-      showToast('✅ Test MacroDroid réussi — Telegram devrait recevoir la notification !', 'success');
-    } else {
-      var errMsg = result.error || JSON.stringify(result);
-      if(st){ st.textContent = '❌ Erreur: ' + errMsg; st.style.color='var(--error)'; }
-      showToast('❌ Erreur: ' + String(errMsg).substring(0,60), 'error');
-    }
-  } catch(e) {
-    if(st){ st.textContent = '❌ Erreur réseau: ' + e.message; st.style.color='var(--error)'; }
-    showToast('❌ Erreur réseau — vérifie ta connexion', 'error');
-  }
-
-  setTimeout(function(){ if(st) st.style.display='none'; }, 7000);
-}
 
 function clearNotifs(){
   _notifsLog = [];
@@ -3924,9 +3832,6 @@ function setDashPeriod(p,el){
 try {
   if(typeof _checkPass!=="undefined") window._checkPass=_checkPass;
   if(typeof listenWaafiSms!=="undefined") window.listenWaafiSms=listenWaafiSms;
-  if(typeof testMacroDroid!=="undefined") window.testMacroDroid=testMacroDroid;
-  if(typeof copyMacroUrl!=="undefined") window.copyMacroUrl=copyMacroUrl;
-  if(typeof copyMacroBody!=="undefined") window.copyMacroBody=copyMacroBody;
   if(typeof startSmsListener!=="undefined") window.startSmsListener=startSmsListener;
   if(typeof saveTxFirebaseWithTimer!=="undefined") window.saveTxFirebaseWithTimer=saveTxFirebaseWithTimer;
   if(typeof demarrerTimerRejet!=="undefined") window.demarrerTimerRejet=demarrerTimerRejet;
