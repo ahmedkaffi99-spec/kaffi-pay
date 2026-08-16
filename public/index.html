@@ -866,6 +866,35 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div style="font-family:'Playfair Display',serif;font-size:0.9rem;font-weight:700;">📨 Notifications Waafi</div>
       <div id="waafi-sms-count" style="font-size:0.65rem;color:var(--muted);"></div>
     </div>
+
+    <!-- MacroDroid Setup -->
+    <div style="background:rgba(255,215,0,0.04);border:1px solid rgba(255,215,0,0.2);border-radius:14px;padding:14px;margin-bottom:14px;">
+      <div style="font-weight:700;font-size:0.8rem;color:var(--gold);margin-bottom:10px;">⚙️ Configuration MacroDroid</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px;line-height:1.6;">
+        Dans MacroDroid : <b style="color:var(--text)">Déclencheur → Notification reçue → App : Waafi</b><br>
+        Action → <b style="color:var(--text)">HTTP Request → POST</b> avec l'URL et le Body ci-dessous.
+      </div>
+
+      <div style="margin-bottom:8px;">
+        <div style="font-size:0.68rem;color:var(--muted);margin-bottom:4px;">URL (HTTP Request)</div>
+        <div style="display:flex;gap:6px;align-items:stretch;">
+          <div style="flex:1;background:rgba(0,0,0,0.3);border-radius:8px;padding:8px 10px;font-size:0.65rem;color:#adf;word-break:break-all;font-family:monospace;">https://firestore.googleapis.com/v1/projects/kaffi-pay/databases/(default)/documents/waafi_notifications</div>
+          <button id="copy-macro-url-btn" onclick="copyMacroUrl()" style="background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:8px 10px;font-size:0.7rem;cursor:pointer;white-space:nowrap;">📋 Copier URL</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom:10px;">
+        <div style="font-size:0.68rem;color:var(--muted);margin-bottom:4px;">Body (Content-Type: application/json)</div>
+        <div style="display:flex;gap:6px;align-items:stretch;">
+          <div style="flex:1;background:rgba(0,0,0,0.3);border-radius:8px;padding:8px 10px;font-size:0.65rem;color:#adf;word-break:break-all;font-family:monospace;">{"fields":{"not_title":{"stringValue":"{not_title}"},"notification":{"stringValue":"{notification}"},"status":{"stringValue":"nouveau"}}}</div>
+          <button id="copy-macro-body-btn" onclick="copyMacroBody()" style="background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:8px 10px;font-size:0.7rem;cursor:pointer;white-space:nowrap;">📋 Copier Body</button>
+        </div>
+      </div>
+
+      <button onclick="testMacroDroid()" style="width:100%;background:rgba(0,212,160,0.15);border:1px solid rgba(0,212,160,0.3);color:#00d4a0;border-radius:8px;padding:9px;font-size:0.76rem;font-weight:600;cursor:pointer;">🧪 Tester la connexion MacroDroid</button>
+      <div id="macro-status" style="display:none;margin-top:8px;font-size:0.72rem;text-align:center;padding:6px;border-radius:6px;background:rgba(0,0,0,0.2);"></div>
+    </div>
+
     <div id="waafi-sms-list" style="display:flex;flex-direction:column;gap:7px;">
       <div style="text-align:center;padding:30px;color:var(--muted);font-size:0.78rem;">
         <div style="font-size:1.8rem;margin-bottom:8px;">📡</div>
