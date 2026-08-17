@@ -36,12 +36,13 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // SMS Waafi — MacroDroid crée, admin lit, personne ne modifie/supprime
+    // SMS Waafi — MacroDroid crée, admin lit et met à jour le statut
     match /waafi_notifications/{docId} {
       allow read: if true;
       allow create: if request.resource.data.keys().hasAll(['not_title', 'notification', 'status'])
                    && request.resource.data.status == 'nouveau';
-      allow update, delete: if false;
+      allow update: if isAdmin();
+      allow delete: if false;
     }
 
     // Config (taux, agents) — lecture publique, écriture admin
