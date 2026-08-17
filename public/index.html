@@ -217,11 +217,6 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 .submit-btn{width:100%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#07101e;border:none;border-radius:999px;padding:13px;font-family:'DM Sans',sans-serif;font-size:.94rem;font-weight:700;cursor:pointer;transition:all .25s;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;box-shadow:0 4px 18px rgba(255,215,0,.2);}
 .submit-btn:hover{transform:translateY(-2px);}
 .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
-.math-captcha{display:flex;align-items:center;justify-content:center;gap:10px;margin:14px 0 6px;padding:10px 14px;background:var(--card2,rgba(255,255,255,.05));border:1px solid rgba(255,215,0,.25);border-radius:12px;font-size:.9rem;color:var(--muted);}
-.math-captcha span{font-weight:600;color:var(--gold);letter-spacing:.02em;white-space:nowrap;}
-.math-captcha input{background:transparent;border:1px solid rgba(255,215,0,.4);border-radius:8px;padding:6px 4px;color:var(--text,#fff);font-size:.95rem;font-family:'DM Sans',sans-serif;outline:none;}
-.math-captcha input:focus{border-color:var(--gold);}
-.math-captcha input.ok{border-color:#4caf50;color:#4caf50;}
 .spinner{width:14px;height:14px;border:2px solid rgba(10,18,32,.3);border-top-color:#07101e;border-radius:50%;animation:spin .7s linear infinite;display:none;}
 .support-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:14px;padding:11px;border-radius:999px;border:1px solid rgba(37,211,102,.25);background:rgba(37,211,102,.05);color:#25d366;font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:600;text-decoration:none;transition:all .2s;}
 .support-btn:hover{background:rgba(37,211,102,.1);}
@@ -539,12 +534,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
 
-      <div class="math-captcha" id="captcha-depot">
-        <span id="captcha-depot-q"></span>
-        <input type="number" id="captcha-depot-ans" inputmode="numeric" placeholder="?" oninput="checkCaptchaDepot()" autocomplete="off" style="width:58px;text-align:center;">
-      </div>
-
-      <button class="submit-btn" onclick="submitDepot()" id="depot-btn" disabled style="opacity:.5;cursor:not-allowed;">
+      <button class="submit-btn" onclick="submitDepot()" id="depot-btn">
         <span id="depot-btn-text" data-i18n="submit-order">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="depot-spinner"></div>
       </button>
@@ -613,12 +603,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
 
-      <div class="math-captcha" id="captcha-retrait">
-        <span id="captcha-retrait-q"></span>
-        <input type="number" id="captcha-retrait-ans" inputmode="numeric" placeholder="?" oninput="checkCaptchaRetrait()" autocomplete="off" style="width:58px;text-align:center;">
-      </div>
-
-      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn" disabled style="opacity:.5;cursor:not-allowed;">
+      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn">
         <span id="retrait-btn-text" data-i18n="submit-order">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="retrait-spinner"></div>
       </button>
@@ -634,28 +619,28 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div class="faq-title">❓ Questions fréquentes</div>
 
     <div class="faq-item" onclick="toggleFaq(this)">
-      <div class="faq-question"><span>Comment effectuer un dépôt 1xBet ?</span><span class="faq-icon">+</span></div>
-      <div class="faq-answer">Saisissez le montant, votre ID 1xBet et le Transfer ID Waafi. Envoyez d'abord votre paiement au numéro Waafi indiqué, puis soumettez le formulaire. Votre compte sera crédité après vérification.</div>
+      <div class="faq-question"><span data-i18n="faq-q1">Comment effectuer un dépôt 1xBet ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer" data-i18n="faq-a1">Saisissez le montant, votre ID 1xBet et le Transfer ID Waafi. Envoyez d'abord votre paiement au numéro Waafi indiqué, puis soumettez le formulaire. Votre compte sera crédité après vérification.</div>
     </div>
 
     <div class="faq-item" onclick="toggleFaq(this)">
-      <div class="faq-question"><span>Quels sont les délais de traitement ?</span><span class="faq-icon">+</span></div>
-      <div class="faq-answer">Le traitement est entièrement automatique, 24h/24 et 7j/7. Votre ordre est traité en quelques secondes après vérification de votre paiement.</div>
+      <div class="faq-question"><span data-i18n="faq-q2">Quels sont les délais de traitement ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer" data-i18n="faq-a2">Le traitement est entièrement automatique, 24h/24 et 7j/7. Votre ordre est traité en quelques secondes après vérification de votre paiement.</div>
     </div>
 
     <div class="faq-item" onclick="toggleFaq(this)">
-      <div class="faq-question"><span>Y a-t-il des frais sur les échanges ?</span><span class="faq-icon">+</span></div>
-      <div class="faq-answer">Non, Baki-Pay ne prend aucun frais supplémentaire. Le montant que vous envoyez correspond exactement au montant crédité sur votre compte 1xBet.</div>
+      <div class="faq-question"><span data-i18n="faq-q3">Y a-t-il des frais sur les échanges ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer" data-i18n="faq-a3">Non, Baki-Pay ne prend aucun frais supplémentaire. Le montant que vous envoyez correspond exactement au montant crédité sur votre compte 1xBet.</div>
     </div>
 
     <div class="faq-item" onclick="toggleFaq(this)">
-      <div class="faq-question"><span>Mon paiement n'est pas confirmé, que faire ?</span><span class="faq-icon">+</span></div>
-      <div class="faq-answer">Vérifiez que le Transfer ID Waafi saisi est correct. Si votre ordre reste en attente plus de 30 minutes, contactez le support via le bouton WhatsApp/Telegram ci-dessus avec votre numéro d'ordre.</div>
+      <div class="faq-question"><span data-i18n="faq-q4">Mon paiement n'est pas confirmé, que faire ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer" data-i18n="faq-a4">Vérifiez que le Transfer ID Waafi saisi est correct. Si votre ordre reste en attente plus de 30 minutes, contactez le support via le bouton WhatsApp/Telegram ci-dessus avec votre numéro d'ordre.</div>
     </div>
 
     <div class="faq-item" onclick="toggleFaq(this)">
-      <div class="faq-question"><span>Quel est le montant minimum et maximum ?</span><span class="faq-icon">+</span></div>
-      <div class="faq-answer">Le minimum est de 50 DJF pour un dépôt et 250 DJF pour un retrait. Il n'y a pas de maximum fixe, mais les ordres élevés peuvent nécessiter une vérification supplémentaire.</div>
+      <div class="faq-question"><span data-i18n="faq-q5">Quel est le montant minimum et maximum ?</span><span class="faq-icon">+</span></div>
+      <div class="faq-answer" data-i18n="faq-a5">Le minimum est de 50 DJF pour un dépôt et 250 DJF pour un retrait. Il n'y a pas de maximum fixe, mais les ordres élevés peuvent nécessiter une vérification supplémentaire.</div>
     </div>
 
   </div>
@@ -1206,8 +1191,6 @@ function _verifyFirebaseAuth(savedEmail){
 // Assurer que l'écran login est toujours visible si affiché
 document.querySelectorAll('.screen').forEach(function(s){ s.style.opacity='1'; });
 window.addEventListener('DOMContentLoaded', function(){
-  initCaptchaDepot();
-  initCaptchaRetrait();
   checkURLAdmin();
   // Démarrer écoute Firebase dès le chargement (pour suivi client)
   // Robuste : attend Firebase même si l'event a déjà tiré
@@ -1715,33 +1698,8 @@ async function genererOrderId(){
   return dayKey+n;
 }
 
-// Math captcha — no external requests
-var _captchaDepotAns=0, _captchaRetraitAns=0;
-function _genCaptcha(qId,ansInput,expectedVar){
-  var a=Math.floor(Math.random()*9)+1, b=Math.floor(Math.random()*9)+1;
-  document.getElementById(qId).textContent='Vérification : '+a+' + '+b+' = ?';
-  document.getElementById(ansInput).value='';
-  document.getElementById(ansInput).className='';
-  return a+b;
-}
-function initCaptchaDepot(){ _captchaDepotAns=_genCaptcha('captcha-depot-q','captcha-depot-ans'); }
-function initCaptchaRetrait(){ _captchaRetraitAns=_genCaptcha('captcha-retrait-q','captcha-retrait-ans'); }
-function checkCaptchaDepot(){
-  var v=parseInt(document.getElementById('captcha-depot-ans').value,10);
-  var ok=(v===_captchaDepotAns);
-  document.getElementById('captcha-depot-ans').className=ok?'ok':'';
-  var b=document.getElementById('depot-btn');
-  b.disabled=!ok; b.style.opacity=ok?'1':'.5'; b.style.cursor=ok?'pointer':'not-allowed';
-}
-function checkCaptchaRetrait(){
-  var v=parseInt(document.getElementById('captcha-retrait-ans').value,10);
-  var ok=(v===_captchaRetraitAns);
-  document.getElementById('captcha-retrait-ans').className=ok?'ok':'';
-  var b=document.getElementById('retrait-btn');
-  b.disabled=!ok; b.style.opacity=ok?'1':'.5'; b.style.cursor=ok?'pointer':'not-allowed';
-}
-function _resetTsDepot(){ initCaptchaDepot(); var b=document.getElementById('depot-btn'); b.disabled=true; b.style.opacity='.5'; b.style.cursor='not-allowed'; }
-function _resetTsRetrait(){ initCaptchaRetrait(); var b=document.getElementById('retrait-btn'); b.disabled=true; b.style.opacity='.5'; b.style.cursor='not-allowed'; }
+function _resetTsDepot(){}
+function _resetTsRetrait(){}
 
 async function submitDepot(){
   const m=document.getElementById('depot-montant').value;
@@ -3973,7 +3931,17 @@ var KP_LANGS = {
     'label-waafi-retrait': '📞 Votre numéro Waafi',
     'label-amount-retrait':'💵 Montant (min. 250 DJF)',
     'label-whatsapp-retrait':'💬 Votre numéro WhatsApp',
-    'support-btn':         '💬 Support Baki-Pay'
+    'support-btn':         '💬 Support Baki-Pay',
+    'faq-q1': 'Comment effectuer un dépôt 1xBet ?',
+    'faq-a1': 'Saisissez le montant, votre ID 1xBet et le Transfer ID Waafi. Envoyez d\'abord votre paiement au numéro Waafi indiqué, puis soumettez le formulaire. Votre compte sera crédité après vérification.',
+    'faq-q2': 'Quels sont les délais de traitement ?',
+    'faq-a2': 'Le traitement est entièrement automatique, 24h/24 et 7j/7. Votre ordre est traité en quelques secondes après vérification de votre paiement.',
+    'faq-q3': 'Y a-t-il des frais sur les échanges ?',
+    'faq-a3': 'Non, Baki-Pay ne prend aucun frais supplémentaire. Le montant que vous envoyez correspond exactement au montant crédité sur votre compte 1xBet.',
+    'faq-q4': 'Mon paiement n\'est pas confirmé, que faire ?',
+    'faq-a4': 'Vérifiez que le Transfer ID Waafi saisi est correct. Si votre ordre reste en attente plus de 30 minutes, contactez le support via le bouton WhatsApp/Telegram ci-dessus avec votre numéro d\'ordre.',
+    'faq-q5': 'Quel est le montant minimum et maximum ?',
+    'faq-a5': 'Le minimum est de 50 DJF pour un dépôt et 250 DJF pour un retrait. Il n\'y a pas de maximum fixe, mais les ordres élevés peuvent nécessiter une vérification supplémentaire.'
   },
   en: {
     'slogan':              '1xBet ↔ Waafi Exchange · Djibouti',
@@ -4010,7 +3978,17 @@ var KP_LANGS = {
     'label-waafi-retrait': '📞 Your Waafi number',
     'label-amount-retrait':'💵 Amount (min. 250 DJF)',
     'label-whatsapp-retrait':'💬 Your WhatsApp number',
-    'support-btn':         '💬 Baki-Pay Support'
+    'support-btn':         '💬 Baki-Pay Support',
+    'faq-q1': 'How to make a 1xBet deposit?',
+    'faq-a1': 'Enter the amount, your 1xBet ID and the Waafi Transfer ID. First send your payment to the indicated Waafi number, then submit the form. Your account will be credited after verification.',
+    'faq-q2': 'What are the processing times?',
+    'faq-a2': 'Processing is fully automatic, 24/7. Your order is processed within seconds after payment verification.',
+    'faq-q3': 'Are there any fees on exchanges?',
+    'faq-a3': 'No, Baki-Pay charges no additional fees. The amount you send is exactly the amount credited to your 1xBet account.',
+    'faq-q4': 'My payment is not confirmed, what should I do?',
+    'faq-a4': 'Check that the Waafi Transfer ID entered is correct. If your order remains pending for more than 30 minutes, contact support via the WhatsApp/Telegram button above with your order number.',
+    'faq-q5': 'What is the minimum and maximum amount?',
+    'faq-a5': 'The minimum is 50 DJF for a deposit and 250 DJF for a withdrawal. There is no fixed maximum, but large orders may require additional verification.'
   },
   so: {
     'slogan':              '1xBet ↔ Waafi Beddelka · Jabuuti',
@@ -4047,7 +4025,17 @@ var KP_LANGS = {
     'label-waafi-retrait': '📞 Lambarka Waafi',
     'label-amount-retrait':'💵 Xaddiga (ugu yaraan 250 DJF)',
     'label-whatsapp-retrait':'💬 Lambarka WhatsApp',
-    'support-btn':         '💬 Taageerada Baki-Pay'
+    'support-btn':         '💬 Taageerada Baki-Pay',
+    'faq-q1': 'Sidee loo sameeya gelinta 1xBet?',
+    'faq-a1': 'Gali xaddiga, ID-gaaga 1xBet iyo Transfer ID Waafi. Marka hore lacagta u dir lambarka Waafi ee la siiyay, ka dibna codsiga gudbi. Xisaabkaaga waxaa lagu xidid ka dib xaqiijinta.',
+    'faq-q2': 'Waa maxay waqtiga hawlgalka?',
+    'faq-a2': 'Hawlgalku waa otomaatig oo dhan, 24/7. Codsigaagu wuxuu la xidid dhowr ilbiriqsi gudahood xaqiijinta lacag-bixinta ka dib.',
+    'faq-q3': 'Ma jiraan kharash dheeraad ah?',
+    'faq-a3': 'Maya, Baki-Pay kuma qaato kharash dheeraad ah. Xaddiga aad diraysid wuxuu u dhigmaa xaddiga xisaabkaaga 1xBet lagu xidid.',
+    'faq-q4': 'Lacag-bixintayda lama xaqiijin, maxaan sameeyaa?',
+    'faq-a4': 'Hubi in Transfer ID Waafi ee la gelinay uu sax yahay. Haddii codsigaagu uu sugi yahay in ka badan 30 daqiiqo, la xiriir taageerada iyada oo la adeegsanayo badhanka WhatsApp/Telegram ee kore oo leh lambarka codsigaaga.',
+    'faq-q5': 'Waa maxay xaddiga ugu yar iyo ugu badan?',
+    'faq-a5': 'Xaddiga ugu yar waa 50 DJF gelinta iyo 250 DJF bixinta. Xad aad ah oo go\'an ma jiro, laakiin amarka weyn waxay u baahan karaan xaqiijin dheeraad ah.'
   }
 };
 
