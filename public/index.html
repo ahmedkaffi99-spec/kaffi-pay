@@ -217,6 +217,11 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 .submit-btn{width:100%;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#07101e;border:none;border-radius:999px;padding:13px;font-family:'DM Sans',sans-serif;font-size:.94rem;font-weight:700;cursor:pointer;transition:all .25s;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;box-shadow:0 4px 18px rgba(255,215,0,.2);}
 .submit-btn:hover{transform:translateY(-2px);}
 .submit-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
+.math-captcha{display:flex;align-items:center;justify-content:center;gap:10px;margin:14px 0 6px;padding:10px 14px;background:var(--card2,rgba(255,255,255,.05));border:1px solid rgba(255,215,0,.25);border-radius:12px;font-size:.9rem;color:var(--muted);}
+.math-captcha span{font-weight:600;color:var(--gold);letter-spacing:.02em;white-space:nowrap;}
+.math-captcha input{background:transparent;border:1px solid rgba(255,215,0,.4);border-radius:8px;padding:6px 4px;color:var(--text,#fff);font-size:.95rem;font-family:'DM Sans',sans-serif;outline:none;}
+.math-captcha input:focus{border-color:var(--gold);}
+.math-captcha input.ok{border-color:#4caf50;color:#4caf50;}
 .spinner{width:14px;height:14px;border:2px solid rgba(10,18,32,.3);border-top-color:#07101e;border-radius:50%;animation:spin .7s linear infinite;display:none;}
 .support-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:14px;padding:11px;border-radius:999px;border:1px solid rgba(37,211,102,.25);background:rgba(37,211,102,.05);color:#25d366;font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:600;text-decoration:none;transition:all .2s;}
 .support-btn:hover{background:rgba(37,211,102,.1);}
@@ -534,7 +539,12 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
 
-      <button class="submit-btn" onclick="submitDepot()" id="depot-btn">
+      <div class="math-captcha" id="captcha-depot">
+        <span id="captcha-depot-q"></span>
+        <input type="number" id="captcha-depot-ans" inputmode="numeric" placeholder="?" oninput="checkCaptchaDepot()" autocomplete="off" style="width:58px;text-align:center;">
+      </div>
+
+      <button class="submit-btn" onclick="submitDepot()" id="depot-btn" disabled style="opacity:.5;cursor:not-allowed;">
         <span id="depot-btn-text" data-i18n="submit-order">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="depot-spinner"></div>
       </button>
@@ -603,7 +613,12 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
 
-      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn">
+      <div class="math-captcha" id="captcha-retrait">
+        <span id="captcha-retrait-q"></span>
+        <input type="number" id="captcha-retrait-ans" inputmode="numeric" placeholder="?" oninput="checkCaptchaRetrait()" autocomplete="off" style="width:58px;text-align:center;">
+      </div>
+
+      <button class="submit-btn" onclick="submitRetrait()" id="retrait-btn" disabled style="opacity:.5;cursor:not-allowed;">
         <span id="retrait-btn-text" data-i18n="submit-order">⚡ Soumettre l'Ordre</span>
         <div class="spinner" id="retrait-spinner"></div>
       </button>
@@ -1191,6 +1206,8 @@ function _verifyFirebaseAuth(savedEmail){
 // Assurer que l'écran login est toujours visible si affiché
 document.querySelectorAll('.screen').forEach(function(s){ s.style.opacity='1'; });
 window.addEventListener('DOMContentLoaded', function(){
+  initCaptchaDepot();
+  initCaptchaRetrait();
   checkURLAdmin();
   // Démarrer écoute Firebase dès le chargement (pour suivi client)
   // Robuste : attend Firebase même si l'event a déjà tiré
@@ -1698,8 +1715,33 @@ async function genererOrderId(){
   return dayKey+n;
 }
 
-function _resetTsDepot(){}
-function _resetTsRetrait(){}
+// Math captcha — no external requests
+var _captchaDepotAns=0, _captchaRetraitAns=0;
+function _genCaptcha(qId,ansInput){
+  var a=Math.floor(Math.random()*9)+1, b=Math.floor(Math.random()*9)+1;
+  document.getElementById(qId).textContent='Vérification : '+a+' + '+b+' = ?';
+  document.getElementById(ansInput).value='';
+  document.getElementById(ansInput).className='';
+  return a+b;
+}
+function initCaptchaDepot(){ _captchaDepotAns=_genCaptcha('captcha-depot-q','captcha-depot-ans'); }
+function initCaptchaRetrait(){ _captchaRetraitAns=_genCaptcha('captcha-retrait-q','captcha-retrait-ans'); }
+function checkCaptchaDepot(){
+  var v=parseInt(document.getElementById('captcha-depot-ans').value,10);
+  var ok=(v===_captchaDepotAns);
+  document.getElementById('captcha-depot-ans').className=ok?'ok':'';
+  var b=document.getElementById('depot-btn');
+  b.disabled=!ok; b.style.opacity=ok?'1':'.5'; b.style.cursor=ok?'pointer':'not-allowed';
+}
+function checkCaptchaRetrait(){
+  var v=parseInt(document.getElementById('captcha-retrait-ans').value,10);
+  var ok=(v===_captchaRetraitAns);
+  document.getElementById('captcha-retrait-ans').className=ok?'ok':'';
+  var b=document.getElementById('retrait-btn');
+  b.disabled=!ok; b.style.opacity=ok?'1':'.5'; b.style.cursor=ok?'pointer':'not-allowed';
+}
+function _resetTsDepot(){ initCaptchaDepot(); var b=document.getElementById('depot-btn'); b.disabled=true; b.style.opacity='.5'; b.style.cursor='not-allowed'; }
+function _resetTsRetrait(){ initCaptchaRetrait(); var b=document.getElementById('retrait-btn'); b.disabled=true; b.style.opacity='.5'; b.style.cursor='not-allowed'; }
 
 async function submitDepot(){
   const m=document.getElementById('depot-montant').value;
