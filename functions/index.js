@@ -1422,8 +1422,11 @@ exports.smsWebhook = onRequest(
     const transferId = extractTransferId(notif);
     const montant    = extractMontant(notif);
     const numClient  = extractNumClient(notif);
+    const token      = TELEGRAM_TOKEN.value();
+    const adminId    = TELEGRAM_ADMIN_ID.value();
 
-    const docRef = await db.collection("waafi_notifications").add({
+    // Sauvegarder Firestore en parallèle avec Telegram — avant de répondre
+    const docRefPromise = db.collection("waafi_notifications").add({
       notification: notif, transferId, montant, numClient,
       secret: expectedSecret, source: "macrodroid",
       status: "reçu",
@@ -1431,21 +1434,23 @@ exports.smsWebhook = onRequest(
       createdAt: FieldValue.serverTimestamp(),
     });
 
+    let telegramPromise = Promise.resolve();
+    if (transferId || montant) {
+      const smsMsgWebhook = `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
+        `Transfer-ID: <code>${transferId || "?"}</code>\n` +
+        `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
+        `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
+        `<i>✅ En attente de l'ordre client — confirmation automatique dès soumission.</i>`;
+      telegramPromise = Promise.allSettled([
+        sendTelegram(token, adminId, smsMsgWebhook),
+        notifyPaiementAgents(token, smsMsgWebhook),
+      ]);
+    }
+
+    // Attendre Firestore + Telegram avant de répondre à MacroDroid
+    const [docRef] = await Promise.all([docRefPromise, telegramPromise]);
+
     res.json({ success: true, id: docRef.id });
-
-    // Alerte admin — exécuté après la réponse
-    const token   = TELEGRAM_TOKEN.value();
-    const adminId = TELEGRAM_ADMIN_ID.value();
-
-    if (!transferId && !montant) return; // SMS non parsable
-
-    const smsMsgWebhook = `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
-      `Transfer-ID: <code>${transferId || "?"}</code>\n` +
-      `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
-      `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
-      `<i>✅ En attente de l'ordre client — confirmation automatique dès soumission.</i>`;
-    await sendTelegram(token, adminId, smsMsgWebhook);
-    await notifyPaiementAgents(token, smsMsgWebhook).catch(() => {});
 
     // Cas rare : ordre déjà soumis avant que le SMS arrive
     if (!transferId) return;
