@@ -399,7 +399,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
 <!-- ══ ÉCRAN LOGIN ══ -->
 <div class="screen" id="screen-login" style="opacity:1;transition:opacity 0.2s;">
-  <button onclick="showScreen('client')" style="position:absolute;top:16px;right:16px;z-index:10;background:none;border:none;color:rgba(255,255,255,.5);font-size:.82rem;cursor:pointer;padding:6px 10px;border-radius:8px;transition:color .2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,.5)'">← Accueil</button>
+  <button onclick="showScreen('client')" style="position:absolute;top:16px;right:16px;z-index:10;background:none;border:none;color:rgba(255,255,255,.5);font-size:.82rem;cursor:pointer;padding:6px 10px;border-radius:8px;transition:color .2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,.5)'" data-i18n="btn-back">← Accueil</button>
   <div id="login-screen">
     <div class="login-box">
       <div class="login-logo-area">
@@ -412,17 +412,17 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="login-field"><label>Mot de passe</label><div style="position:relative"><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px;width:100%;box-sizing:border-box"><button type="button" onclick="toggleLoginPass()" id="login-eye-btn" style="position:absolute;right:13px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.05rem;padding:0;line-height:1;-webkit-tap-highlight-color:transparent" aria-label="Voir le mot de passe">👁</button></div></div>
       </div>
 
-      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;" data-nosnippet>🔓 Connexion</button>
+      <button class="login-btn" id="login-main-btn" onclick="doLogin()" style="display:none;" data-nosnippet data-i18n="btn-login">🔓 Connexion</button>
 
       <div id="login-or-sep" style="display:none;align-items:center;gap:8px;margin:10px 0;" data-nosnippet>
         <div style="flex:1;height:1px;background:rgba(255,255,255,.1)"></div>
-        <span style="font-size:.72rem;color:var(--muted);white-space:nowrap">OU</span>
+        <span style="font-size:.72rem;color:var(--muted);white-space:nowrap" data-i18n="login-or">OU</span>
         <div style="flex:1;height:1px;background:rgba(255,255,255,.1)"></div>
       </div>
 
       <button class="login-btn" id="login-google-btn" onclick="doGoogleLogin()" style="display:none;background:linear-gradient(135deg,#4285f4,#1565c0);margin-top:0;" data-nosnippet>
         <svg width="17" height="17" viewBox="0 0 48 48" style="vertical-align:middle;margin-right:6px;flex-shrink:0"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.1 8 3l5.7-5.7C34.5 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 16 19 12 24 12c3.1 0 5.9 1.1 8 3l5.7-5.7C34.5 6.1 29.6 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 10-.2 13.6-3.2l-6.3-4.8C29.3 37.7 26.8 38 24 38c-5.2 0-9.7-3.1-11.3-7.6L6 35.3C9.4 40.8 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.3 5.7l6.3 4.8C41.2 35 44 30 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
-        Se connecter avec Google
+        <span data-i18n="btn-google">Se connecter avec Google</span>
       </button>
       <div class="login-error" id="login-error"></div>
       <div class="login-attempts" id="login-attempts"></div>
@@ -450,7 +450,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         </div>
         <button id="theme-toggle" onclick="toggleTheme()" title="Mode clair/sombre">🌙</button>
       </div>
-      <button id="pwa-install-btn" onclick="triggerInstall()" style="display:none;background:linear-gradient(135deg,#f5d020,#f5a623);border:none;border-radius:999px;padding:5px 12px;font-size:0.62rem;font-weight:700;color:#07101e;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;box-shadow:0 2px 10px rgba(245,166,35,0.4);">⬇ Installer l'app</button>
+      <button id="pwa-install-btn" onclick="triggerInstall()" style="display:none;background:linear-gradient(135deg,#f5d020,#f5a623);border:none;border-radius:999px;padding:5px 12px;font-size:0.62rem;font-weight:700;color:#07101e;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;box-shadow:0 2px 10px rgba(245,166,35,0.4);" data-i18n="btn-install">⬇ Installer l'app</button>
     </div>
   </div>
 
@@ -464,7 +464,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="promo-label" data-i18n="promo-label">🎁 Code promo pour réduire vos pertes :</div>
         <div class="promo-code">kaffi10</div>
       </div>
-      <button id="copyBtn" onclick="copyPromo()" style="display:flex;align-items:center;gap:5px;background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.35);color:var(--gold);border-radius:8px;padding:7px 13px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Copier</button>
+      <button id="copyBtn" onclick="copyPromo()" style="display:flex;align-items:center;gap:5px;background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.35);color:var(--gold);border-radius:8px;padding:7px 13px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;" data-i18n="btn-copy">📋 Copier</button>
     </div>
   </section>
 
@@ -485,7 +485,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
           <div class="pay-label" data-i18n="label-waafi-num">📱 Numéro Waafi</div>
           <div class="pay-val" style="display:flex;align-items:center;gap:8px;">
             <span class="pay-num">77275572</span>
-            <button onclick="copyPayNum('77275572',this)" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:5px 10px;font-size:0.72rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s;">📋 Copier</button>
+            <button onclick="copyPayNum('77275572',this)" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:5px 10px;font-size:0.72rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s;" data-i18n="btn-copy">📋 Copier</button>
           </div>
         </div>
         <div class="payment-row">
@@ -498,7 +498,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-method">💳 Méthode de paiement</label>
         <div class="method-display">
           <div class="method-logo" style="background:transparent;padding:0;overflow:hidden;"><img src="data:image/jpeg;base64,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" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"></div>
-          <div><div class="method-name">Waafi</div><div class="method-tag">Paiement instantané</div></div>
+          <div><div class="method-name">Waafi</div><div class="method-tag" data-i18n="method-tag-depot">Paiement instantané</div></div>
         </div>
       </div>
 
@@ -513,14 +513,14 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-id1x">🎯 ID Compte 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="tel" id="depot-id" placeholder="Ex: 1234567890" inputmode="numeric" maxlength="12" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
-          <button onclick="pasteField('depot-id')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
+          <button onclick="pasteField('depot-id')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;" data-i18n="btn-paste">📋 Coller</button>
         </div>
       </div>
       <div class="field">
         <label data-i18n="label-tid">🔑 Waafi Transfer ID</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="tel" id="depot-hash" placeholder="Ex: 77422311" inputmode="numeric" maxlength="15" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
-          <button onclick="pasteField('depot-hash')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
+          <button onclick="pasteField('depot-hash')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;" data-i18n="btn-paste">📋 Coller</button>
         </div>
       </div>
 
@@ -573,7 +573,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label>🎯 ID Compte 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="tel" id="retrait-id1x" placeholder="Ex: 1234567890" inputmode="numeric" maxlength="12" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
-          <button onclick="pasteField('retrait-id1x')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
+          <button onclick="pasteField('retrait-id1x')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;" data-i18n="btn-paste">📋 Coller</button>
         </div>
       </div>
 
@@ -581,7 +581,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-code-retrait">🔑 Code de retrait 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" id="retrait-code" placeholder="Ex: jK7o" maxlength="8" style="flex:1;">
-          <button onclick="pasteField('retrait-code')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
+          <button onclick="pasteField('retrait-code')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;" data-i18n="btn-paste">📋 Coller</button>
         </div>
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-code-retrait">Lettres et chiffres</div>
       </div>
@@ -593,7 +593,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-waafi-retrait">📞 Votre numéro Waafi</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="tel" id="retrait-tel" placeholder="Ex: 77275572" maxlength="8" inputmode="numeric" style="flex:1;">
-          <button onclick="pasteField('retrait-tel')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;">📋 Coller</button>
+          <button onclick="pasteField('retrait-tel')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;" data-i18n="btn-paste">📋 Coller</button>
         </div>
       </div>
       <div class="field">
@@ -631,7 +631,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
   <!-- ══ FAQ ══ -->
   <div class="faq-section">
-    <div class="faq-title">❓ Questions fréquentes</div>
+    <div class="faq-title" data-i18n="faq-title">❓ Questions fréquentes</div>
 
     <div class="faq-item" onclick="toggleFaq(this)">
       <div class="faq-question"><span data-i18n="faq-q1">Comment effectuer un dépôt 1xBet ?</span><span class="faq-icon">+</span></div>
@@ -917,8 +917,8 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div class="modal-title" id="modal-title"></div>
     <div class="modal-desc" id="modal-desc"></div>
     <div class="modal-detail" id="modal-detail"></div>
-    <div class="modal-note">⚡ Votre ordre est en cours de traitement. Vous serez crédité rapidement.</div>
-    <button class="modal-close" onclick="closeModal()">✅ Compris</button>
+    <div class="modal-note" data-i18n="modal-note">⚡ Votre ordre est en cours de traitement. Vous serez crédité rapidement.</div>
+    <button class="modal-close" onclick="closeModal()" data-i18n="modal-ok">✅ Compris</button>
   </div>
 </div>
 
@@ -929,10 +929,10 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <img src="icon-192.png" alt="Baki-Pay" class="logo-img">
       <div class="logo-text">
         <div class="logo-name">Baki-<span>Pay</span></div>
-        <div class="logo-slogan">Suivi de votre ordre</div>
+        <div class="logo-slogan" data-i18n="suivi-slogan">Suivi de votre ordre</div>
       </div>
     </div>
-    <button onclick="retourClient()" style="background:transparent;border:1px solid rgba(255,215,0,0.2);border-radius:999px;padding:6px 14px;font-size:0.72rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;">← Retour</button>
+    <button onclick="retourClient()" style="background:transparent;border:1px solid rgba(255,215,0,0.2);border-radius:999px;padding:6px 14px;font-size:0.72rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;" data-i18n="btn-back-suivi">← Retour</button>
   </div>
 
   <div id="suivi-status-card" style="border-radius:16px;padding:14px 16px;margin:10px 0 10px;text-align:center;border:1px solid rgba(255,215,0,0.1);background:linear-gradient(160deg,rgba(255,255,255,0.03),rgba(7,16,30,0.8));">
@@ -945,29 +945,29 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   </div>
 
   <div id="suivi-flag-raison" style="display:none;border-radius:12px;padding:10px 14px;margin:6px 0 6px;border:1px solid rgba(255,64,96,0.35);background:rgba(255,64,96,0.07);">
-    <div style="font-size:0.6rem;color:var(--error);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;font-weight:700;">⚠️ Raison du rejet</div>
+    <div style="font-size:0.6rem;color:var(--error);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;font-weight:700;" data-i18n="suivi-reject-label">⚠️ Raison du rejet</div>
     <div id="suivi-flag-raison-text" style="font-size:0.82rem;color:var(--error);font-weight:600;line-height:1.5;"></div>
   </div>
 
   <div style="border-radius:14px;padding:11px 14px;margin-bottom:8px;border:1px solid rgba(255,215,0,0.15);background:rgba(255,215,0,0.03);">
-    <div style="font-size:0.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:5px;">N° de commande</div>
+    <div style="font-size:0.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:5px;" data-i18n="suivi-order-label">N° de commande</div>
     <div style="display:flex;align-items:center;justify-content:space-between;">
       <div id="suivi-ref" style="font-family:'Playfair Display',serif;font-size:1.6rem;font-weight:900;color:var(--gold);letter-spacing:4px;">—</div>
-      <button id="suivi-copy-btn" onclick="copySuiviRef()" style="background:transparent;border:1px solid rgba(255,215,0,0.25);border-radius:999px;padding:5px 12px;font-size:0.65rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;">📋 Copier</button>
+      <button id="suivi-copy-btn" onclick="copySuiviRef()" style="background:transparent;border:1px solid rgba(255,215,0,0.25);border-radius:999px;padding:5px 12px;font-size:0.65rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;" data-i18n="btn-copy">📋 Copier</button>
   </div>
 
   <div style="border-radius:14px;padding:11px 14px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">
-    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;">Détails</div>
+    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;" data-i18n="suivi-details-label">Détails</div>
     <div id="suivi-details"></div>
   </div>
 
   <div style="border-radius:14px;padding:11px 14px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">
-    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:14px;">Progression</div>
+    <div style="font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:14px;" data-i18n="suivi-progress-label">Progression</div>
     <div id="suivi-timeline"></div>
   </div>
 
-  <button id="suivi-cancel-btn" onclick="openCancelModal()" style="display:none;width:100%;margin-bottom:10px;padding:13px;border-radius:999px;border:1px solid rgba(255,64,96,0.3);background:rgba(255,64,96,0.06);color:var(--error);font-family:'DM Sans',sans-serif;font-size:0.9rem;font-weight:600;cursor:pointer;box-sizing:border-box;">🚫 Annuler cet ordre</button>
-  <button id="suivi-whatsapp-btn" onclick="sendRecapWhatsApp()" style="display:none;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.3);background:rgba(37,211,102,0.06);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;cursor:pointer;box-sizing:border-box;margin-bottom:8px;">
+  <button id="suivi-cancel-btn" onclick="openCancelModal()" style="display:none;width:100%;margin-bottom:10px;padding:13px;border-radius:999px;border:1px solid rgba(255,64,96,0.3);background:rgba(255,64,96,0.06);color:var(--error);font-family:'DM Sans',sans-serif;font-size:0.9rem;font-weight:600;cursor:pointer;box-sizing:border-box;" data-i18n="btn-cancel-order">🚫 Annuler cet ordre</button>
+  <button id="suivi-whatsapp-btn" onclick="sendRecapWhatsApp()" style="display:none;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.3);background:rgba(37,211,102,0.06);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;cursor:pointer;box-sizing:border-box;margin-bottom:8px;" data-i18n="btn-whatsapp-details">
     📲 Recevoir les détails sur WhatsApp
   </button>
   <a id="suivi-wa-btn" href="https://t.me/kaffipay_support_bot" target="_blank"
@@ -1007,11 +1007,11 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 <div class="modal-overlay" id="cancel-confirm-modal">
   <div class="modal">
     <div class="modal-icon">🚫</div>
-    <div class="modal-title">Annuler l'ordre ?</div>
-    <div class="modal-desc" style="margin-bottom:20px;">Cette action est irréversible. Votre ordre sera annulé et vous devrez en soumettre un nouveau.</div>
+    <div class="modal-title" data-i18n="modal-cancel-title">Annuler l'ordre ?</div>
+    <div class="modal-desc" style="margin-bottom:20px;" data-i18n="modal-cancel-desc">Cette action est irréversible. Votre ordre sera annulé et vous devrez en soumettre un nouveau.</div>
     <div style="display:flex;gap:8px;">
-      <button onclick="closeCancelModal()" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,0.1);border-radius:999px;padding:12px;font-family:'DM Sans',sans-serif;font-size:0.85rem;color:var(--muted);cursor:pointer;">Non, garder</button>
-      <button onclick="confirmerAnnulation()" style="flex:2;background:rgba(255,64,96,0.15);border:1px solid rgba(255,64,96,0.3);border-radius:999px;padding:12px;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:700;color:var(--error);cursor:pointer;">Oui, annuler</button>
+      <button onclick="closeCancelModal()" style="flex:1;background:transparent;border:1px solid rgba(255,255,255,0.1);border-radius:999px;padding:12px;font-family:'DM Sans',sans-serif;font-size:0.85rem;color:var(--muted);cursor:pointer;" data-i18n="btn-keep">Non, garder</button>
+      <button onclick="confirmerAnnulation()" style="flex:2;background:rgba(255,64,96,0.15);border:1px solid rgba(255,64,96,0.3);border-radius:999px;padding:12px;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:700;color:var(--error);cursor:pointer;" data-i18n="btn-confirm-cancel">Oui, annuler</button>
     </div>
   </div>
 </div>
@@ -1749,11 +1749,11 @@ async function submitDepot(){
   const h=document.getElementById('depot-hash').value.trim();
   const telDepot=document.getElementById('depot-numero-waafi').value.trim();
   const whatsapp=document.getElementById('depot-whatsapp').value.trim();
-  if(!m||Number(m)<50){showToast('⚠️ Minimum 50 DJF','error');return;}
-  if(!id){showToast('⚠️ ID 1xBet requis','error');return;}
-  if(!h||!/^\d{6,15}$/.test(h)){showToast('⚠️ Waafi Transfer ID invalide','error');return;}
-  if(!telDepot||telDepot.length!==8){showToast('⚠️ Numéro expéditeur requis (8 chiffres)','error');return;}
-  if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
+  if(!m||Number(m)<50){showToast(t('err-min-depot'),'error');return;}
+  if(!id){showToast(t('err-id1x'),'error');return;}
+  if(!h||!/^\d{6,15}$/.test(h)){showToast(t('err-tid'),'error');return;}
+  if(!telDepot||telDepot.length!==8){showToast(t('err-sender'),'error');return;}
+  if(!whatsapp||whatsapp.length<8){showToast(t('err-whatsapp'),'error');return;}
   setLoading('depot',true);
   try{
     // ── Nouvel ordre ──
@@ -1806,11 +1806,11 @@ async function submitRetrait(){
   const t=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
   const whatsapp=document.getElementById('retrait-whatsapp').value.trim();
-  if(!id1x){showToast('⚠️ ID 1xBet requis','error');return;}
-  if(!c||c.length<2){showToast('⚠️ Code retrait requis','error');return;}
-  if(!t||t.length!==8||!t.startsWith('77')){showToast('⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)','error');return;}
-  if(!m||Number(m)<250){showToast('⚠️ Minimum 250 DJF','error');return;}
-  if(!whatsapp||whatsapp.length<8){showToast('⚠️ Numéro WhatsApp requis (8 chiffres)','error');return;}
+  if(!id1x){showToast(t('err-id1x'),'error');return;}
+  if(!c||c.length<2){showToast(t('err-code-retrait'),'error');return;}
+  if(!t||t.length!==8||!t.startsWith('77')){showToast(t('err-waafi-num'),'error');return;}
+  if(!m||Number(m)<250){showToast(t('err-min-retrait'),'error');return;}
+  if(!whatsapp||whatsapp.length<8){showToast(t('err-whatsapp'),'error');return;}
   setLoading('retrait',true);
   try{
     // ── Nouvel ordre ──
@@ -3044,7 +3044,7 @@ function fallbackCopy(num, btn, orig){
 function pasteField(id){
   var input=document.getElementById(id);if(!input)return;
   if(navigator.clipboard&&navigator.clipboard.readText){
-    navigator.clipboard.readText().then(function(t){input.value=t.trim();input.dispatchEvent(new Event('input'));showToast('📋 Collé!','success');}).catch(function(){input.focus();showToast('📋 Appuyez longuement','info');});
+    navigator.clipboard.readText().then(function(txt){input.value=txt.trim();input.dispatchEvent(new Event('input'));showToast(t('toast-pasted'),'success');}).catch(function(){input.focus();showToast(t('toast-press-long'),'info');});
   }else{input.focus();showToast('📋 Appuyez longuement sur le champ','info');}
 }
 
@@ -3106,7 +3106,7 @@ async function confirmerAnnulation(){
     if(idx >= 0) _txsCache[idx].status = 'Annulé';
     currentSuiviTx.status = 'Annulé';
     renderSuivi();
-    showToast('✅ Ordre annulé','success');
+    showToast(t('toast-order-cancelled'),'success');
   } catch(e){
     showToast('❌ Impossible d\'annuler — '+e.message,'error');
   }
@@ -3129,7 +3129,7 @@ function copyDetailVal(btn){
 function copySuiviRef(){
   var ref=document.getElementById('suivi-ref').textContent;
   var btn=document.getElementById('suivi-copy-btn');
-  var done=function(){ btn.textContent='✅ Copié'; setTimeout(function(){btn.textContent='📋 Copier';},2000); showToast('✅ Référence copiée','success'); };
+  var done=function(){ btn.textContent='✅ '+t('toast-copied-short'); setTimeout(function(){btn.textContent=t('btn-copy');},2000); showToast(t('toast-ref-copied'),'success'); };
   if(navigator.clipboard&&window.isSecureContext){
     navigator.clipboard.writeText(ref).then(done).catch(function(){
       var el=document.createElement('input');el.value=ref;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);done();
@@ -3983,7 +3983,32 @@ var KP_LANGS = {
     'faq-q4': 'Mon paiement n\'est pas confirmé, que faire ?',
     'faq-a4': 'Vérifiez que le Transfer ID Waafi saisi est correct. Si votre ordre reste en attente plus de 30 minutes, contactez le support via le bouton WhatsApp/Telegram ci-dessus avec votre numéro d\'ordre.',
     'faq-q5': 'Quel est le montant minimum et maximum ?',
-    'faq-a5': 'Le minimum est de 50 DJF pour un dépôt et 250 DJF pour un retrait. Il n\'y a pas de maximum fixe, mais les ordres élevés peuvent nécessiter une vérification supplémentaire.'
+    'faq-a5': 'Le minimum est de 50 DJF pour un dépôt et 250 DJF pour un retrait. Il n\'y a pas de maximum fixe, mais les ordres élevés peuvent nécessiter une vérification supplémentaire.',
+    'btn-back': '← Accueil', 'btn-login': '🔓 Connexion', 'login-or': 'OU',
+    'btn-google': 'Se connecter avec Google', 'btn-install': '⬇ Installer l\'app',
+    'btn-copy': '📋 Copier', 'btn-paste': '📋 Coller',
+    'method-tag-depot': 'Paiement instantané',
+    'faq-title': '❓ Questions fréquentes',
+    'suivi-slogan': 'Suivi de votre ordre', 'btn-back-suivi': '← Retour',
+    'suivi-reject-label': '⚠️ Raison du rejet', 'suivi-order-label': 'N° de commande',
+    'suivi-details-label': 'Détails', 'suivi-progress-label': 'Progression',
+    'btn-cancel-order': '🚫 Annuler cet ordre',
+    'btn-whatsapp-details': '📲 Recevoir les détails sur WhatsApp',
+    'modal-note': '⚡ Votre ordre est en cours de traitement. Vous serez crédité rapidement.',
+    'modal-ok': '✅ Compris',
+    'modal-cancel-title': 'Annuler l\'ordre ?',
+    'modal-cancel-desc': 'Cette action est irréversible. Votre ordre sera annulé et vous devrez en soumettre un nouveau.',
+    'btn-keep': 'Non, garder', 'btn-confirm-cancel': 'Oui, annuler',
+    'err-min-depot': '⚠️ Minimum 50 DJF', 'err-id1x': '⚠️ ID 1xBet requis',
+    'err-tid': '⚠️ Waafi Transfer ID invalide',
+    'err-sender': '⚠️ Numéro expéditeur requis (8 chiffres)',
+    'err-whatsapp': '⚠️ Numéro WhatsApp requis (8 chiffres)',
+    'err-code-retrait': '⚠️ Code retrait requis',
+    'err-waafi-num': '⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)',
+    'err-min-retrait': '⚠️ Minimum 250 DJF',
+    'toast-pasted': '📋 Collé !', 'toast-press-long': '📋 Appuyez longuement',
+    'toast-order-cancelled': '✅ Ordre annulé',
+    'toast-ref-copied': '✅ Référence copiée', 'toast-copied-short': 'Copié'
   },
   en: {
     'slogan':              '1xBet ↔ Waafi Exchange · Djibouti',
@@ -4030,7 +4055,32 @@ var KP_LANGS = {
     'faq-q4': 'My payment is not confirmed, what should I do?',
     'faq-a4': 'Check that the Waafi Transfer ID entered is correct. If your order remains pending for more than 30 minutes, contact support via the WhatsApp/Telegram button above with your order number.',
     'faq-q5': 'What is the minimum and maximum amount?',
-    'faq-a5': 'The minimum is 50 DJF for a deposit and 250 DJF for a withdrawal. There is no fixed maximum, but large orders may require additional verification.'
+    'faq-a5': 'The minimum is 50 DJF for a deposit and 250 DJF for a withdrawal. There is no fixed maximum, but large orders may require additional verification.',
+    'btn-back': '← Home', 'btn-login': '🔓 Login', 'login-or': 'OR',
+    'btn-google': 'Sign in with Google', 'btn-install': '⬇ Install app',
+    'btn-copy': '📋 Copy', 'btn-paste': '📋 Paste',
+    'method-tag-depot': 'Instant payment',
+    'faq-title': '❓ Frequently Asked Questions',
+    'suivi-slogan': 'Order tracking', 'btn-back-suivi': '← Back',
+    'suivi-reject-label': '⚠️ Rejection reason', 'suivi-order-label': 'Order No.',
+    'suivi-details-label': 'Details', 'suivi-progress-label': 'Progress',
+    'btn-cancel-order': '🚫 Cancel this order',
+    'btn-whatsapp-details': '📲 Receive details on WhatsApp',
+    'modal-note': '⚡ Your order is being processed. You will be credited quickly.',
+    'modal-ok': '✅ Got it',
+    'modal-cancel-title': 'Cancel the order?',
+    'modal-cancel-desc': 'This action cannot be undone. Your order will be cancelled and you will need to submit a new one.',
+    'btn-keep': 'No, keep it', 'btn-confirm-cancel': 'Yes, cancel',
+    'err-min-depot': '⚠️ Minimum 50 DJF', 'err-id1x': '⚠️ 1xBet ID required',
+    'err-tid': '⚠️ Invalid Waafi Transfer ID',
+    'err-sender': '⚠️ Sender number required (8 digits)',
+    'err-whatsapp': '⚠️ WhatsApp number required (8 digits)',
+    'err-code-retrait': '⚠️ Withdrawal code required',
+    'err-waafi-num': '⚠️ Invalid Waafi number (8 digits, starts with 77)',
+    'err-min-retrait': '⚠️ Minimum 250 DJF',
+    'toast-pasted': '📋 Pasted!', 'toast-press-long': '📋 Long press to paste',
+    'toast-order-cancelled': '✅ Order cancelled',
+    'toast-ref-copied': '✅ Reference copied', 'toast-copied-short': 'Copied'
   },
   so: {
     'slogan':              '1xBet ↔ Waafi Beddelka · Jabuuti',
@@ -4077,9 +4127,40 @@ var KP_LANGS = {
     'faq-q4': 'Lacag-bixintayda lama xaqiijin, maxaan sameeyaa?',
     'faq-a4': 'Hubi in Transfer ID Waafi ee la gelinay uu sax yahay. Haddii codsigaagu uu sugi yahay in ka badan 30 daqiiqo, la xiriir taageerada iyada oo la adeegsanayo badhanka WhatsApp/Telegram ee kore oo leh lambarka codsigaaga.',
     'faq-q5': 'Waa maxay xaddiga ugu yar iyo ugu badan?',
-    'faq-a5': 'Xaddiga ugu yar waa 50 DJF gelinta iyo 250 DJF bixinta. Xad aad ah oo go\'an ma jiro, laakiin amarka weyn waxay u baahan karaan xaqiijin dheeraad ah.'
+    'faq-a5': 'Xaddiga ugu yar waa 50 DJF gelinta iyo 250 DJF bixinta. Xad aad ah oo go\'an ma jiro, laakiin amarka weyn waxay u baahan karaan xaqiijin dheeraad ah.',
+    'btn-back': '← Guriga', 'btn-login': '🔓 Gal', 'login-or': 'AMA',
+    'btn-google': 'Ku gal Google', 'btn-install': '⬇ Ku rakib',
+    'btn-copy': '📋 Koobiyee', 'btn-paste': '📋 Dheji',
+    'method-tag-depot': 'Lacag-bixin deg-deg ah',
+    'faq-title': '❓ Su\'aalaha Badanaa La Weydiistaa',
+    'suivi-slogan': 'Raad-raacista dalabkaaga', 'btn-back-suivi': '← Dib u noqo',
+    'suivi-reject-label': '⚠️ Sababta diidmada', 'suivi-order-label': 'Nambarka dalabka',
+    'suivi-details-label': 'Faahfaahinta', 'suivi-progress-label': 'Horumarinta',
+    'btn-cancel-order': '🚫 Jooji dalabkan',
+    'btn-whatsapp-details': '📲 Faahfaahinta WhatsApp-ka ku hel',
+    'modal-note': '⚡ Dalabkaagu wuu socdaa. Aad ayaad u degdeg u laheli doontaa.',
+    'modal-ok': '✅ Waay fahmay',
+    'modal-cancel-title': 'Ma joojin doontaa dalabka?',
+    'modal-cancel-desc': 'Ficilkan lama soo celin karo. Dalabkaaga waa la joojin doonaa oo cusub baad u baahan doontaa.',
+    'btn-keep': 'Maya, sii hay', 'btn-confirm-cancel': 'Haa, jooji',
+    'err-min-depot': '⚠️ Ugu yaraan 50 DJF', 'err-id1x': '⚠️ Aqoonsiga 1xBet loo baahan yahay',
+    'err-tid': '⚠️ Lambarka Waafi Transfer-ka khalad ah',
+    'err-sender': '⚠️ Lambarka diraha loo baahan yahay (8 lambar)',
+    'err-whatsapp': '⚠️ Lambarka WhatsApp loo baahan yahay (8 lambar)',
+    'err-code-retrait': '⚠️ Koodhka lacag-qaadashada loo baahan yahay',
+    'err-waafi-num': '⚠️ Lambarka Waafi khalad ah (8 lambar, ku bilaabo 77)',
+    'err-min-retrait': '⚠️ Ugu yaraan 250 DJF',
+    'toast-pasted': '📋 La dhejiyay!', 'toast-press-long': '📋 Dheer u riix',
+    'toast-order-cancelled': '✅ Dalabka la joojiyay',
+    'toast-ref-copied': '✅ Tixraaca la koobiyeeyay', 'toast-copied-short': 'La koobiyeeyay'
   }
 };
+
+function t(key) {
+  var l = localStorage.getItem('kp-lang') || 'fr';
+  var d = KP_LANGS[l] || KP_LANGS['fr'];
+  return d[key] !== undefined ? d[key] : (KP_LANGS['fr'][key] || key);
+}
 
 function applyLang(l) {
   if (!KP_LANGS[l]) l = 'fr';
