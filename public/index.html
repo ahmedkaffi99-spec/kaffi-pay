@@ -2046,21 +2046,21 @@ function renderAllTx(f,s){
   document.getElementById('all-tx-list').innerHTML=t.map(t=>txHTML(t,true)).join('')||emptyState();
 }
 
-function friendlyStatus(t){
-  const d=t.type==='Dépôt';
-  const isRetraitPret=!d && t.status==='Code Validé';
-  if(!d && t.status==='Payé') return '✅ Waafi envoyé';
-  if(!d && t.status==='Crédité avec succès') return '✅ Waafi envoyé';
-  if(!d && t.status==='Code Invalide') return '❌ Code invalide';
-  if(!d && t.status==='Paiement Non Reçu') return '❌ Retrait échoué';
-  if(isRetraitPret) return '⏳ Code validé — Paiement en cours';
-  if(t.status==='Paiement Reçu' && d && t.webhookStatus==='echec_permanent') return '🚨 Compte 1xBet invalide — support requis';
-  if(t.status==='Paiement Reçu' && d && t.webhookStatus==='echec_max') return '🚨 Crédit échoué — support requis';
-  if(t.status==='Paiement Reçu' && d && t.webhookStatus==='echec') return '⚠️ Paiement reçu — crédit échoué';
-  if(t.status==='Paiement Reçu' && d) return '💳 Paiement reçu — crédit en cours';
-  if(t.status==='Crédité avec succès') return '✅ Crédité avec succès';
-  if(t.status==='Paiement Non Reçu') return '❌ Paiement non reçu';
-  return t.status||'En attente';
+function friendlyStatus(tx){
+  const d=tx.type==='Dépôt';
+  const isRetraitPret=!d && tx.status==='Code Validé';
+  if(!d && tx.status==='Payé') return t('status-waafi-sent');
+  if(!d && tx.status==='Crédité avec succès') return t('status-waafi-sent');
+  if(!d && tx.status==='Code Invalide') return t('status-invalid-code');
+  if(!d && tx.status==='Paiement Non Reçu') return t('status-retrait-failed');
+  if(isRetraitPret) return t('status-code-validated');
+  if(tx.status==='Paiement Reçu' && d && tx.webhookStatus==='echec_permanent') return t('status-invalid-account');
+  if(tx.status==='Paiement Reçu' && d && tx.webhookStatus==='echec_max') return t('status-credit-failed-max');
+  if(tx.status==='Paiement Reçu' && d && tx.webhookStatus==='echec') return t('status-credit-failed');
+  if(tx.status==='Paiement Reçu' && d) return t('status-credit-in-progress');
+  if(tx.status==='Crédité avec succès') return t('status-credited');
+  if(tx.status==='Paiement Non Reçu') return t('status-payment-not-received');
+  return tx.status||t('status-pending');
 }
 
 function txHTML(t,showActions){
@@ -2154,42 +2154,42 @@ function openOrderDetail(ref){
 
   // Rows — base champs
   var rows=isDepot?[
-    {l:'N° Commande', v:tx.orderId||tx.ref||'—', c:tx.orderId||tx.ref||''},
-    {l:'Montant soumis', v:Number(tx.montant||0).toLocaleString()+' DJF', c:''},
-    {l:'ID 1xBet', v:tx.userId1xBet||tx.id1x||'—', c:tx.userId1xBet||tx.id1x||''},
-    {l:'Transfer ID', v:tx.waafitranfertID||tx.hash||'—', c:tx.waafitranfertID||tx.hash||''},
-    {l:'N° Expéditeur', v:tx.numeroPayment||'—', c:tx.numeroPayment||''},
-    {l:'WhatsApp', v:tx.whatsapp||'—', c:tx.whatsapp||''},
-    {l:'Statut', v:friendlyStatus(tx), c:''}
+    {l:t('lbl-order-num'), v:tx.orderId||tx.ref||'—', c:tx.orderId||tx.ref||''},
+    {l:t('lbl-amount-submitted'), v:Number(tx.montant||0).toLocaleString()+' DJF', c:''},
+    {l:t('lbl-id1x'), v:tx.userId1xBet||tx.id1x||'—', c:tx.userId1xBet||tx.id1x||''},
+    {l:t('lbl-transfer-id'), v:tx.waafitranfertID||tx.hash||'—', c:tx.waafitranfertID||tx.hash||''},
+    {l:t('lbl-sender-num'), v:tx.numeroPayment||'—', c:tx.numeroPayment||''},
+    {l:t('lbl-whatsapp'), v:tx.whatsapp||'—', c:tx.whatsapp||''},
+    {l:t('lbl-status'), v:friendlyStatus(tx), c:''}
   ]:[
-    {l:'N° Commande', v:tx.orderId||tx.ref||'—', c:tx.orderId||tx.ref||''},
-    {l:'Montant soumis', v:Number(tx.montant||0).toLocaleString()+' DJF', c:''},
-    {l:'Code retrait', v:tx.withdrawalCode||tx.code||'—', c:tx.withdrawalCode||tx.code||''},
-    {l:'Numéro Waafi', v:tx.waafiNumber||tx.tel||'—', c:tx.waafiNumber||tx.tel||''},
-    {l:'WhatsApp', v:tx.whatsapp||'—', c:tx.whatsapp||''},
-    {l:'Statut', v:friendlyStatus(tx), c:''}
+    {l:t('lbl-order-num'), v:tx.orderId||tx.ref||'—', c:tx.orderId||tx.ref||''},
+    {l:t('lbl-amount-submitted'), v:Number(tx.montant||0).toLocaleString()+' DJF', c:''},
+    {l:t('lbl-code-retrait'), v:tx.withdrawalCode||tx.code||'—', c:tx.withdrawalCode||tx.code||''},
+    {l:t('lbl-waafi-num'), v:tx.waafiNumber||tx.tel||'—', c:tx.waafiNumber||tx.tel||''},
+    {l:t('lbl-whatsapp'), v:tx.whatsapp||'—', c:tx.whatsapp||''},
+    {l:t('lbl-status'), v:friendlyStatus(tx), c:''}
   ];
   // Champs dynamiques selon données disponibles
   if(isDepot && tx.montantRecu && Number(tx.montantRecu)!==Number(tx.montant))
-    rows.push({l:'Montant reçu (Waafi)', v:Number(tx.montantRecu).toLocaleString()+' DJF ⚠️', c:''});
+    rows.push({l:t('lbl-amount-received'), v:Number(tx.montantRecu).toLocaleString()+' DJF ⚠️', c:''});
   if(isDepot && tx.expediteurRecu)
-    rows.push({l:'Expéditeur Waafi', v:tx.expediteurRecu, c:tx.expediteurRecu});
+    rows.push({l:t('lbl-sender-waafi'), v:tx.expediteurRecu, c:tx.expediteurRecu});
   if(!isDepot && tx.montantMobcash)
-    rows.push({l:'Montant MobCash', v:Number(tx.montantMobcash).toLocaleString()+' DJF', c:''});
+    rows.push({l:t('lbl-amount-mobcash'), v:Number(tx.montantMobcash).toLocaleString()+' DJF', c:''});
   if(tx.flagRaison)
-    rows.push({l:'⚠️ Raison', v:tx.flagRaison, c:'', warn:true});
+    rows.push({l:t('lbl-reason'), v:tx.flagRaison, c:'', warn:true});
   if(tx.fraudType)
-    rows.push({l:'🚨 Type fraude', v:tx.fraudType, c:'', warn:true});
+    rows.push({l:t('lbl-fraud-type'), v:tx.fraudType, c:'', warn:true});
   if(tx.doublon_suspect)
-    rows.push({l:'🔁 Doublon suspect', v:'#'+tx.doublon_suspect, c:''});
+    rows.push({l:t('lbl-doublon'), v:'#'+tx.doublon_suspect, c:''});
   if(tx.confirmedBy)
-    rows.push({l:'Confirmé par', v:tx.confirmedBy, c:''});
+    rows.push({l:t('lbl-confirmed-by'), v:tx.confirmedBy, c:''});
   if(tx.confirmedAt){
     var cat=tx.confirmedAt&&tx.confirmedAt.toDate?tx.confirmedAt.toDate().toLocaleString('fr-FR'):new Date(tx.confirmedAt).toLocaleString('fr-FR');
-    rows.push({l:'Confirmé le', v:cat, c:''});
+    rows.push({l:t('lbl-confirmed-at'), v:cat, c:''});
   }
   if(tx.rejectedBy)
-    rows.push({l:'Rejeté par', v:tx.rejectedBy, c:''});
+    rows.push({l:t('lbl-rejected-by'), v:tx.rejectedBy, c:''});
 
   document.getElementById('odm-rows').innerHTML=rows.map(function(r){
     var copyBtn=r.c?('<button class="odm-copy" data-v="'+r.c+'" onclick="adminCopy(this)">📋</button>'):'';
@@ -4008,7 +4008,27 @@ var KP_LANGS = {
     'err-min-retrait': '⚠️ Minimum 250 DJF',
     'toast-pasted': '📋 Collé !', 'toast-press-long': '📋 Appuyez longuement',
     'toast-order-cancelled': '✅ Ordre annulé',
-    'toast-ref-copied': '✅ Référence copiée', 'toast-copied-short': 'Copié'
+    'toast-ref-copied': '✅ Référence copiée', 'toast-copied-short': 'Copié',
+    'lbl-order-num': 'N° Commande', 'lbl-amount-submitted': 'Montant soumis',
+    'lbl-id1x': 'ID 1xBet', 'lbl-transfer-id': 'Transfer ID',
+    'lbl-sender-num': 'N° Expéditeur', 'lbl-whatsapp': 'WhatsApp',
+    'lbl-status': 'Statut', 'lbl-code-retrait': 'Code retrait',
+    'lbl-waafi-num': 'Numéro Waafi',
+    'lbl-amount-received': 'Montant reçu (Waafi)', 'lbl-sender-waafi': 'Expéditeur Waafi',
+    'lbl-amount-mobcash': 'Montant MobCash', 'lbl-reason': '⚠️ Raison',
+    'lbl-fraud-type': '🚨 Type fraude', 'lbl-doublon': '🔁 Doublon suspect',
+    'lbl-confirmed-by': 'Confirmé par', 'lbl-confirmed-at': 'Confirmé le',
+    'lbl-rejected-by': 'Rejeté par',
+    'status-waafi-sent': '✅ Waafi envoyé', 'status-invalid-code': '❌ Code invalide',
+    'status-retrait-failed': '❌ Retrait échoué',
+    'status-code-validated': '⏳ Code validé — Paiement en cours',
+    'status-invalid-account': '🚨 Compte 1xBet invalide — support requis',
+    'status-credit-failed-max': '🚨 Crédit échoué — support requis',
+    'status-credit-failed': '⚠️ Paiement reçu — crédit échoué',
+    'status-credit-in-progress': '💳 Paiement reçu — crédit en cours',
+    'status-credited': '✅ Crédité avec succès',
+    'status-payment-not-received': '❌ Paiement non reçu',
+    'status-pending': 'En attente'
   },
   en: {
     'slogan':              '1xBet ↔ Waafi Exchange · Djibouti',
@@ -4080,7 +4100,27 @@ var KP_LANGS = {
     'err-min-retrait': '⚠️ Minimum 250 DJF',
     'toast-pasted': '📋 Pasted!', 'toast-press-long': '📋 Long press to paste',
     'toast-order-cancelled': '✅ Order cancelled',
-    'toast-ref-copied': '✅ Reference copied', 'toast-copied-short': 'Copied'
+    'toast-ref-copied': '✅ Reference copied', 'toast-copied-short': 'Copied',
+    'lbl-order-num': 'Order No.', 'lbl-amount-submitted': 'Submitted amount',
+    'lbl-id1x': '1xBet ID', 'lbl-transfer-id': 'Transfer ID',
+    'lbl-sender-num': 'Sender No.', 'lbl-whatsapp': 'WhatsApp',
+    'lbl-status': 'Status', 'lbl-code-retrait': 'Withdrawal code',
+    'lbl-waafi-num': 'Waafi Number',
+    'lbl-amount-received': 'Amount received (Waafi)', 'lbl-sender-waafi': 'Waafi Sender',
+    'lbl-amount-mobcash': 'MobCash Amount', 'lbl-reason': '⚠️ Reason',
+    'lbl-fraud-type': '🚨 Fraud type', 'lbl-doublon': '🔁 Suspected duplicate',
+    'lbl-confirmed-by': 'Confirmed by', 'lbl-confirmed-at': 'Confirmed on',
+    'lbl-rejected-by': 'Rejected by',
+    'status-waafi-sent': '✅ Waafi sent', 'status-invalid-code': '❌ Invalid code',
+    'status-retrait-failed': '❌ Withdrawal failed',
+    'status-code-validated': '⏳ Code validated — Payment in progress',
+    'status-invalid-account': '🚨 Invalid 1xBet account — support needed',
+    'status-credit-failed-max': '🚨 Credit failed — support needed',
+    'status-credit-failed': '⚠️ Payment received — credit failed',
+    'status-credit-in-progress': '💳 Payment received — credit in progress',
+    'status-credited': '✅ Successfully credited',
+    'status-payment-not-received': '❌ Payment not received',
+    'status-pending': 'Pending'
   },
   so: {
     'slogan':              '1xBet ↔ Waafi Beddelka · Jabuuti',
@@ -4152,7 +4192,27 @@ var KP_LANGS = {
     'err-min-retrait': '⚠️ Ugu yaraan 250 DJF',
     'toast-pasted': '📋 La dhejiyay!', 'toast-press-long': '📋 Dheer u riix',
     'toast-order-cancelled': '✅ Dalabka la joojiyay',
-    'toast-ref-copied': '✅ Tixraaca la koobiyeeyay', 'toast-copied-short': 'La koobiyeeyay'
+    'toast-ref-copied': '✅ Tixraaca la koobiyeeyay', 'toast-copied-short': 'La koobiyeeyay',
+    'lbl-order-num': 'Nambarka Dalabka', 'lbl-amount-submitted': 'Xaddiga la gudbiyey',
+    'lbl-id1x': 'ID 1xBet', 'lbl-transfer-id': 'Transfer ID',
+    'lbl-sender-num': 'Nambarka Diraha', 'lbl-whatsapp': 'WhatsApp',
+    'lbl-status': 'Xaaladda', 'lbl-code-retrait': 'Koodhka Bixinta',
+    'lbl-waafi-num': 'Lambarka Waafi',
+    'lbl-amount-received': 'Xaddiga la helay (Waafi)', 'lbl-sender-waafi': 'Diraha Waafi',
+    'lbl-amount-mobcash': 'Xaddiga MobCash', 'lbl-reason': '⚠️ Sabab',
+    'lbl-fraud-type': '🚨 Nooca Khiyaanada', 'lbl-doublon': '🔁 La-mid ah la shakiyay',
+    'lbl-confirmed-by': 'Lagu xaqiijiyay', 'lbl-confirmed-at': 'Maalinta xaqiijinta',
+    'lbl-rejected-by': 'Lagu diiday',
+    'status-waafi-sent': '✅ Waafi la diray', 'status-invalid-code': '❌ Koodh khaldan',
+    'status-retrait-failed': '❌ Bixintu way ku guul-darraysatay',
+    'status-code-validated': '⏳ Koodhka la xaqiijiyay — Lacag-bixinta socota',
+    'status-invalid-account': '🚨 Xisaabta 1xBet khaldan — taageerada loo baahan yahay',
+    'status-credit-failed-max': '🚨 Credit-ku wuu ku guul-darraysatay — taageerada loo baahan yahay',
+    'status-credit-failed': '⚠️ Lacagta la helay — credit-ku way ku guul-darraysatay',
+    'status-credit-in-progress': '💳 Lacagta la helay — credit-ku socdaa',
+    'status-credited': '✅ Lacagta si guul leh loo xidid',
+    'status-payment-not-received': '❌ Lacagta lama helin',
+    'status-pending': 'Sugitaan'
   }
 };
 
