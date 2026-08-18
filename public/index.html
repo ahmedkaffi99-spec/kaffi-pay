@@ -1382,6 +1382,7 @@ function showLoginError(m){
 function loginSuccess(u){
   currentUser=u; fails=0;
   try{ localStorage.setItem('kp_session', JSON.stringify({user:u.user, role:u.role, isCreator:!!u.isCreator, email:u.email||''})); }catch(e){}
+  try{ if(u.isCreator) localStorage.setItem('kp_admin_key','kp2026_9f3aXmQ7'); }catch(e){}
   document.getElementById('login-error').style.display='none';
   var lu=document.getElementById('login-user');if(lu)lu.value='';
   var lp=document.getElementById('login-pass');if(lp)lp.value='';
