@@ -484,8 +484,8 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="payment-row">
           <div class="pay-label" data-i18n="label-waafi-num">📱 Numéro Waafi</div>
           <div class="pay-val" style="display:flex;align-items:center;gap:8px;">
-            <span class="pay-num">77316343</span>
-            <button onclick="copyPayNum('77316343',this)" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:5px 10px;font-size:0.72rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s;" data-i18n="btn-copy">📋 Copier</button>
+            <span class="pay-num">77275572</span>
+            <button onclick="copyPayNum('77275572',this)" style="background:rgba(255,215,0,0.12);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:5px 10px;font-size:0.72rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s;" data-i18n="btn-copy">📋 Copier</button>
           </div>
         </div>
         <div class="payment-row">
@@ -526,7 +526,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 
       <div class="field">
         <label data-i18n="label-sender">📞 Votre numéro Waafi expéditeur</label>
-        <input type="tel" id="depot-numero-waafi" placeholder="Ex: 77316343" maxlength="8" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+        <input type="tel" id="depot-numero-waafi" placeholder="Ex: 77275572" maxlength="8" inputmode="numeric" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-sender">8 chiffres · commence par 77</div>
       </div>
 
@@ -592,7 +592,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="field">
         <label data-i18n="label-waafi-retrait">📞 Votre numéro Waafi</label>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="tel" id="retrait-tel" placeholder="Ex: 77316343" maxlength="8" inputmode="numeric" style="flex:1;">
+          <input type="tel" id="retrait-tel" placeholder="Ex: 77275572" maxlength="8" inputmode="numeric" style="flex:1;">
           <button onclick="pasteField('retrait-tel')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;" data-i18n="btn-paste">📋 Coller</button>
         </div>
       </div>
@@ -3052,7 +3052,7 @@ function pasteField(id){
 function updateUSSD(){
   var m=document.getElementById('depot-montant')?document.getElementById('depot-montant').value:'0';
   var a=parseInt(m)||0;var l=document.getElementById('ussd-link');var d=document.getElementById('ussd-amount-display');
-  if(l){if(a>0){l.href='tel:*200*77316343*'+a+'%23';if(d)d.textContent=a.toLocaleString()+' DJF';l.style.opacity='1';l.style.pointerEvents='auto';}else{l.onclick=null;if(d)d.textContent='';l.style.opacity='0.45';l.style.pointerEvents='none';}}
+  if(l){if(a>0){l.href='tel:*200*77275572*'+a+'%23';if(d)d.textContent=a.toLocaleString()+' DJF';l.style.opacity='1';l.style.pointerEvents='auto';}else{l.onclick=null;if(d)d.textContent='';l.style.opacity='0.45';l.style.pointerEvents='none';}}
 }
 
 function copyOrderRef(){
@@ -3344,8 +3344,8 @@ function extraireNumeroExp(texte){
     if(m) return m[1];
     return null;
   }
-  // Filtrer pour exclure notre propre numéro (77316343)
-  var OWN_NUMBER = '77316343'; // Numéro Baki-Pay — on exclut ce numéro pour garder le numéro CLIENT
+  // Filtrer pour exclure notre propre numéro (77275572)
+  var OWN_NUMBER = '77275572'; // Numéro Baki-Pay — on exclut ce numéro pour garder le numéro CLIENT
   var others = all.map(function(s){ return s.replace(/[()]/g,''); }).filter(function(n){ return n !== OWN_NUMBER; });
   // Retourner l'expéditeur (premier numéro qui n'est pas le nôtre)
   return others.length > 0 ? others[0] : all[0].replace(/[()]/g,'');
