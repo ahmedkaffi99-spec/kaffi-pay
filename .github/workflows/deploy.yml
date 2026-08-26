@@ -24,9 +24,14 @@ jobs:
         run: cd functions && npm install
 
       - name: Authenticate to Google Cloud
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Deploy to Firebase
         run: npx firebase-tools@latest deploy --only functions,hosting,firestore --project kaffi-pay --force
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
