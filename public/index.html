@@ -1804,12 +1804,12 @@ async function submitDepot(){
 async function submitRetrait(){
   const id1x=document.getElementById('retrait-id1x').value.trim();
   const c=document.getElementById('retrait-code').value.trim();
-  const t=document.getElementById('retrait-tel').value.trim();
+  const tel=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
   const whatsapp=document.getElementById('retrait-whatsapp').value.trim();
   if(!id1x){showToast(t('err-id1x'),'error');return;}
   if(!c||c.length<2){showToast(t('err-code-retrait'),'error');return;}
-  if(!t||t.length!==8||!t.startsWith('77')){showToast(t('err-waafi-num'),'error');return;}
+  if(!tel||tel.length!==8||!tel.startsWith('77')){showToast(t('err-waafi-num'),'error');return;}
   if(!m||Number(m)<250){showToast(t('err-min-retrait'),'error');return;}
   if(!whatsapp||whatsapp.length<8){showToast(t('err-whatsapp'),'error');return;}
   setLoading('retrait',true);
@@ -1822,7 +1822,7 @@ async function submitRetrait(){
       orderId:orderId,
       userId1xBet:id1x,
       withdrawalCode:c,
-      waafiNumber:t,
+      waafiNumber:tel,
       montant:Number(m),
       amount:Number(m).toLocaleString()+' DJF',
       methodeRecepteur:'Waafi',
