@@ -23,6 +23,21 @@ jobs:
       - name: Install functions dependencies
         run: cd functions && npm install
 
+      - name: Create functions env file
+        run: |
+          cat > functions/.env.kaffi-pay << 'EOF'
+          TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_ADMIN_CHAT_ID=${{ secrets.TELEGRAM_ADMIN_ID }}
+          MACRODROID_SECRET=${{ secrets.MACRODROID_SECRET }}
+          SUPPORT_BOT_TOKEN=${{ secrets.SUPPORT_BOT_TOKEN }}
+          GREEN_API_ID=${{ secrets.GREEN_API_ID }}
+          GREEN_API_TOKEN=${{ secrets.GREEN_API_TOKEN }}
+          MOBCASH_HASH=${{ secrets.MOBCASH_HASH }}
+          MOBCASH_CASHIERPASS=${{ secrets.MOBCASH_CASHIERPASS }}
+          MOBCASH_CASHDESKID=${{ secrets.MOBCASH_CASHDESKID }}
+          MOBCASH_LOGIN=${{ secrets.MOBCASH_LOGIN }}
+          EOF
+
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
