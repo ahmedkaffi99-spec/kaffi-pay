@@ -29,23 +29,29 @@ const { onSchedule }                           = require("firebase-functions/v2/
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
 const crypto                                   = require("crypto");
+const { defineSecret }                         = require("firebase-functions/params");
 
 initializeApp();
 const db = getFirestore();
 
 const REGION = "europe-west1";
 
-const mkEnv = (name) => ({ value: () => process.env[name] || "" });
-const TELEGRAM_TOKEN    = mkEnv("TELEGRAM_TOKEN");
-const TELEGRAM_ADMIN_ID = mkEnv("TELEGRAM_ADMIN_CHAT_ID");
-const MACRO_SECRET      = mkEnv("MACRODROID_SECRET");
-const SUPPORT_BOT_TOKEN = mkEnv("SUPPORT_BOT_TOKEN");
-const GREEN_API_ID      = mkEnv("GREEN_API_ID");
-const GREEN_API_TOKEN   = mkEnv("GREEN_API_TOKEN");
-const MOBCASH_HASH      = mkEnv("MOBCASH_HASH");
-const MOBCASH_CASHIERPASS = mkEnv("MOBCASH_CASHIERPASS");
-const MOBCASH_CASHDESKID  = mkEnv("MOBCASH_CASHDESKID");
-const MOBCASH_LOGIN     = mkEnv("MOBCASH_LOGIN");
+const TELEGRAM_TOKEN      = defineSecret("TELEGRAM_TOKEN");
+const TELEGRAM_ADMIN_ID   = defineSecret("TELEGRAM_ADMIN_CHAT_ID");
+const MACRO_SECRET        = defineSecret("MACRODROID_SECRET");
+const SUPPORT_BOT_TOKEN   = defineSecret("SUPPORT_BOT_TOKEN");
+const GREEN_API_ID        = defineSecret("GREEN_API_ID");
+const GREEN_API_TOKEN     = defineSecret("GREEN_API_TOKEN");
+const MOBCASH_HASH        = defineSecret("MOBCASH_HASH");
+const MOBCASH_CASHIERPASS = defineSecret("MOBCASH_CASHIERPASS");
+const MOBCASH_CASHDESKID  = defineSecret("MOBCASH_CASHDESKID");
+const MOBCASH_LOGIN       = defineSecret("MOBCASH_LOGIN");
+
+const ALL_SECRETS = [
+  TELEGRAM_TOKEN, TELEGRAM_ADMIN_ID, MACRO_SECRET, SUPPORT_BOT_TOKEN,
+  GREEN_API_ID, GREEN_API_TOKEN,
+  MOBCASH_HASH, MOBCASH_CASHIERPASS, MOBCASH_CASHDESKID, MOBCASH_LOGIN,
+];
 
 // ══════════════════════════════════════════════════════════════════
 // SECTION 1 — STATE MACHINE
@@ -662,7 +668,7 @@ function extractNumClient(text, own = "77275572") {
 exports.onNouvelDepot = onDocumentCreated(
   {
     document: "depot_orders/{docId}", region: REGION,
-    timeoutSeconds: 60,
+    timeoutSeconds: 60, secrets: ALL_SECRETS,
   },
   async (event) => {
     const tx      = event.data.data();
@@ -910,7 +916,7 @@ exports.onNouvelDepot = onDocumentCreated(
 exports.onNouvelRetrait = onDocumentCreated(
   {
     document: "retrait_orders/{docId}", region: REGION,
-    timeoutSeconds: 60,
+    timeoutSeconds: 60, secrets: ALL_SECRETS,
   },
   async (event) => {
     const tx = event.data.data();
@@ -1065,7 +1071,7 @@ exports.onNouvelRetrait = onDocumentCreated(
 exports.onDepotUpdated = onDocumentUpdated(
   {
     document: "depot_orders/{docId}", region: REGION,
-    timeoutSeconds: 60,
+    timeoutSeconds: 60, secrets: ALL_SECRETS,
   },
   async (event) => {
     const before = event.data.before.data();
@@ -1191,7 +1197,7 @@ exports.onDepotUpdated = onDocumentUpdated(
 exports.onRetraitUpdated = onDocumentUpdated(
   {
     document: "retrait_orders/{docId}", region: REGION,
-    timeoutSeconds: 30,
+    timeoutSeconds: 30, secrets: ALL_SECRETS,
   },
   async (event) => {
     const before = event.data.before.data();
@@ -1255,7 +1261,7 @@ exports.onRetraitUpdated = onDocumentUpdated(
 //  2. Alerte si ordres > 60 min sans SMS trouvé
 // ══════════════════════════════════════════════════════════════════
 exports.ordresBloques = onSchedule(
-  { schedule: "every 5 minutes", region: REGION, timeoutSeconds: 120 },
+  { schedule: "every 5 minutes", region: REGION, timeoutSeconds: 120, secrets: ALL_SECRETS },
   async () => {
     const token   = TELEGRAM_TOKEN.value();
     const adminId = TELEGRAM_ADMIN_ID.value();
@@ -1509,7 +1515,7 @@ exports.ordresBloques = onSchedule(
 // confirme directement (ordre soumis avant l'arrivée du SMS).
 // ══════════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
-  { region: REGION, invoker: "public" },
+  { region: REGION, invoker: "public", secrets: ALL_SECRETS },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1626,7 +1632,7 @@ exports.healthCheck = onRequest(
 // HTTP — TEST TELEGRAM (admin only)
 // ══════════════════════════════════════════════════════════════════
 exports.testTelegram = onRequest(
-  { region: REGION, invoker: "public" },
+  { region: REGION, invoker: "public", secrets: ALL_SECRETS },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1661,7 +1667,7 @@ exports.testTelegram = onRequest(
 // HTTP — TEST MOBCASH (admin only)
 // ══════════════════════════════════════════════════════════════════
 exports.testMobcash = onRequest(
-  { region: REGION, invoker: "public" },
+  { region: REGION, invoker: "public", secrets: ALL_SECRETS },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Access-Control-Allow-Headers", "Content-Type");
@@ -1691,7 +1697,7 @@ exports.testMobcash = onRequest(
 // Envoie automatiquement via Green API (WhatsApp).
 // ══════════════════════════════════════════════════════════════════
 exports.waRecap = onRequest(
-  { region: REGION, invoker: "public" },
+  { region: REGION, invoker: "public", secrets: ALL_SECRETS },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -1758,7 +1764,7 @@ exports.waRecap = onRequest(
 // Flux simple : client donne numéro d'ordre → Firestore → affiche statut
 // ══════════════════════════════════════════════════════════════════
 exports.supportClient = onRequest(
-  { region: REGION, invoker: "public", timeoutSeconds: 60 },
+  { region: REGION, invoker: "public", timeoutSeconds: 60, secrets: ALL_SECRETS },
   async (req, res) => {
     res.status(200).send("OK");
 
@@ -2391,7 +2397,7 @@ exports.supportClient = onRequest(
 // HTTP — ADMIN BOT
 // ══════════════════════════════════════════════════════════════════
 exports.adminBot = onRequest(
-  { region: REGION, invoker: "public", timeoutSeconds: 60 },
+  { region: REGION, invoker: "public", timeoutSeconds: 60, secrets: ALL_SECRETS },
   async (req, res) => {
     res.status(200).send("OK");
     try {
@@ -3194,7 +3200,7 @@ exports.adminStats = onRequest(
 // POST { _ak, orderId, newUserId1xBet? }
 // ══════════════════════════════════════════════════════════════════
 exports.adminRetryDeposit = onRequest(
-  { region: REGION, invoker: "public" },
+  { region: REGION, invoker: "public", secrets: ALL_SECRETS },
   async (req, res) => {
     adminCors(res, req);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -3274,7 +3280,7 @@ exports.adminRetryDeposit = onRequest(
 // POST { _ak, orderId, action: 'confirmer'|'rejeter', raison? }
 // ══════════════════════════════════════════════════════════════════
 exports.adminActionOrdre = onRequest(
-  { region: REGION, invoker: "public" },
+  { region: REGION, invoker: "public", secrets: ALL_SECRETS },
   async (req, res) => {
     adminCors(res, req);
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
