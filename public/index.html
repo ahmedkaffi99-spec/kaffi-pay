@@ -3367,13 +3367,7 @@ function extraireNumeroExp(texte){
 function startSmsListener(){
   if(!window.db || _smsListener) return;
   try{
-    var sinceTs = new Date(Date.now() - 5 * 60 * 1000); // last 5 minutes only
-    var col = window.fsQuery
-      ? window.fsQuery(
-          window.fsCollection(window.db, 'waafi_notifications'),
-          window.fsWhere('createdAt', '>=', sinceTs)
-        )
-      : window.fsCollection(window.db, 'waafi_notifications');
+    var col = window.fsCollection(window.db, 'waafi_notifications');
     _smsListener = window.fsOnSnapshot(col, function(snap){
       snap.docChanges().forEach(function(change){
         if(change.type === 'added'){
@@ -3486,18 +3480,95 @@ async function traiterSmsWaafi(texte, smsId){
 
   var ordre = ordres[0];
   var ref   = ordre.ref || ordre.orderId;
-  var mt    = montant || ordre.montant;
+  var id1xbet = ordre.userId1xBet || ordre.id1x || '';
+  var mt      = montant || ordre.montant;
 
-  // UI feedback only — server Cloud Functions handle all status changes and MobCash credits
+  // ── ÉTAPE 1 : Paiement détecté → "Argent Reçu" immédiatement ──
+  await updateTxFirebase(ref, {
+    status        : 'Argent Reçu',
+    transferIdRecu: transferId || '',
+    montantRecu   : mt,
+    expediteurRecu: numExp || '',
+    smsMatchedAt  : new Date()
+  });
+  if(currentSuiviTx && (currentSuiviTx.ref === ref || currentSuiviTx.orderId === ref)){
+    currentSuiviTx.status = 'Argent Reçu'; renderSuivi();
+  }
   pushNotif('depot_recu',
     '💳 Paiement Waafi détecté.' +
     (numExp     ? ' De : '    + numExp     + '.' : '') +
     (transferId ? ' ID : '    + transferId + '.' : '') +
-    ' Traitement en cours…',
+    ' Confirmation dans 10s…',
     ref, mt
   );
-  showToast('💳 Paiement reçu — traitement en cours…', 'success');
+  showToast('💳 Paiement reçu — confirmation dans 10s…', 'success');
   try{ await window.fsUpdateDoc(window.fsDoc(window.db,'waafi_notifications',smsId),{status:'matché',ordreRef:ref,processedAt:new Date(),_ak:getAdminKey()}); }catch(e){}
+
+  // ── ÉTAPE 2 : 10s → Confirmé ──
+  setTimeout(async function(){
+    await updateTxFirebase(ref, { status: 'Confirmé', confirmedAt: new Date() });
+    if(currentSuiviTx && (currentSuiviTx.ref === ref || currentSuiviTx.orderId === ref)){
+      currentSuiviTx.status = 'Confirmé'; renderSuivi();
+    }
+    pushNotif('depot_confirme',
+      '✅ Dépôt confirmé.' + (numExp ? ' Expéditeur : ' + numExp + '.' : ''),
+      ref, mt
+    );
+    showToast('✅ Dépôt #'+ref+' confirmé !', 'success');
+
+    // ── ÉTAPE 3 : 5s après confirmation → Webhook MacroDroid (id1xbet + montant) ──
+    setTimeout(function(){
+      if(!id1xbet){
+        pushNotif('sms_non_match', '⚠️ ID 1xBet absent — recharge manuelle requise pour ordre #'+ref, ref, mt);
+        showToast('⚠️ ID 1xBet manquant !', 'error');
+        return;
+      }
+      var webhookUrl = 'https://trigger.macrodroid.com/f3af9af3-7f05-401d-ade2-df70f6880dcb/depot_1xbet'
+        + '?id1xbet=' + encodeURIComponent(id1xbet)
+        + '&montant=' + encodeURIComponent(mt)
+        + '&ref='     + encodeURIComponent(ref);
+
+      var ctrl  = new AbortController();
+      var timer = setTimeout(function(){ ctrl.abort(); }, 15000);
+
+      fetch(webhookUrl, { signal: ctrl.signal })
+        .then(function(r){
+          clearTimeout(timer);
+          if(r.ok){
+            pushNotif('retrait_traite',
+              '🤖 MacroDroid déclenché — ID: '+id1xbet+' · '+Number(mt).toLocaleString()+' DJF',
+              ref, mt);
+            showToast('🤖 Recharge 1xBet déclenchée !', 'success');
+
+            // ── ÉTAPE 4 : 15s après webhook → Confirmé final ──
+            setTimeout(async function(){
+              await updateTxFirebase(ref, { status: 'Confirmé', finishedAt: new Date() });
+              if(currentSuiviTx && (currentSuiviTx.ref === ref || currentSuiviTx.orderId === ref)){
+                currentSuiviTx.status = 'Confirmé'; renderSuivi();
+              }
+              pushNotif('depot_confirme', '🏁 Ordre #'+ref+' terminé — compte 1xBet rechargé.', ref, mt);
+              showToast('🏁 Ordre #'+ref+' terminé !', 'success');
+            }, 15000);
+
+          } else {
+            clearTimeout(timer);
+            pushNotif('sms_non_match',
+              '⚠️ MacroDroid erreur HTTP '+r.status+' — recharge manuelle. ID: '+id1xbet,
+              ref, mt);
+            showToast('⚠️ Erreur MacroDroid ('+r.status+')', 'error');
+          }
+        })
+        .catch(function(e){
+          clearTimeout(timer);
+          pushNotif('sms_non_match',
+            '❌ MacroDroid injoignable ('+(e.name==='AbortError'?'timeout 15s':e.message)+') — recharge manuelle. ID: '+id1xbet,
+            ref, mt);
+          showToast('❌ MacroDroid non joignable — recharge manuelle !', 'error');
+        });
+
+    }, 5000); // 5s après Confirmé
+
+  }, 10000); // 10s après détection
 }
 
 // ══════════════════════════════════════════════════════════════════
