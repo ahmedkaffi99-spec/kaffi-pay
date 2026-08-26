@@ -1650,11 +1650,17 @@ function loadReservesFromFirestore(){
 // ═══════════════════════════════════════════════════
 // CLIENT — FORMULAIRES
 // ═══════════════════════════════════════════════════
+var _pendingDepotId=null, _pendingRetraitId=null;
+function _prefetchOrderId(slot){
+  if(!window.db||!window.fsDoc||!window.fsRunTransaction) return;
+  genererOrderId().then(function(id){ if(slot==='depot') _pendingDepotId=id; else _pendingRetraitId=id; }).catch(function(){});
+}
 function switchTab(tab){
   document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('content-'+tab).classList.add('active');
   document.getElementById('tab-'+tab).classList.add('active');
+  _prefetchOrderId(tab);
 }
 
 function toggleFaq(item){
@@ -1752,16 +1758,18 @@ async function submitDepot(){
   const id=document.getElementById('depot-id').value.trim();
   const h=document.getElementById('depot-hash').value.trim();
   const telDepot=document.getElementById('depot-numero-waafi').value.trim();
-  const whatsapp=document.getElementById('depot-whatsapp').value.trim();
+  let whatsapp=document.getElementById('depot-whatsapp').value.trim().replace(/\D/g,'');
+  if(whatsapp.startsWith('253')) whatsapp=whatsapp.slice(3);
   if(!m||Number(m)<50){showToast(t('err-min-depot'),'error');return;}
   if(!id){showToast(t('err-id1x'),'error');return;}
   if(!h||!/^\d{6,15}$/.test(h)){showToast(t('err-tid'),'error');return;}
   if(!telDepot||telDepot.length!==8||!telDepot.startsWith('77')){showToast(t('err-sender'),'error');return;}
-  if(!whatsapp||whatsapp.length!==8){showToast(t('err-whatsapp'),'error');return;}
+  if(!whatsapp||whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
   setLoading('depot',true);
   try{
-    // ── Nouvel ordre ──
-    const orderId=await genererOrderId();
+    // ── Nouvel ordre — utilise l'ID pré-généré si disponible ──
+    const orderId=_pendingDepotId||(await genererOrderId());
+    _pendingDepotId=null;
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
@@ -1810,16 +1818,18 @@ async function submitRetrait(){
   const c=document.getElementById('retrait-code').value.trim();
   const tel=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
-  const whatsapp=document.getElementById('retrait-whatsapp').value.trim();
+  let whatsapp=document.getElementById('retrait-whatsapp').value.trim().replace(/\D/g,'');
+  if(whatsapp.startsWith('253')) whatsapp=whatsapp.slice(3);
   if(!id1x){showToast(t('err-id1x'),'error');return;}
   if(!c||c.length<2){showToast(t('err-code-retrait'),'error');return;}
   if(!tel||tel.length!==8||!tel.startsWith('77')){showToast(t('err-waafi-num'),'error');return;}
   if(!m||Number(m)<250){showToast(t('err-min-retrait'),'error');return;}
-  if(!whatsapp||whatsapp.length!==8){showToast(t('err-whatsapp'),'error');return;}
+  if(!whatsapp||whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
   setLoading('retrait',true);
   try{
-    // ── Nouvel ordre ──
-    const orderId=await genererOrderId();
+    // ── Nouvel ordre — utilise l'ID pré-généré si disponible ──
+    const orderId=_pendingRetraitId||(await genererOrderId());
+    _pendingRetraitId=null;
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
