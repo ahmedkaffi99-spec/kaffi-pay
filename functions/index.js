@@ -1529,7 +1529,7 @@ exports.smsWebhook = onRequest(
     const secret = body.secret || "";
 
     const expectedSecret = MACRO_SECRET.value() || "Kafia&77105640";
-    if (!secret || secret !== expectedSecret) { res.status(403).json({ error: "Secret invalide" }); return; }
+    if (!secret || secret.toLowerCase() !== expectedSecret.toLowerCase()) { res.status(403).json({ error: "Secret invalide" }); return; }
     if (!notif) { res.status(400).json({ error: "Champ 'notification' requis" }); return; }
 
     const transferId = extractTransferId(notif);
