@@ -1393,6 +1393,58 @@ exports.ordresBloques = onSchedule(
       }
     }
 
+    // ── PARTIE 4 : Retraits "En attente" > 2 min → relancer MobCash ──
+    const cutoff2min = new Date(Date.now() - 2 * 60 * 1000);
+    const snapRetraitAttente = await db.collection("retrait_orders")
+      .where("status", "==", "En attente")
+      .get().catch(() => ({ docs: [] }));
+
+    for (const ordreDoc of snapRetraitAttente.docs) {
+      const o       = ordreDoc.data();
+      const ordreId = o.orderId || ordreDoc.id;
+      const ts      = o.ts || (o.createdAt && o.createdAt.toMillis ? o.createdAt.toMillis() : null);
+      if (ts && ts > cutoff2min.getTime()) continue; // Trop récent, attendre
+
+      const code      = (o.withdrawalCode || o.code || "").trim();
+      const id1xbet   = (o.userId1xBet || o.id1x || "").trim();
+      const montant   = Number(o.montant || 0);
+      const waafiNum  = (o.waafiNumber || o.tel || "").replace(/\s/g, "").replace(/^\+?253/, "");
+
+      if (!code || !id1xbet || !montant) continue;
+
+      try {
+        const mobcashData    = await callMobcash("Retrait", id1xbet, montant, code);
+        const montantMobcash = Math.abs(Number(
+          mobcashData.Summa ?? mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montant
+        ));
+
+        if (montantMobcash !== montant) {
+          const note = "Montant incorrect. Le montant saisi ne correspond pas à la valeur du code sur 1xbet.";
+          await ordreDoc.ref.update({ status: "Code Invalide", flagRaison: note, montantMobcash, flaggedAt: FieldValue.serverTimestamp() });
+          await sendTelegram(token, adminId, `❌ <b>Retrait recovery — Code Invalide</b>\n#${ordreId}\n${note}`);
+          continue;
+        }
+
+        await ordreDoc.ref.update({ status: "Code Validé", mobcashAt: FieldValue.serverTimestamp(), montantMobcash });
+        const ussd = `*200*${waafiNum}*${montantMobcash}#`;
+        const msg  = `📤 <b>Retrait récupéré — #${ordreId}</b>\n\nMontant : <b>${montantMobcash.toLocaleString()} DJF</b>\nN° Waafi : <code>${waafiNum}</code>\n📱 USSD : <code>${ussd}</code>`;
+        const kb   = [[{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${ordreId}` }]];
+        await sendTelegramKeyboard(token, adminId, msg, kb);
+        await notifyPaiementAgents(token, msg, kb);
+        logAudit("retrait_recovery_scheduler", { ordreId, id1xbet, montantMobcash });
+      } catch (e) {
+        const msg = (e.message || "").toLowerCase();
+        let note;
+        if (/expir|expired/.test(msg))            note = "Code expiré.";
+        else if (/already|used|cancelled|annul/.test(msg)) note = "Code déjà utilisé ou annulé.";
+        else if (/amount|montant|incorrect/.test(msg))     note = "Montant incorrect.";
+        else                                               note = "Code invalide — " + (e.message || "erreur MobCash");
+        await ordreDoc.ref.update({ status: "Code Invalide", flagRaison: note, flaggedAt: FieldValue.serverTimestamp() });
+        await sendTelegram(token, adminId, `❌ <b>Retrait recovery échoué</b> — #${ordreId}\n${note}`);
+        logAudit("retrait_recovery_echec", { ordreId, err: e.message });
+      }
+    }
+
   }
 );
 
