@@ -1518,7 +1518,7 @@ exports.ordresBloques = onSchedule(
 // confirme directement (ordre soumis avant l'arrivée du SMS).
 // ══════════════════════════════════════════════════════════════════
 exports.smsWebhook = onRequest(
-  { region: REGION, invoker: "public", secrets: [...S_TG, MACRO_SECRET] },
+  { region: REGION, invoker: "public", secrets: [...S_TG, MACRO_SECRET], minInstances: 1 },
   async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
