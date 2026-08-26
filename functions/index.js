@@ -741,6 +741,14 @@ exports.onNouvelDepot = onDocumentCreated(
       await sendTelegram(token, adminId,
         `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`
       );
+      if (tx.whatsapp) {
+        await sendWhatsApp(tx.whatsapp,
+          `❌ *Baki-Pay — Paiement non reçu*\n\n` +
+          `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+          `Raison : Transfer ID Waafi manquant.\n\n` +
+          `Vérifiez votre SMS Waafi et soumettez un nouvel ordre sur baki-pay.com`
+        );
+      }
       return;
     }
 
@@ -809,6 +817,7 @@ exports.onNouvelDepot = onDocumentCreated(
             status: "Paiement Non Reçu",
             flagRaison: `Transfer-ID déjà utilisé par l'ordre #${autreId}`,
             flaggedAt: FieldValue.serverTimestamp(),
+            autoNotified: true,
           });
           await sendTelegram(token, adminId,
             `⚠️ <b>Doublon TID détecté — #${ordreId}</b>\n\n` +
@@ -816,6 +825,15 @@ exports.onNouvelDepot = onDocumentCreated(
             `Montant: ${Number(tx.montant||0).toLocaleString()} DJF | ID 1xBet: <code>${tx.userId1xBet||"?"}</code>\n\n` +
             `<i>Si c'est un re-soumission du même client, relancez <code>#${autreId}</code> avec le bon ID 1xBet.</i>`
           );
+          if (tx.whatsapp) {
+            await sendWhatsApp(tx.whatsapp,
+              `❌ *Baki-Pay — Paiement non reçu*\n\n` +
+              `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+              `Raison : Transfer ID déjà utilisé.\n\n` +
+              `Si vous avez soumis un nouvel ordre avec le même Transfer ID, contactez le support.\n` +
+              `📲 baki-pay.com/#suivi-${ordreId}`
+            );
+          }
         }
         return;
       }
