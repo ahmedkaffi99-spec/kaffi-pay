@@ -954,6 +954,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div style="display:flex;align-items:center;justify-content:space-between;">
       <div id="suivi-ref" style="font-family:'Playfair Display',serif;font-size:1.6rem;font-weight:900;color:var(--gold);letter-spacing:4px;">—</div>
       <button id="suivi-copy-btn" onclick="copySuiviRef()" style="background:transparent;border:1px solid rgba(255,215,0,0.25);border-radius:999px;padding:5px 12px;font-size:0.65rem;color:var(--gold);cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;" data-i18n="btn-copy">📋 Copier</button>
+    </div>
   </div>
 
   <div style="border-radius:14px;padding:11px 14px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);">
@@ -1745,6 +1746,8 @@ function _resetTsDepot(){ initCaptchaDepot(); var b=document.getElementById('dep
 function _resetTsRetrait(){ initCaptchaRetrait(); var b=document.getElementById('retrait-btn'); b.disabled=true; b.style.opacity='.5'; b.style.cursor='not-allowed'; }
 
 async function submitDepot(){
+  const capVal=parseInt(document.getElementById('captcha-depot-ans').value,10);
+  if(capVal!==_captchaDepotAns){showToast('⚠️ Captcha incorrect — réessayez','error');return;}
   const m=document.getElementById('depot-montant').value;
   const id=document.getElementById('depot-id').value.trim();
   const h=document.getElementById('depot-hash').value.trim();
@@ -1753,8 +1756,8 @@ async function submitDepot(){
   if(!m||Number(m)<50){showToast(t('err-min-depot'),'error');return;}
   if(!id){showToast(t('err-id1x'),'error');return;}
   if(!h||!/^\d{6,15}$/.test(h)){showToast(t('err-tid'),'error');return;}
-  if(!telDepot||telDepot.length!==8){showToast(t('err-sender'),'error');return;}
-  if(!whatsapp||whatsapp.length<8){showToast(t('err-whatsapp'),'error');return;}
+  if(!telDepot||telDepot.length!==8||!telDepot.startsWith('77')){showToast(t('err-sender'),'error');return;}
+  if(!whatsapp||whatsapp.length!==8){showToast(t('err-whatsapp'),'error');return;}
   setLoading('depot',true);
   try{
     // ── Nouvel ordre ──
@@ -1796,12 +1799,13 @@ async function submitDepot(){
     }
   } catch(e){
     showToast('❌ Erreur : '+e.message,'error');
-  } finally {
     setLoading('depot',false);
   }
 }
 
 async function submitRetrait(){
+  const capValR=parseInt(document.getElementById('captcha-retrait-ans').value,10);
+  if(capValR!==_captchaRetraitAns){showToast('⚠️ Captcha incorrect — réessayez','error');return;}
   const id1x=document.getElementById('retrait-id1x').value.trim();
   const c=document.getElementById('retrait-code').value.trim();
   const tel=document.getElementById('retrait-tel').value.trim();
@@ -1811,7 +1815,7 @@ async function submitRetrait(){
   if(!c||c.length<2){showToast(t('err-code-retrait'),'error');return;}
   if(!tel||tel.length!==8||!tel.startsWith('77')){showToast(t('err-waafi-num'),'error');return;}
   if(!m||Number(m)<250){showToast(t('err-min-retrait'),'error');return;}
-  if(!whatsapp||whatsapp.length<8){showToast(t('err-whatsapp'),'error');return;}
+  if(!whatsapp||whatsapp.length!==8){showToast(t('err-whatsapp'),'error');return;}
   setLoading('retrait',true);
   try{
     // ── Nouvel ordre ──
@@ -1853,7 +1857,6 @@ async function submitRetrait(){
     }
   } catch(e){
     showToast('❌ Erreur : '+e.message,'error');
-  } finally {
     setLoading('retrait',false);
   }
 }

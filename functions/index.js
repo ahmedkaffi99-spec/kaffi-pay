@@ -940,6 +940,15 @@ exports.onNouvelRetrait = onDocumentCreated(
       ).catch((err) => console.error("[retrait] whatsapp ack failed:", err));
     }
 
+    if (!waafiNum) {
+      await db.collection("retrait_orders").doc(docId).update({
+        status: "Code Invalide", flagRaison: "Numéro Waafi manquant", flaggedAt: FieldValue.serverTimestamp(), autoNotified: true,
+      });
+      await sendTelegram(token, adminId,
+        `⚠️ <b>Retrait sans numéro Waafi</b> — #${ordreId}\nNuméro Waafi manquant, impossible de composer le USSD.`);
+      return;
+    }
+
     if (!tidRetrait) {
       await sendTelegram(token, adminId,
         `⚠️ <b>Retrait sans code</b> — #${ordreId}\nCode retrait manquant, intervention manuelle requise.`);
@@ -1183,6 +1192,11 @@ exports.onRetraitUpdated = onDocumentUpdated(
     if (after.type !== "Retrait") return;
     if (before.status === after.status) return;
 
+    if (!transitionValide(before.status, after.status)) {
+      console.warn(`[Retrait] Transition invalide ignorée: ${before.status} → ${after.status}`);
+      return;
+    }
+
     const ordreId = after.orderId || event.params.docId;
     const montant = Number(after.montant || 0).toLocaleString();
     const token   = TELEGRAM_TOKEN.value();
@@ -1304,7 +1318,8 @@ exports.ordresBloques = onSchedule(
       if (vieux.length) {
         const lignes = vieux.map((d) => {
           const o   = d.data();
-          const age = Math.round((Date.now() - o.ts) / 60000);
+          const tsMs = o.ts && o.ts.toDate ? o.ts.toDate().getTime() : (o.ts ? Number(o.ts) : 0);
+          const age = Math.round((Date.now() - tsMs) / 60000);
           return `• #${o.orderId || d.id} | ${o.montant} DJF | ⏱ ${age}min | TID:${o.waafitranfertID || "?"}`;
         });
         const alertMsg60 = `⚠️ <b>${vieux.length} ordre(s) > 60 min sans SMS Waafi</b>\n\n${lignes.join("\n")}\n\n` +
@@ -1450,7 +1465,7 @@ exports.ordresBloques = onSchedule(
 
         if (montantMobcash !== montant) {
           const note = "Montant incorrect. Le montant saisi ne correspond pas à la valeur du code sur 1xbet.";
-          await ordreDoc.ref.update({ status: "Code Invalide", flagRaison: note, montantMobcash, flaggedAt: FieldValue.serverTimestamp() });
+          await ordreDoc.ref.update({ status: "Code Invalide", flagRaison: note, montantMobcash, flaggedAt: FieldValue.serverTimestamp(), autoNotified: true });
           await sendTelegram(token, adminId, `❌ <b>Retrait recovery — Code Invalide</b>\n#${ordreId}\n${note}`);
           continue;
         }
@@ -1469,7 +1484,7 @@ exports.ordresBloques = onSchedule(
         else if (/already|used|cancelled|annul/.test(msg)) note = "Code déjà utilisé ou annulé.";
         else if (/amount|montant|incorrect/.test(msg))     note = "Montant incorrect.";
         else                                               note = "Code invalide — " + (e.message || "erreur MobCash");
-        await ordreDoc.ref.update({ status: "Code Invalide", flagRaison: note, flaggedAt: FieldValue.serverTimestamp() });
+        await ordreDoc.ref.update({ status: "Code Invalide", flagRaison: note, flaggedAt: FieldValue.serverTimestamp(), autoNotified: true });
         await sendTelegram(token, adminId, `❌ <b>Retrait recovery échoué</b> — #${ordreId}\n${note}`);
         logAudit("retrait_recovery_echec", { ordreId, err: e.message });
       }
@@ -1510,7 +1525,7 @@ exports.smsWebhook = onRequest(
     // Sauvegarder Firestore en parallèle avec Telegram — avant de répondre
     const docRefPromise = db.collection("waafi_notifications").add({
       notification: notif, transferId, montant, numClient,
-      secret: expectedSecret, source: "macrodroid",
+      source: "macrodroid",
       status: "reçu",
       processedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
@@ -1537,35 +1552,40 @@ exports.smsWebhook = onRequest(
     // Cas rare : ordre déjà soumis avant que le SMS arrive
     if (!transferId) return;
 
-    const ordreSnap = await db.collection("depot_orders")
-      .where("waafitranfertID", "==", transferId)
-      .where("status", "==", "En attente")
-      .limit(1).get();
+    try {
+      const ordreSnap = await db.collection("depot_orders")
+        .where("waafitranfertID", "==", transferId)
+        .where("status", "==", "En attente")
+        .limit(1).get();
 
-    if (ordreSnap.empty) return;
+      if (ordreSnap.empty) return;
 
-    const dejaTraite = await db.collection("ordre_traite")
-      .where("transferId", "==", transferId).where("status", "==", "credite").limit(1).get();
-    if (!dejaTraite.empty) return;
+      const dejaTraite = await db.collection("ordre_traite")
+        .where("transferId", "==", transferId).where("status", "==", "credite").limit(1).get();
+      if (!dejaTraite.empty) return;
 
-    const ordreDoc  = ordreSnap.docs[0];
-    const waafiSnap = await docRef.get();
-    const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), waafiSnap.data());
-    const ordreRef2   = ordreDoc.data().orderId || ordreDoc.id;
+      const ordreDoc  = ordreSnap.docs[0];
+      const waafiSnap = await docRef.get();
+      const { score, mismatches, decision } = scorerCorrespondance(ordreDoc.data(), waafiSnap.data());
+      const ordreRef2   = ordreDoc.data().orderId || ordreDoc.id;
 
-    if (decision === "confirmer") {
-      await confirmerDepot(ordreDoc, waafiSnap, token, adminId);
-    } else {
-      const raison = mismatchToRaison(mismatches);
-      await ordreDoc.ref.update({
-        status: "Paiement Non Reçu",
-        flagRaison: raison,
-        flaggedAt: FieldValue.serverTimestamp(),
-      });
-      const rejetMsgWebhook = `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreRef2}</code>\n` +
-        mismatches.map((m) => `• ${m}`).join("\n");
-      await sendTelegram(token, adminId, rejetMsgWebhook);
-      await notifyPaiementAgents(token, rejetMsgWebhook).catch(() => {});
+      if (decision === "confirmer") {
+        await confirmerDepot(ordreDoc, waafiSnap, token, adminId);
+      } else {
+        const raison = mismatchToRaison(mismatches);
+        await ordreDoc.ref.update({
+          status: "Paiement Non Reçu",
+          flagRaison: raison,
+          flaggedAt: FieldValue.serverTimestamp(),
+          autoNotified: true,
+        });
+        const rejetMsgWebhook = `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreRef2}</code>\n` +
+          mismatches.map((m) => `• ${m}`).join("\n");
+        await sendTelegram(token, adminId, rejetMsgWebhook);
+        await notifyPaiementAgents(token, rejetMsgWebhook).catch(() => {});
+      }
+    } catch (e) {
+      console.error("smsWebhook post-response error:", e);
     }
   }
 );
@@ -2438,7 +2458,8 @@ exports.adminBot = onRequest(
           await sendTelegram(cbToken, fromId, `🔄 Relance MobCash — <b>#${ordreId}</b> | <code>${id1xbet}</code>…`);
           try {
             await callMobcash(oData.type || "Dépôt", id1xbet, montantVal, oData.withdrawalCode || "");
-            await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAgent: true });
+            const rechargeNewStatus = oData.type === "Retrait" ? "Code Validé" : "Crédité avec succès";
+            await oDoc.ref.update({ status: rechargeNewStatus, webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAgent: true });
             logAudit("recharge_agent_paiement_ok", { ordreId, agentId: fromId, id1xbet });
             await sendTelegram(cbToken, fromId,
               `✅ <b>Recharge réussie !</b>\n#${ordreId} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
@@ -2488,6 +2509,14 @@ exports.adminBot = onRequest(
           await doc.ref.update({ status: "Code Validé", confirmedBy: "admin_telegram", confirmedAt: FieldValue.serverTimestamp() });
           await sendTelegram(token, replyId, `✅ Retrait <b>#${num}</b> — Code Validé — ${montantVal.toLocaleString()} DJF`);
           await broadcastAction(token, adminId, chatId, `✅ Retrait <b>#${num}</b> confirmé — Code Validé — ${montantVal.toLocaleString()} DJF`);
+          const wNum = (data.waafiNumber || data.tel || data.numeroWaafi || "").replace(/\s/g,"").replace(/^\+?253/,"");
+          if (wNum) {
+            const ussd = `*200*${wNum}*${montantVal}#`;
+            const ussdMsg = `📤 <b>Retrait à payer — #${num}</b>\n\nMontant : <b>${montantVal.toLocaleString()} DJF</b>\nN° Waafi : <code>${wNum}</code>\n📱 USSD : <code>${ussd}</code>\n\n<i>1. Copiez le USSD → 2. Composez → 3. Confirmez → 4. Cliquez Terminer.</i>`;
+            const ussdKb = [[{ text: "✅ Paiement Waafi effectué — Terminer", callback_data: `terminer_${num}` }]];
+            await sendTelegramKeyboard(token, adminId, ussdMsg, ussdKb);
+            await notifyPaiementAgents(token, ussdMsg, ussdKb);
+          }
         } else {
           if (!transitionValide(data.status, "Paiement Reçu")) { await sendTelegram(token, replyId, `⛔ Impossible de confirmer — statut : <b>${data.status}</b>.`); return; }
           await doc.ref.update({ status: "Paiement Reçu", confirmedBy: "admin_telegram", confirmedAt: FieldValue.serverTimestamp() });
@@ -2897,8 +2926,8 @@ exports.adminBot = onRequest(
         const oDoc = await findOrder(num).catch(() => null);
         if (!oDoc) { await sendTelegram(token, replyId, `❓ Ordre <b>#${num}</b> introuvable.`); return; }
         const oData = oDoc.data();
-        if (oData.status !== "Crédité avec succès") {
-          await sendTelegram(token, replyId, `⛔ Ordre <b>#${num}</b> non crédité (statut: <b>${oData.status}</b>).`); return;
+        if (oData.status !== "Paiement Reçu" || oData.webhookStatus === "ok") {
+          await sendTelegram(token, replyId, `⛔ Ordre <b>#${num}</b> ne peut pas être rechargé (statut: <b>${oData.status}</b>, webhookStatus: <b>${oData.webhookStatus || "—"}</b>).\nUtilisez <code>recharge #ID</code> uniquement pour les ordres bloqués en <b>Paiement Reçu</b> avec webhookStatus echec.`); return;
         }
         const id1xbet        = oData.userId1xBet || oData.id1x || oData.idBet || "";
         const montantVal     = oData.montant || oData.amount || 0;
@@ -2908,7 +2937,7 @@ exports.adminBot = onRequest(
         await sendTelegram(token, replyId, `🔄 Relance MobCash — <b>#${num}</b> | <code>${id1xbet}</code>…`);
         try {
           await callMobcash(orderType, id1xbet, montantVal, withdrawalCode);
-          await oDoc.ref.update({ webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAdmin: true });
+          await oDoc.ref.update({ status: "Crédité avec succès", webhookStatus: "ok", webhookAt: FieldValue.serverTimestamp(), rechargeAdmin: true });
           logAudit("recharge_manuelle_ok", { num, adminId, id1xbet });
           await sendTelegram(token, replyId,
             `✅ <b>Recharge réussie !</b>\n#${num} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
