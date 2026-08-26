@@ -340,11 +340,11 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
   // WhatsApp 2/3 — paiement reçu, crédit en cours
   if (ordre.whatsapp) {
     await sendWhatsApp(ordre.whatsapp,
-      `💳 *Kaffi-Pay — Paiement reçu* ✅\n\n` +
+      `💳 *Baki-Pay — Paiement reçu* ✅\n\n` +
       `Votre paiement *#${ordreId}* de *${Number(montantNotif).toLocaleString()} DJF* a bien été reçu.\n\n` +
       `Statut : 💳 *Paiement reçu*\n\n` +
       `⏳ Crédit de votre compte 1xBet en cours...\n` +
-      `📲 kaffi-pay.com/#suivi-${ordreId}`
+      `📲 baki-pay.com/#suivi-${ordreId}`
     );
   }
 
@@ -463,7 +463,7 @@ function traiterAdminBot(text, orders, notifs) {
   }
 
   return (
-    "🤖 <b>Kaffi-Pay — Rapports</b>\n\n" +
+    "🤖 <b>Baki-Pay — Rapports</b>\n\n" +
     "📊 <code>stats</code> — bilan des 20 derniers ordres\n" +
     "⏳ <code>ordres</code> — ordres en attente\n" +
     "📩 <code>sms</code> — derniers SMS Waafi reçus\n" +
@@ -717,7 +717,7 @@ exports.onNouvelDepot = onDocumentCreated(
     if (tx.whatsapp) {
       const montantStr = Number(tx.montant || 0).toLocaleString();
       await sendWhatsApp(tx.whatsapp,
-        `🧾 *Kaffi-Pay — Ordre reçu* ✅\n\n` +
+        `🧾 *Baki-Pay — Ordre reçu* ✅\n\n` +
         `Votre ordre *#${ordreId}* a bien été soumis.\n\n` +
         `📥 *Dépôt 1xBet*\n` +
         `Montant : *${montantStr} DJF*\n` +
@@ -726,7 +726,7 @@ exports.onNouvelDepot = onDocumentCreated(
         `N° expéditeur : ${tx.numeroPayment || "—"}\n\n` +
         `Statut : ⏳ *En attente*\n\n` +
         `Vous recevrez une notification dès que votre paiement sera validé.\n` +
-        `📲 Suivi : kaffi-pay.com/#suivi-${ordreId}`
+        `📲 Suivi : baki-pay.com/#suivi-${ordreId}`
       );
     }
 
@@ -826,10 +826,10 @@ exports.onNouvelDepot = onDocumentCreated(
       });
       if (tx.whatsapp) {
         await sendWhatsApp(tx.whatsapp,
-          `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+          `❌ *Baki-Pay — Paiement non reçu*\n\n` +
           `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
           `Raison : ${raison}\n\n` +
-          `Vérifiez les informations et soumettez un nouvel ordre sur kaffi-pay.com`
+          `Vérifiez les informations et soumettez un nouvel ordre sur baki-pay.com`
         );
       }
       await sendTelegram(token, adminId,
@@ -851,10 +851,10 @@ exports.onNouvelDepot = onDocumentCreated(
     });
     if (tx.whatsapp) {
       await sendWhatsApp(tx.whatsapp,
-        `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+        `❌ *Baki-Pay — Paiement non reçu*\n\n` +
         `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
         `Raison : Transfer ID introuvable\n\n` +
-        `Vérifiez votre Transfer ID Waafi et soumettez un nouvel ordre sur kaffi-pay.com`
+        `Vérifiez votre Transfer ID Waafi et soumettez un nouvel ordre sur baki-pay.com`
       );
     }
     await sendTelegram(token, adminId,
@@ -910,11 +910,11 @@ exports.onNouvelRetrait = onDocumentCreated(
     // ── WhatsApp — accusé de réception "En attente" ──
     if (tx.whatsapp) {
       await sendWhatsApp(tx.whatsapp,
-        `🧾 *Kaffi-Pay — Retrait reçu*\n\n` +
+        `🧾 *Baki-Pay — Retrait reçu*\n\n` +
         `Ordre *#${ordreId}* — *${montantVal.toLocaleString()} DJF*\n\n` +
         `📝 *Statut : En attente*\n` +
         `Note : Traitement en cours. Veuillez ne pas annuler le code sur votre application 1xbet.\n\n` +
-        `📲 kaffi-pay.com/#suivi-${ordreId}`
+        `📲 baki-pay.com/#suivi-${ordreId}`
       ).catch((err) => console.error("[retrait] whatsapp ack failed:", err));
     }
 
@@ -951,7 +951,7 @@ exports.onNouvelRetrait = onDocumentCreated(
         );
         if (tx.whatsapp) {
           await sendWhatsApp(tx.whatsapp,
-            `❌ *Kaffi-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 kaffi-pay.com/#suivi-${ordreId}`);
+            `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}`);
         }
         logAudit("retrait_montant_incorrect", { ordreId, montantVal, montantMobcash });
         return;
@@ -966,10 +966,10 @@ exports.onNouvelRetrait = onDocumentCreated(
 
       if (tx.whatsapp) {
         await sendWhatsApp(tx.whatsapp,
-          `✅ *Kaffi-Pay — Code Validé*\n\nOrdre *#${ordreId}* — *${montantMobcash.toLocaleString()} DJF*\n\n` +
+          `✅ *Baki-Pay — Code Validé*\n\nOrdre *#${ordreId}* — *${montantMobcash.toLocaleString()} DJF*\n\n` +
           `📝 *Statut : Code Validé*\n` +
           `Note : Fonds retirés avec succès depuis 1xbet. Votre transfert Waafi arrive dans un instant.\n\n` +
-          `📲 kaffi-pay.com/#suivi-${ordreId}`
+          `📲 baki-pay.com/#suivi-${ordreId}`
         );
       }
 
@@ -1008,7 +1008,7 @@ exports.onNouvelRetrait = onDocumentCreated(
         `❌ <b>Retrait — Code Invalide</b> — #${ordreId}\n${note}\n<code>${e.message}</code>`);
       if (tx.whatsapp) {
         await sendWhatsApp(tx.whatsapp,
-          `❌ *Kaffi-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 kaffi-pay.com/#suivi-${ordreId}`);
+          `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}`);
       }
       logAudit("retrait_code_invalide", { ordreId, note, err: e.message });
     }
@@ -1051,7 +1051,7 @@ exports.onDepotUpdated = onDocumentUpdated(
       await notifyPaiementAgents(token, creditMsg).catch(() => {});
       if (after.whatsapp) {
         await sendWhatsApp(after.whatsapp,
-          `🎉 *Kaffi-Pay — Compte 1xBet crédité !*\n\n` +
+          `🎉 *Baki-Pay — Compte 1xBet crédité !*\n\n` +
           `Votre dépôt *#${ordreId}* de *${montant} DJF* a été traité avec succès.\n\n` +
           `✅ *Crédité avec succès*\n\n` +
           `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
@@ -1066,10 +1066,10 @@ exports.onDepotUpdated = onDocumentUpdated(
       await notifyPaiementAgents(token, nonRecuMsg).catch(() => {});
       if (after.whatsapp) {
         await sendWhatsApp(after.whatsapp,
-          `❌ *Kaffi-Pay — Paiement non reçu*\n\n` +
+          `❌ *Baki-Pay — Paiement non reçu*\n\n` +
           `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
           `Raison : ${after.flagRaison || "Paiement non reçu"}\n\n` +
-          `Soumettez un nouvel ordre sur kaffi-pay.com`
+          `Soumettez un nouvel ordre sur baki-pay.com`
         );
       }
       return;
@@ -1173,11 +1173,11 @@ exports.onRetraitUpdated = onDocumentUpdated(
       await notifyPaiementAgents(token, payeMsg).catch(() => {});
       if (after.whatsapp) {
         await sendWhatsApp(after.whatsapp,
-          `✅ *Kaffi-Pay — Retrait Payé !* 🎉\n\n` +
+          `✅ *Baki-Pay — Retrait Payé !* 🎉\n\n` +
           `Votre retrait *#${ordreId}* de *${montant} DJF* a été effectué avec succès.\n\n` +
           `💸 *Statut : Payé*\n` +
           `Vérifiez votre solde Waafi. Merci de votre confiance !\n\n` +
-          `📲 kaffi-pay.com/#suivi-${ordreId}`
+          `📲 baki-pay.com/#suivi-${ordreId}`
         );
       }
       return;
@@ -1188,9 +1188,9 @@ exports.onRetraitUpdated = onDocumentUpdated(
         `❌ <b>Retrait — Code Invalide</b>\n#${ordreId}\n${after.flagRaison || "Code invalide"}`);
       if (after.whatsapp) {
         await sendWhatsApp(after.whatsapp,
-          `❌ *Kaffi-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n` +
+          `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n` +
           `📝 ${after.flagRaison || "Code invalide. Contactez le support."}\n\n` +
-          `📲 kaffi-pay.com/#suivi-${ordreId}`
+          `📲 baki-pay.com/#suivi-${ordreId}`
         );
       }
       return;
@@ -1672,21 +1672,21 @@ exports.waRecap = onRequest(
       statut = o.status || "⏳ En attente";
 
     const msg = !isRetrait
-      ? `🧾 *Kaffi-Pay — Récapitulatif Dépôt*\n\n` +
+      ? `🧾 *Baki-Pay — Récapitulatif Dépôt*\n\n` +
         `N° Ordre : *#${ordreId}*\n` +
         `Montant : ${montantStr} DJF\n` +
         `ID 1xBet : ${o.userId1xBet || o.id1x || "—"}\n` +
         `Waafi Transfer ID : ${o.waafitranfertID || o.hash || "—"}\n` +
         `N° Expéditeur : ${o.numeroPayment || "—"}\n` +
         `Statut : ${statut}\n\n` +
-        `📲 kaffi-pay.com/#suivi-${ordreId}`
-      : `🧾 *Kaffi-Pay — Récapitulatif Retrait*\n\n` +
+        `📲 baki-pay.com/#suivi-${ordreId}`
+      : `🧾 *Baki-Pay — Récapitulatif Retrait*\n\n` +
         `N° Ordre : *#${ordreId}*\n` +
         `Montant : ${montantStr} DJF\n` +
         `Code retrait : ${o.withdrawalCode || o.code || "—"}\n` +
         `Numéro Waafi : ${o.waafiNumber || o.tel || "—"}\n` +
         `Statut : ${statut}\n\n` +
-        `📲 kaffi-pay.com/#suivi-${ordreId}`;
+        `📲 baki-pay.com/#suivi-${ordreId}`;
 
     const result = await sendWhatsApp(phone, msg);
     if (result.ok) {
@@ -1714,7 +1714,7 @@ exports.supportClient = onRequest(
     }
 
     // ── Helpers ───────────────────────────────────────────────────
-    const SIG = "\n\n<i>— Support Kaffi-Pay · kaffi-pay.com</i>";
+    const SIG = "\n\n<i>— Support Baki-Pay · baki-pay.com</i>";
 
     async function reply(chatId, txt) {
       return sendTelegramToBot(supportToken, chatId, txt + SIG);
@@ -1735,7 +1735,7 @@ exports.supportClient = onRequest(
     const FAQ = {
       depot:
         `📥 <b>Comment effectuer un dépôt 1xBet</b>\n\n` +
-        `1️⃣ Allez sur <b>kaffi-pay.com</b> → onglet <b>Dépôt</b>\n` +
+        `1️⃣ Allez sur <b>baki-pay.com</b> → onglet <b>Dépôt</b>\n` +
         `2️⃣ Remplissez le formulaire :\n` +
         `   • <b>Montant</b> à déposer\n` +
         `   • <b>ID 1xBet</b> (votre identifiant de compte)\n` +
@@ -1750,7 +1750,7 @@ exports.supportClient = onRequest(
         `📤 <b>Comment effectuer un retrait 1xBet</b>\n\n` +
         `1️⃣ Sur 1xBet → <b>Finances → Retirer des fonds</b>\n` +
         `2️⃣ Sélectionnez <b>"Code de retrait"</b>, saisissez le montant et copiez le code\n` +
-        `3️⃣ Allez sur <b>kaffi-pay.com</b> → onglet <b>Retrait</b>\n` +
+        `3️⃣ Allez sur <b>baki-pay.com</b> → onglet <b>Retrait</b>\n` +
         `4️⃣ Remplissez le formulaire :\n` +
         `   • <b>ID 1xBet</b> (votre identifiant de compte)\n` +
         `   • <b>Code de retrait</b> (généré sur 1xBet)\n` +
@@ -1775,15 +1775,15 @@ exports.supportClient = onRequest(
       securite:
         `🔒 <b>Sécurité & Fiabilité</b>\n\n` +
         `• Chaque transaction est vérifiée et sécurisée\n` +
-        `• Historique complet de vos transactions sur <b>kaffi-pay.com</b>\n` +
+        `• Historique complet de vos transactions sur <b>baki-pay.com</b>\n` +
         `• Service fiable, disponible <b>24h/24</b>\n\n` +
-        `Kaffi-Pay est le service de confiance pour vos transactions 1xBet à Djibouti.`,
+        `Baki-Pay est le service de confiance pour vos transactions 1xBet à Djibouti.`,
 
       annuler:
         `🚫 <b>Annuler un ordre</b>\n\n` +
         `Vous pouvez annuler uniquement si l'ordre est encore <b>"En attente"</b>.\n\n` +
         `<b>Comment faire :</b>\n` +
-        `1️⃣ Allez sur <b>kaffi-pay.com</b>\n` +
+        `1️⃣ Allez sur <b>baki-pay.com</b>\n` +
         `2️⃣ Ouvrez votre ordre dans l'historique\n` +
         `3️⃣ Appuyez sur <b>🚫 Annuler cet ordre</b>\n\n` +
         `⚠️ Un ordre <b>Crédité</b> ou <b>Payé</b> ne peut pas être annulé.`,
@@ -1818,7 +1818,7 @@ exports.supportClient = onRequest(
           const tid2   = oDoc2 ? (oDoc2.data().waafitranfertID || oDoc2.data().hash || "") : "";
           await replyKb(cbChatId,
             `📝 <b>Resoumettre un nouvel ordre</b>\n\n` +
-            `1️⃣ Allez sur <b>kaffi-pay.com</b>\n` +
+            `1️⃣ Allez sur <b>baki-pay.com</b>\n` +
             `2️⃣ Soumettez un <b>nouvel ordre dépôt</b>\n` +
             `3️⃣ Entrez votre <b>ID 1xBet en DJF</b> (vérifiez la devise)\n` +
             (tid2 ? `4️⃣ Utilisez le même <b>Transfer ID : <code>${tid2}</code></b>\n\n✅ Votre paiement Waafi a bien été reçu — le même Transfer ID est réutilisable.` : ""),
@@ -1922,7 +1922,7 @@ exports.supportClient = onRequest(
             await reply(cbChatId, `✅ Session #${oId5} fermée.`);
             if (sess5.clientChatId) {
               await replyKb(sess5.clientChatId,
-                `✅ <b>Conversation terminée</b>\n\nMerci d'avoir contacté Kaffi-Pay.\nSi vous avez d'autres questions, nous sommes là.`,
+                `✅ <b>Conversation terminée</b>\n\nMerci d'avoir contacté Baki-Pay.\nSi vous avez d'autres questions, nous sommes là.`,
                 BACK_KB
               );
             }
@@ -1941,7 +1941,7 @@ exports.supportClient = onRequest(
           if (!existingSnap.empty) {
             const ex = existingSnap.docs[0].data();
             await reply(cbChatId, ex.status === "open"
-              ? `💬 Vous êtes déjà en conversation avec l'agent <b>${ex.agentName || "Kaffi-Pay"}</b>.\nÉcrivez directement ici.`
+              ? `💬 Vous êtes déjà en conversation avec l'agent <b>${ex.agentName || "Baki-Pay"}</b>.\nÉcrivez directement ici.`
               : `⏳ Votre demande est déjà en attente. Un agent va vous prendre en charge.`);
             return;
           }
@@ -2004,7 +2004,7 @@ exports.supportClient = onRequest(
           await agentSessionSnap.docs[0].ref.update({ status: "closed", closedAt: FieldValue.serverTimestamp() });
           await replyKb(chatId, `✅ Session fermée.`, [[{ text: "📋 Sessions en attente", callback_data: "agent_sessions" }]]);
           await replyKb(sess.clientChatId,
-            `✅ <b>Conversation terminée</b>\n\nMerci d'avoir contacté Kaffi-Pay. L'agent a clôturé la session.`,
+            `✅ <b>Conversation terminée</b>\n\nMerci d'avoir contacté Baki-Pay. L'agent a clôturé la session.`,
             BACK_KB);
         } else if (t === "sessions" || t === "/sessions") {
           await reply(chatId, `💬 Session active : <b>${sess.clientName || "client"}</b>${sess.orderId ? " — Ordre #"+sess.orderId : ""}\n\nTapez <b>fermer</b> pour clôturer.`);
@@ -2070,7 +2070,7 @@ exports.supportClient = onRequest(
       // ── /start /menu ──
       if (t === "/start" || t === "start" || t === "/menu" || t === "menu") {
         await replyKb(chatId,
-          `👋 <b>Bienvenue chez Kaffi-Pay !</b>\n\n` +
+          `👋 <b>Bienvenue chez Baki-Pay !</b>\n\n` +
           `Je suis votre assistant — service disponible <b>24h/24</b>.\n\n` +
           `Choisissez une option :`,
           MAIN_KB
@@ -2113,7 +2113,7 @@ exports.supportClient = onRequest(
       // ── Salutations (Français + Somali + Arabe) ──
       if (/^(bonjour|salut|bonsoir|hello|salam|hi|allo|allô|bjr|bj|nabad|marhaba|ahlan|asalam|salaamu|wa calaykum|صباح|مرحبا|السلام|haye|hey|yo)\b/i.test(t)) {
         await replyKb(chatId,
-          `👋 Bonjour !\n\nJe suis votre assistant Kaffi-Pay.\nComment puis-je vous aider ?`,
+          `👋 Bonjour !\n\nJe suis votre assistant Baki-Pay.\nComment puis-je vous aider ?`,
           MAIN_KB
         );
         return;
@@ -2182,7 +2182,7 @@ exports.supportClient = onRequest(
         if (!existing2.empty) {
           const ex2 = existing2.docs[0].data();
           await reply(chatId, ex2.status === "open"
-            ? `💬 Vous êtes déjà en conversation avec l'agent <b>${ex2.agentName || "Kaffi-Pay"}</b>.`
+            ? `💬 Vous êtes déjà en conversation avec l'agent <b>${ex2.agentName || "Baki-Pay"}</b>.`
             : `⏳ Votre demande est déjà en attente. Un agent arrive bientôt.`);
           return;
         }
@@ -2215,7 +2215,7 @@ exports.supportClient = onRequest(
         const orderDoc = await findOrder(ordreId).catch(() => null);
         if (!orderDoc) {
           await replyKb(chatId,
-            `❓ Ordre <b>#${ordreId}</b> introuvable.\n\nVérifiez votre numéro sur <b>kaffi-pay.com</b> dans l'historique.\n(Le numéro fait 5 à 8 chiffres — ex: <code>#06111</code>)`,
+            `❓ Ordre <b>#${ordreId}</b> introuvable.\n\nVérifiez votre numéro sur <b>baki-pay.com</b> dans l'historique.\n(Le numéro fait 5 à 8 chiffres — ex: <code>#06111</code>)`,
             AGENT_KB
           );
           return;
@@ -2305,7 +2305,7 @@ exports.supportClient = onRequest(
             statutOrdreMsg(ordreId, o) +
             `\n\n<b>Que faire ?</b>\n` +
             `• Vérifiez que votre numéro de transfert est exact\n` +
-            `• Soumettez un <b>nouvel ordre</b> sur kaffi-pay.com\n` +
+            `• Soumettez un <b>nouvel ordre</b> sur baki-pay.com\n` +
             `• En cas de doute, contactez un agent`,
             AGENT_KB
           );
@@ -2590,7 +2590,7 @@ exports.adminBot = onRequest(
           `🔍 <b>Diagnostic WhatsApp (Green API)</b>\n` +
           `Instance : <code>${greenId}</code>\n\n` +
           `📤 Envoi test vers <code>${numMatch[1]}</code>…`);
-        const result = await sendWhatsApp(numMatch[1], "✅ Test Kaffi-Pay — WhatsApp fonctionne !");
+        const result = await sendWhatsApp(numMatch[1], "✅ Test Baki-Pay — WhatsApp fonctionne !");
         if (result && result.ok) {
           await sendTelegram(token, replyId,
             `✅ <b>Message envoyé avec succès !</b>\nRéponse Green API : <code>${JSON.stringify(result.body).slice(0,300)}</code>`);
@@ -2678,7 +2678,7 @@ exports.adminBot = onRequest(
           for (const a of agentsPaiement) {
             try {
               await sendTelegram(token, String(a.telegramId),
-                `🔔 <b>Test Kaffi-Pay</b>\n\nVous êtes bien connecté en tant qu'agent de paiement.\nVous recevrez les notifications de commandes.`);
+                `🔔 <b>Test Baki-Pay</b>\n\nVous êtes bien connecté en tant qu'agent de paiement.\nVous recevrez les notifications de commandes.`);
               await sendTelegram(token, replyId, `✅ <code>${a.telegramId}</code> (${a.nom || a.name || "?"}) — message reçu`);
             } catch (e) {
               await sendTelegram(token, replyId, `❌ <code>${a.telegramId}</code> (${a.nom || a.name || "?"}) — échec : ${e.message}`);
@@ -2931,7 +2931,7 @@ exports.adminBot = onRequest(
 // POST → action: 'add' | 'delete'  +  agent: {name,user,pass,role}
 // ══════════════════════════════════════════════════════════════════
 const ADMIN_KEY = "kp2026_9f3aXmQ7";
-const ADMIN_ORIGINS = ["https://kaffi-pay.com", "https://kaffi-pay.web.app"];
+const ADMIN_ORIGINS = ["https://baki-pay.com", "https://kaffi-pay.web.app", "https://kaffi-pay.firebaseapp.com"];
 function adminCors(res, req) {
   const origin = (req && req.headers && req.headers.origin) || "";
   if (ADMIN_ORIGINS.includes(origin)) {
