@@ -900,6 +900,16 @@ exports.onNouvelRetrait = onDocumentCreated(
 
     logAudit("nouvel_retrait", { ordreId, montant: montantVal, waafiNum });
 
+    // ── Telegram admin — accusé de réception immédiat ──
+    await sendTelegram(token, adminId,
+      `📤 <b>Nouvel ordre Retrait</b> — <code>#${ordreId}</code>\n\n` +
+      `Montant : <b>${montantVal.toLocaleString()} DJF</b>\n` +
+      `N° Waafi : <code>${waafiNum || "—"}</code>\n` +
+      `Code retrait : <code>${tidRetrait || "—"}</code>\n` +
+      `ID 1xBet : <code>${(tx.userId1xBet || tx.id1x || "—")}</code>\n\n` +
+      `<i>⏳ Appel MobCash en cours...</i>`
+    ).catch((err) => console.error("[retrait] telegram ack failed:", err));
+
     // ── WhatsApp — accusé de réception "En attente" ──
     if (tx.whatsapp) {
       await sendWhatsApp(tx.whatsapp,
@@ -908,7 +918,7 @@ exports.onNouvelRetrait = onDocumentCreated(
         `📝 *Statut : En attente*\n` +
         `Note : Traitement en cours. Veuillez ne pas annuler le code sur votre application 1xbet.\n\n` +
         `📲 kaffi-pay.com/#suivi-${ordreId}`
-      );
+      ).catch((err) => console.error("[retrait] whatsapp ack failed:", err));
     }
 
     if (!tidRetrait) {
