@@ -700,6 +700,14 @@ exports.onNouvelDepot = onDocumentCreated(
         `Score: ${fraude.score}/100 | Risque: ${fraude.risque}\n` +
         fraude.raisons.map((r) => `• ${r}`).join("\n")
       );
+      if (tx.whatsapp) {
+        await sendWhatsApp(tx.whatsapp,
+          `❌ *Baki-Pay — Ordre refusé*\n\n` +
+          `Votre ordre *#${ordreId}* n'a pas pu être traité.\n\n` +
+          `Pour toute question, contactez notre support :\n` +
+          `📲 baki-pay.com/#suivi-${ordreId}`
+        ).catch(() => {});
+      }
       logAudit("depot_rejete_fraude", { ordreId, score: fraude.score, raisons: fraude.raisons });
       return;
     }
