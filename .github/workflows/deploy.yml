@@ -46,6 +46,26 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
+      - name: Clear old Secret Manager bindings from Cloud Run services
+        run: |
+          REGION=europe-west1
+          PROJECT=kaffi-pay
+          SERVICES=(
+            onnouveldepot onnouvelretrait ondepotupdated onretraitupdated
+            ordresbloques smswebhook testtelegram testmobcash
+            warecap supportclient adminbot adminretrydeposit
+            adminactionordre purgeordresanciens
+          )
+          for svc in "${SERVICES[@]}"; do
+            gcloud run services update "$svc" \
+              --region="$REGION" \
+              --project="$PROJECT" \
+              --clear-secrets \
+              --quiet 2>/dev/null || true
+          done
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+
       - name: Deploy to Firebase
         run: npx firebase-tools@latest deploy --only functions,hosting,firestore --project kaffi-pay --force
         env:
