@@ -46,21 +46,21 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Clear old Secret Manager bindings from Cloud Run services
+      - name: Delete existing Cloud Functions to clear old secret bindings
         run: |
           REGION=europe-west1
           PROJECT=kaffi-pay
-          SERVICES=(
-            onnouveldepot onnouvelretrait ondepotupdated onretraitupdated
-            ordresbloques smswebhook testtelegram testmobcash
-            warecap supportclient adminbot adminretrydeposit
-            adminactionordre purgeordresanciens
+          FUNCTIONS=(
+            onNouvelDepot onNouvelRetrait onDepotUpdated onRetraitUpdated
+            ordresBloques smsWebhook testTelegram testMobcash
+            waRecap supportClient adminBot adminRetryDeposit
+            adminActionOrdre purgeOrdresAnciens
           )
-          for svc in "${SERVICES[@]}"; do
-            gcloud run services update "$svc" \
+          for fn in "${FUNCTIONS[@]}"; do
+            echo "Deleting function: $fn"
+            gcloud functions delete "$fn" \
               --region="$REGION" \
               --project="$PROJECT" \
-              --clear-secrets \
               --quiet 2>/dev/null || true
           done
         env:
