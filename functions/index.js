@@ -693,6 +693,7 @@ exports.onNouvelDepot = onDocumentCreated(
         fraudType: fraude.risque,
         score_fraude: fraude.score,
         flaggedAt: FieldValue.serverTimestamp(),
+        autoNotified: true,
       });
       await sendTelegram(token, adminId,
         `🚨 <b>Dépôt rejeté — Fraude</b> <code>#${ordreId}</code>\n` +
@@ -735,6 +736,7 @@ exports.onNouvelDepot = onDocumentCreated(
         status: "Paiement Non Reçu",
         flagRaison: "Transfer ID manquant",
         flaggedAt: FieldValue.serverTimestamp(),
+        autoNotified: true,
       });
       await sendTelegram(token, adminId,
         `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`
@@ -823,6 +825,7 @@ exports.onNouvelDepot = onDocumentCreated(
         status: "Paiement Non Reçu",
         flagRaison: raison,
         flaggedAt: FieldValue.serverTimestamp(),
+        autoNotified: true,
       });
       if (tx.whatsapp) {
         await sendWhatsApp(tx.whatsapp,
@@ -848,6 +851,7 @@ exports.onNouvelDepot = onDocumentCreated(
       status: "Paiement Non Reçu",
       flagRaison: raisonIntrouvable,
       flaggedAt: FieldValue.serverTimestamp(),
+      autoNotified: true,
     });
     if (tx.whatsapp) {
       await sendWhatsApp(tx.whatsapp,
@@ -944,6 +948,7 @@ exports.onNouvelRetrait = onDocumentCreated(
         await db.collection("retrait_orders").doc(docId).update({
           status: "Code Invalide", flagRaison: note,
           montantMobcash, flaggedAt: FieldValue.serverTimestamp(),
+          autoNotified: true,
         });
         await sendTelegram(token, adminId,
           `❌ <b>Retrait — Code Invalide</b>\nOrdre : <code>#${ordreId}</code>\n${note}\n` +
@@ -1003,6 +1008,7 @@ exports.onNouvelRetrait = onDocumentCreated(
 
       await db.collection("retrait_orders").doc(docId).update({
         status: "Code Invalide", flagRaison: note, flaggedAt: FieldValue.serverTimestamp(),
+        autoNotified: true,
       });
       await sendTelegram(token, adminId,
         `❌ <b>Retrait — Code Invalide</b> — #${ordreId}\n${note}\n<code>${e.message}</code>`);
@@ -1061,6 +1067,8 @@ exports.onDepotUpdated = onDocumentUpdated(
     }
 
     if (after.status === "Paiement Non Reçu") {
+      // Si autoNotified=true, la notification a déjà été envoyée par onNouvelDepot → pas de doublon
+      if (after.autoNotified) return;
       const nonRecuMsg = `❌ <b>Dépôt — Paiement non reçu</b>\n#${ordreId}\n${after.flagRaison || "Raison inconnue"}`;
       await sendTelegram(token, adminId, nonRecuMsg);
       await notifyPaiementAgents(token, nonRecuMsg).catch(() => {});
@@ -1184,6 +1192,8 @@ exports.onRetraitUpdated = onDocumentUpdated(
     }
 
     if (after.status === "Code Invalide") {
+      // Si autoNotified=true, la notification a déjà été envoyée par onNouvelRetrait → pas de doublon
+      if (after.autoNotified) return;
       await sendTelegram(token, adminId,
         `❌ <b>Retrait — Code Invalide</b>\n#${ordreId}\n${after.flagRaison || "Code invalide"}`);
       if (after.whatsapp) {
