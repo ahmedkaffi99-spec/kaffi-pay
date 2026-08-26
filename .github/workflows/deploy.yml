@@ -46,7 +46,7 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Delete existing Cloud Functions to clear old secret bindings
+      - name: Delete existing Cloud Functions (gen2) to clear old secret bindings
         run: |
           REGION=europe-west1
           PROJECT=kaffi-pay
@@ -55,10 +55,12 @@ jobs:
             ordresBloques smsWebhook testTelegram testMobcash
             waRecap supportClient adminBot adminRetryDeposit
             adminActionOrdre purgeOrdresAnciens
+            healthCheck adminAgents adminReserves adminStats
           )
           for fn in "${FUNCTIONS[@]}"; do
-            echo "Deleting function: $fn"
+            echo "Deleting gen2 function: $fn"
             gcloud functions delete "$fn" \
+              --gen2 \
               --region="$REGION" \
               --project="$PROJECT" \
               --quiet 2>/dev/null || true

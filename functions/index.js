@@ -26,7 +26,6 @@
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { onRequest }                            = require("firebase-functions/v2/https");
 const { onSchedule }                           = require("firebase-functions/v2/scheduler");
-// secrets via process.env (no Secret Manager required)
 const { initializeApp }                        = require("firebase-admin/app");
 const { getFirestore, FieldValue }             = require("firebase-admin/firestore");
 const crypto                                   = require("crypto");
