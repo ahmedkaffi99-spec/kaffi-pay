@@ -352,7 +352,7 @@ async function confirmerDepot(ordreDoc, waafiDoc, token, adminId) {
       `Votre paiement *#${ordreId}* de *${Number(montantNotif).toLocaleString()} DJF* a bien été reçu.\n\n` +
       `Statut : 💳 *Paiement reçu*\n\n` +
       `⏳ Crédit de votre compte 1xBet en cours...\n` +
-      `📲 baki-pay.com/#suivi-${ordreId}`
+      `📲 baki-pay.com/#suivi-${ordreId}${ordre.viewToken ? '-'+ordre.viewToken : ''}`
     );
   }
 
@@ -713,7 +713,7 @@ exports.onNouvelDepot = onDocumentCreated(
           `❌ *Baki-Pay — Ordre refusé*\n\n` +
           `Votre ordre *#${ordreId}* n'a pas pu être traité.\n\n` +
           `Pour toute question, contactez notre support :\n` +
-          `📲 baki-pay.com/#suivi-${ordreId}`
+          `📲 baki-pay.com/#suivi-${ordreId}${tx.viewToken ? '-'+tx.viewToken : ''}`
         ).catch(() => {});
       }
       logAudit("depot_rejete_fraude", { ordreId, score: fraude.score, raisons: fraude.raisons });
@@ -743,7 +743,7 @@ exports.onNouvelDepot = onDocumentCreated(
         `N° expéditeur : ${tx.numeroPayment || "—"}\n\n` +
         `Statut : ⏳ *En attente*\n\n` +
         `Vous recevrez une notification dès que votre paiement sera validé.\n` +
-        `📲 Suivi : baki-pay.com/#suivi-${ordreId}`
+        `📲 Suivi : baki-pay.com/#suivi-${ordreId}${tx.viewToken ? '-'+tx.viewToken : ''}`
       );
     }
 
@@ -847,7 +847,7 @@ exports.onNouvelDepot = onDocumentCreated(
               `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
               `Raison : Transfer ID déjà utilisé.\n\n` +
               `Si vous avez soumis un nouvel ordre avec le même Transfer ID, contactez le support.\n` +
-              `📲 baki-pay.com/#suivi-${ordreId}`
+              `📲 baki-pay.com/#suivi-${ordreId}${tx.viewToken ? '-'+tx.viewToken : ''}`
             );
           }
         }
@@ -952,7 +952,7 @@ exports.onNouvelRetrait = onDocumentCreated(
         `Ordre *#${ordreId}* — *${montantVal.toLocaleString()} DJF*\n\n` +
         `📝 *Statut : En attente*\n` +
         `Note : Traitement en cours. Veuillez ne pas annuler le code sur votre application 1xbet.\n\n` +
-        `📲 baki-pay.com/#suivi-${ordreId}`
+        `📲 baki-pay.com/#suivi-${ordreId}${tx.viewToken ? '-'+tx.viewToken : ''}`
       ).catch((err) => console.error("[retrait] whatsapp ack failed:", err));
     }
 
@@ -999,7 +999,7 @@ exports.onNouvelRetrait = onDocumentCreated(
         );
         if (tx.whatsapp) {
           await sendWhatsApp(tx.whatsapp,
-            `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}`);
+            `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}${tx.viewToken ? '-'+tx.viewToken : ''}`);
         }
         logAudit("retrait_montant_incorrect", { ordreId, montantVal, montantMobcash });
         return;
@@ -1017,7 +1017,7 @@ exports.onNouvelRetrait = onDocumentCreated(
           `✅ *Baki-Pay — Code Validé*\n\nOrdre *#${ordreId}* — *${montantMobcash.toLocaleString()} DJF*\n\n` +
           `📝 *Statut : Code Validé*\n` +
           `Note : Fonds retirés avec succès depuis 1xbet. Votre transfert Waafi arrive dans un instant.\n\n` +
-          `📲 baki-pay.com/#suivi-${ordreId}`
+          `📲 baki-pay.com/#suivi-${ordreId}${tx.viewToken ? '-'+tx.viewToken : ''}`
         );
       }
 
@@ -1057,7 +1057,7 @@ exports.onNouvelRetrait = onDocumentCreated(
         `❌ <b>Retrait — Code Invalide</b> — #${ordreId}\n${note}\n<code>${e.message}</code>`);
       if (tx.whatsapp) {
         await sendWhatsApp(tx.whatsapp,
-          `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}`);
+          `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}${tx.viewToken ? '-'+tx.viewToken : ''}`);
       }
       logAudit("retrait_code_invalide", { ordreId, note, err: e.message });
     }
@@ -1233,7 +1233,7 @@ exports.onRetraitUpdated = onDocumentUpdated(
           `Votre retrait *#${ordreId}* de *${montant} DJF* a été effectué avec succès.\n\n` +
           `💸 *Statut : Payé*\n` +
           `Vérifiez votre solde Waafi. Merci de votre confiance !\n\n` +
-          `📲 baki-pay.com/#suivi-${ordreId}`
+          `📲 baki-pay.com/#suivi-${ordreId}${after.viewToken ? '-'+after.viewToken : ''}`
         );
       }
       return;
@@ -1248,7 +1248,7 @@ exports.onRetraitUpdated = onDocumentUpdated(
         await sendWhatsApp(after.whatsapp,
           `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n` +
           `📝 ${after.flagRaison || "Code invalide. Contactez le support."}\n\n` +
-          `📲 baki-pay.com/#suivi-${ordreId}`
+          `📲 baki-pay.com/#suivi-${ordreId}${after.viewToken ? '-'+after.viewToken : ''}`
         );
       }
       return;
@@ -1743,14 +1743,14 @@ exports.waRecap = onRequest(
         `Waafi Transfer ID : ${o.waafitranfertID || o.hash || "—"}\n` +
         `N° Expéditeur : ${o.numeroPayment || "—"}\n` +
         `Statut : ${statut}\n\n` +
-        `📲 baki-pay.com/#suivi-${ordreId}`
+        `📲 baki-pay.com/#suivi-${ordreId}${o.viewToken ? '-'+o.viewToken : ''}`
       : `🧾 *Baki-Pay — Récapitulatif Retrait*\n\n` +
         `N° Ordre : *#${ordreId}*\n` +
         `Montant : ${montantStr} DJF\n` +
         `Code retrait : ${o.withdrawalCode || o.code || "—"}\n` +
         `Numéro Waafi : ${o.waafiNumber || o.tel || "—"}\n` +
         `Statut : ${statut}\n\n` +
-        `📲 baki-pay.com/#suivi-${ordreId}`;
+        `📲 baki-pay.com/#suivi-${ordreId}${o.viewToken ? '-'+o.viewToken : ''}`;
 
     const result = await sendWhatsApp(phone, msg);
     if (result.ok) {

@@ -1177,9 +1177,17 @@ function checkURLAdmin(){
     if(window.db && window.fsOnAuthStateChanged){ _autoRestoreSession(); }
     else { window.addEventListener('firebase-ready', _autoRestoreSession, {once:true}); }
   } else if(hash.startsWith('#suivi-')){
-    // Restaurer la page suivi après refresh
-    window._pendingSuiviRef = decodeURIComponent(hash.replace('#suivi-',''));
-    suiviRef = window._pendingSuiviRef;
+    // Restaurer la page suivi après refresh — extraire orderId et viewToken
+    var _rawRef = decodeURIComponent(hash.replace('#suivi-',''));
+    var _rParts = _rawRef.split('-');
+    var _rToken = null;
+    if(_rParts.length > 1 && /^[0-9a-f]{8}$/i.test(_rParts[_rParts.length-1])){
+      _rToken = _rParts.pop();
+      _rawRef = _rParts.join('-');
+    }
+    window._pendingSuiviRef = _rawRef;
+    window._pendingSuiviToken = _rToken;
+    suiviRef = _rawRef;
     showScreen('suivi');
   } else {
     showScreen('client');
@@ -1219,8 +1227,10 @@ window.addEventListener('DOMContentLoaded', function(){
       // Restaurer la page suivi si refresh depuis cette page
       if(window._pendingSuiviRef){
         var _ref = window._pendingSuiviRef;
+        var _tok = window._pendingSuiviToken || null;
         window._pendingSuiviRef = null;
-        showSuivi(_ref);
+        window._pendingSuiviToken = null;
+        showSuivi(_ref, null, _tok);
       }
     }
   }
@@ -1650,10 +1660,10 @@ function loadReservesFromFirestore(){
 // ═══════════════════════════════════════════════════
 // CLIENT — FORMULAIRES
 // ═══════════════════════════════════════════════════
-var _pendingDepotId=null, _pendingRetraitId=null;
+var _pendingDepotId=null, _pendingRetraitId=null, _suiviToken=null;
 function _prefetchOrderId(slot){
   if(!window.db||!window.fsDoc||!window.fsRunTransaction) return;
-  genererOrderId().then(function(id){ if(slot==='depot') _pendingDepotId=id; else _pendingRetraitId=id; }).catch(function(){});
+  genererOrderId().then(function(res){ if(slot==='depot') _pendingDepotId=res; else _pendingRetraitId=res; }).catch(function(){});
 }
 function switchTab(tab){
   document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
@@ -1708,6 +1718,15 @@ function logAction(action, data){
   }).catch(function(){});
 }
 
+function genRandomToken(){
+  try{
+    return Array.from(crypto.getRandomValues(new Uint8Array(4)))
+      .map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+  }catch(e){
+    return Math.floor(Math.random()*0xFFFFFFFF).toString(16).padStart(8,'0');
+  }
+}
+
 async function genererOrderId(){
   const now=new Date();
   const mm=String(now.getMonth()+1).padStart(2,'0');
@@ -1720,7 +1739,7 @@ async function genererOrderId(){
     txn.set(counterRef,{day:dayKey,count:count});
     return count;
   });
-  return dayKey+n;
+  return { orderId: dayKey+n, viewToken: genRandomToken() };
 }
 
 // Math captcha — no external requests
@@ -1768,12 +1787,15 @@ async function submitDepot(){
   setLoading('depot',true);
   try{
     // ── Nouvel ordre — utilise l'ID pré-généré si disponible ──
-    const orderId=_pendingDepotId||(await genererOrderId());
+    const _pending=_pendingDepotId||(await genererOrderId());
     _pendingDepotId=null;
+    const orderId=_pending.orderId||_pending;
+    const viewToken=_pending.viewToken||genRandomToken();
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
       orderId:orderId,
+      viewToken:viewToken,
       userId1xBet:id,
       waafitranfertID:h,
       montant:Number(m),
@@ -1795,7 +1817,7 @@ async function submitDepot(){
     document.getElementById('depot-whatsapp').value='';
     _resetTsDepot();
     currentSuiviTx=tx; suiviRef=orderId;
-    showSuivi(orderId,tx);
+    showSuivi(orderId,tx,viewToken);
     if(!window.db){
       showToast('⏳ Connexion Firebase en cours...','warning');
       var waitFb = setInterval(function(){
@@ -1828,12 +1850,15 @@ async function submitRetrait(){
   setLoading('retrait',true);
   try{
     // ── Nouvel ordre — utilise l'ID pré-généré si disponible ──
-    const orderId=_pendingRetraitId||(await genererOrderId());
+    const _pendingR=_pendingRetraitId||(await genererOrderId());
     _pendingRetraitId=null;
+    const orderId=_pendingR.orderId||_pendingR;
+    const viewToken=_pendingR.viewToken||genRandomToken();
     const now=new Date();
     const dateStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+' '+String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
     const tx={
       orderId:orderId,
+      viewToken:viewToken,
       userId1xBet:id1x,
       withdrawalCode:c,
       waafiNumber:tel,
@@ -1855,7 +1880,7 @@ async function submitRetrait(){
     document.getElementById('retrait-whatsapp').value='';
     _resetTsRetrait();
     currentSuiviTx=tx; suiviRef=orderId;
-    showSuivi(orderId,tx);
+    showSuivi(orderId,tx,viewToken);
     if(!window.db){
       showToast('⏳ Connexion Firebase en cours...','warning');
       var waitFb2 = setInterval(function(){
@@ -2391,8 +2416,14 @@ window.addEventListener('popstate', function(){
   var hash = window.location.hash;
   if(!currentUser){
     if(hash.startsWith('#suivi-') && window.db){
-      var _ref = decodeURIComponent(hash.replace('#suivi-',''));
-      showSuivi(_ref);
+      var _rawPop = decodeURIComponent(hash.replace('#suivi-',''));
+      var _popParts = _rawPop.split('-');
+      var _popTok = null;
+      if(_popParts.length > 1 && /^[0-9a-f]{8}$/i.test(_popParts[_popParts.length-1])){
+        _popTok = _popParts.pop();
+        _rawPop = _popParts.join('-');
+      }
+      showSuivi(_rawPop, null, _popTok);
     }
     return;
   }
@@ -2761,11 +2792,13 @@ async function refreshSuiviFromServer(){
   }catch(e){}
 }
 
-function showSuivi(ref, txData){
+function showSuivi(ref, txData, token){
   suiviRef = ref;
+  _suiviToken = token || (txData && txData.viewToken) || null;
   if(txData) currentSuiviTx = txData;
   try{
-    window.history.pushState({page:'suivi', ref:ref}, '', '#suivi-'+encodeURIComponent(ref));
+    var urlRef = _suiviToken ? ref+'-'+_suiviToken : ref;
+    window.history.pushState({page:'suivi', ref:ref}, '', '#suivi-'+encodeURIComponent(urlRef));
   }catch(e){}
   if(suiviInterval){ clearInterval(suiviInterval); suiviInterval=null; }
   if(suiviUnsubscribe){ suiviUnsubscribe(); suiviUnsubscribe=null; }
@@ -2777,6 +2810,12 @@ function showSuivi(ref, txData){
   function _handleSuiviSnap(snap){
     if(snap.empty) return;
     var fresh = snap.docs[0].data();
+    // Vérification du token de sécurité — bloque si token ne correspond pas
+    if(_suiviToken && fresh.viewToken && fresh.viewToken !== _suiviToken){
+      currentSuiviTx = { status: 'Accès refusé', type: fresh.type || 'Dépôt' };
+      renderSuivi();
+      return;
+    }
     // Toujours mettre à jour (le serveur a autorité sur les champs)
     currentSuiviTx = Object.assign({}, currentSuiviTx || {}, fresh);
     renderSuivi();
@@ -2807,6 +2846,16 @@ function showSuivi(ref, txData){
 function renderSuivi(){
   var tx = currentSuiviTx;
   if(!tx) return;
+  if(tx.status === 'Accès refusé'){
+    document.getElementById('suivi-ref').textContent = '—';
+    document.getElementById('suivi-icon').textContent = '🔒';
+    document.getElementById('suivi-status-text').textContent = 'Accès refusé';
+    document.getElementById('suivi-status-text').style.color = 'var(--error)';
+    document.getElementById('suivi-status-desc').textContent = 'Ce lien est invalide ou expiré. Utilisez le lien reçu par WhatsApp.';
+    document.getElementById('suivi-details').innerHTML = '';
+    document.getElementById('suivi-timeline').innerHTML = '';
+    return;
+  }
   const isDepot = tx.type === 'Dépôt';
   const status  = tx.status || 'En attente';
   const wbOk    = tx.webhookStatus === 'ok' || tx.webhookStatus === 'ok_retry_rt' || tx.webhookStatus === 'ok_recovery';
