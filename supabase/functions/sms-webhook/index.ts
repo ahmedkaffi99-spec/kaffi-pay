@@ -16,7 +16,9 @@ serve(async (req: Request) => {
   const secret = (body.secret || "").toLowerCase();
   const expected = (Deno.env.get("MACRODROID_SECRET") || "Kafia&77105640").toLowerCase();
 
-  if (!secret || secret !== expected) return json({ error: "Secret invalide" }, 403, headers);
+  console.log("sms-webhook: secret_ok=", secret === expected, "notif_len=", notif.length, "fields=", Object.keys(body).join(","));
+
+  if (!secret || secret !== expected) return json({ error: "Secret invalide", debug: "secret_mismatch" }, 403, headers);
   if (!notif) return json({ error: "Champ 'notification' requis" }, 400, headers);
 
   const transferId = extractTransferId(notif);
@@ -31,7 +33,9 @@ serve(async (req: Request) => {
     source: "macrodroid", status: "reçu",
   }).select().single();
 
-  if (insertErr) return json({ error: insertErr.message }, 500, headers);
+  if (insertErr) { console.error("sms-webhook insertErr:", insertErr.message); return json({ error: insertErr.message }, 500, headers); }
+
+  console.log("sms-webhook: inserted id=", notifDoc.id, "tid=", transferId, "montant=", montant, "num=", numClient);
 
   // Notification Telegram admin
   if (transferId || montant) {
