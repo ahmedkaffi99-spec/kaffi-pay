@@ -765,7 +765,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="filter-chip" onclick="filterTx('bloque',this)">🔴 Bloqués</div>
     </div>
     <div style="text-align:right;padding:4px 0 6px;">
-      <button onclick="admin-action-ordre24h()" style="background:rgba(255,60,60,0.12);border:1px solid rgba(255,60,60,0.35);color:#ff6060;padding:5px 12px;border-radius:8px;font-size:0.73rem;cursor:pointer;">🗑️ Supprimer ordres bloqués &gt;24h</button>
+      <button onclick="adminPurgeOrdre24h()" style="background:rgba(255,60,60,0.12);border:1px solid rgba(255,60,60,0.35);color:#ff6060;padding:5px 12px;border-radius:8px;font-size:0.73rem;cursor:pointer;">🗑️ Supprimer ordres bloqués &gt;24h</button>
     </div>
     <div class="search-wrap">
       <span class="search-icon">🔍</span>
@@ -2219,7 +2219,7 @@ function openOrderDetail(ref){
       +'<input id="retry-id-input" type="text" placeholder="Nouvel ID 1xBet (ou laisser vide)" value="'+currentId+'"'
       +' style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;color:#fff;font-size:0.85rem;"/>'
       +'</div>'
-      +'<button onclick="admin-action-ordre(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#ffd700,#ffb300);border:none;color:#000;border-radius:10px;padding:14px;font-size:0.88rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">🔄 Relancer le crédit 1xBet</button>';
+      +'<button onclick="adminRetryOrdre(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#ffd700,#ffb300);border:none;color:#000;border-radius:10px;padding:14px;font-size:0.88rem;font-weight:700;cursor:pointer;letter-spacing:0.3px;">🔄 Relancer le crédit 1xBet</button>';
   } else {
     actDiv.innerHTML='<div style="font-size:0.72rem;color:var(--muted);text-align:center;width:100%;">Statut : <strong style="color:var(--text)">'+tx.status+'</strong></div>';
   }
@@ -2231,8 +2231,8 @@ function openOrderDetail(ref){
 var currentOdmRef=null;
 function odmClose(){ document.getElementById('order-detail-modal').classList.remove('show'); }
 
-async function admin-action-ordre(ref){
-  var btn = document.querySelector('[onclick*="admin-action-ordre(\''+ref+'\')"]');
+async function adminRetryOrdre(ref){
+  var btn = document.querySelector('[onclick*="adminRetryOrdre(\''+ref+'\')"]');
   var input = document.getElementById('retry-id-input');
   var newId = input ? input.value.trim() : '';
   if(btn){ btn.disabled=true; btn.textContent='⏳ Envoi en cours...'; }
@@ -2289,7 +2289,7 @@ async function adminRejeterOrdre(ref){
   }catch(e){ showToast('❌ '+e.message,'error'); }
 }
 
-async function admin-action-ordre24h(){
+async function adminPurgeOrdre24h(){
   if(!getRolePerms().canAction){ showToast('⛔ Accès non autorisé','error'); return; }
   if(!confirm('⚠️ Supprimer TOUS les ordres "En attente" de plus de 24h ?\nCette action est irréversible.')) return;
   try{
@@ -3871,10 +3871,10 @@ try {
   // Fonctions modal ordres
   if(typeof adminConfirmerOrdre!=="undefined") window.adminConfirmerOrdre=adminConfirmerOrdre;
   if(typeof adminRejeterOrdre!=="undefined") window.adminRejeterOrdre=adminRejeterOrdre;
-  if(typeof admin-action-ordre24h!=="undefined") window.admin-action-ordre24h=admin-action-ordre24h;
+  if(typeof adminPurgeOrdre24h!=="undefined") window.adminPurgeOrdre24h=adminPurgeOrdre24h;
   if(typeof terminerRetrait!=="undefined") window.terminerRetrait=terminerRetrait;
   if(typeof odmClose!=="undefined") window.odmClose=odmClose;
-  if(typeof admin-action-ordre!=="undefined") window.admin-action-ordre=admin-action-ordre;
+  if(typeof adminRetryOrdre!=="undefined") window.adminRetryOrdre=adminRetryOrdre;
   if(typeof annulerOrdre!=="undefined") window.annulerOrdre=annulerOrdre;
   if(typeof showSuivi!=="undefined") window.showSuivi=showSuivi;
   if(typeof openOrderDetail!=="undefined") window.openOrderDetail=openOrderDetail;
