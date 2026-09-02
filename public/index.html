@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+<script>try{if(localStorage.getItem('kp-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
 <title>Baki-Pay</title>
@@ -69,16 +70,16 @@ setTimeout(function() {
 
 window.addEventListener('online', function() {
   var toast = document.getElementById('toast');
-  if(toast){ toast.textContent = '✅ Connexion rétablie'; toast.className = 'toast show success'; setTimeout(function(){ toast.className='toast'; }, 3000); }
+  if(toast){ toast.textContent = (typeof t==='function'&&t('toast-online'))||'✅ Connexion rétablie'; toast.className = 'toast show success'; setTimeout(function(){ toast.className='toast'; }, 3000); }
 });
 window.addEventListener('offline', function() {
   var toast = document.getElementById('toast');
-  if(toast){ toast.textContent = '⚠️ Hors ligne — certaines fonctions indisponibles'; toast.className = 'toast show warning'; setTimeout(function(){ toast.className='toast'; }, 4000); }
+  if(toast){ toast.textContent = (typeof t==='function'&&t('toast-offline'))||'⚠️ Hors ligne — certaines fonctions indisponibles'; toast.className = 'toast show warning'; setTimeout(function(){ toast.className='toast'; }, 4000); }
 });
 </script>
 <style>
 :root{--bg:#07101e;--card-bg:rgba(255,255,255,.04);--border:rgba(255,255,255,.07);--gold:#FFD700;--gold2:#FFC200;--text:#eef2ff;--muted:#5c7a9e;--success:#00d4a0;--error:#ff4060;--warning:#ffaa00;}
-body.light{--bg:#f0f4f9;--card-bg:rgba(0,0,0,.04);--border:rgba(0,0,0,.09);--text:#07101e;--muted:#4a6a8a;--gold:#1a6fd4;--gold2:#1558b0;}
+body.light,html.light body{--bg:#f0f4f9;--card-bg:rgba(0,0,0,.04);--border:rgba(0,0,0,.09);--text:#07101e;--muted:#4a6a8a;--gold:#1a6fd4;--gold2:#1558b0;}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html{scroll-behavior:smooth;}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;overflow-x:hidden;transition:background .3s,color .3s;}
@@ -89,6 +90,12 @@ body.light #theme-toggle{border-color:rgba(0,0,0,.15);}
 .lang-btn.active,.lang-btn:hover{border-color:rgba(255,215,0,.45);color:var(--gold);}
 body.light .lang-btn{border-color:rgba(0,0,0,.12);}
 body.light .lang-btn.active,body.light .lang-btn:hover{border-color:rgba(0,0,0,.3);color:var(--text);}
+body.light .modal,.html.light body .modal{background:rgba(240,244,249,.98);border-color:rgba(0,0,0,.1);}
+body.light .modal-detail{background:rgba(0,0,0,.03);border-color:rgba(0,0,0,.08);}
+body.light .modal-detail div{border-color:rgba(0,0,0,.06);}
+body.light .toast{background:rgba(240,244,249,.97);border-color:rgba(0,0,0,.1);}
+body.light .spinner{border-color:rgba(0,0,0,.15);border-top-color:#1a6fd4;}
+body.light input:-webkit-autofill,body.light input:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px #f0f4f9 inset!important;-webkit-text-fill-color:#07101e!important;}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:radial-gradient(ellipse 55% 40% at 5% -5%,rgba(255,215,0,0.06) 0%,transparent 55%),
              radial-gradient(ellipse 40% 35% at 95% 100%,rgba(255,194,0,0.04) 0%,transparent 50%);}
@@ -531,7 +538,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       </div>
 
       <div class="field">
-        <label>🎯 ID Compte 1xBet</label>
+        <label data-i18n="label-id1x">🎯 ID Compte 1xBet</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="tel" id="retrait-id1x" placeholder="Ex: 1234567890" inputmode="numeric" maxlength="12" style="flex:1;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
           <button onclick="pasteField('retrait-id1x')" style="background:rgba(255,215,0,0.1);border:1px solid rgba(255,215,0,0.3);color:var(--gold);border-radius:8px;padding:10px 12px;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;" data-i18n="btn-paste">📋 Coller</button>
@@ -3974,6 +3981,8 @@ var KP_LANGS = {
     'faq-a4': 'Vérifiez que le Transfer ID Waafi saisi est correct. Si votre ordre reste en attente plus de 30 minutes, contactez le support via le bouton WhatsApp/Telegram ci-dessus avec votre numéro d\'ordre.',
     'faq-q5': 'Quel est le montant minimum et maximum ?',
     'faq-a5': 'Le minimum est de 50 DJF pour un dépôt et 250 DJF pour un retrait. Il n\'y a pas de maximum fixe, mais les ordres élevés peuvent nécessiter une vérification supplémentaire.',
+    'toast-online': '✅ Connexion rétablie',
+    'toast-offline': '⚠️ Hors ligne — certaines fonctions indisponibles',
     'btn-back': '← Accueil', 'btn-login': '🔓 Connexion', 'login-or': 'OU',
     'btn-google': 'Se connecter avec Google', 'btn-install': '⬇ Installer l\'app',
     'btn-copy': '📋 Copier', 'btn-paste': '📋 Coller',
@@ -4066,6 +4075,8 @@ var KP_LANGS = {
     'faq-a4': 'Check that the Waafi Transfer ID entered is correct. If your order remains pending for more than 30 minutes, contact support via the WhatsApp/Telegram button above with your order number.',
     'faq-q5': 'What is the minimum and maximum amount?',
     'faq-a5': 'The minimum is 50 DJF for a deposit and 250 DJF for a withdrawal. There is no fixed maximum, but large orders may require additional verification.',
+    'toast-online': '✅ Connection restored',
+    'toast-offline': '⚠️ Offline — some features unavailable',
     'btn-back': '← Home', 'btn-login': '🔓 Login', 'login-or': 'OR',
     'btn-google': 'Sign in with Google', 'btn-install': '⬇ Install app',
     'btn-copy': '📋 Copy', 'btn-paste': '📋 Paste',
@@ -4158,6 +4169,8 @@ var KP_LANGS = {
     'faq-a4': 'Hubi in Transfer ID Waafi ee la gelinay uu sax yahay. Haddii codsigaagu uu sugi yahay in ka badan 30 daqiiqo, la xiriir taageerada iyada oo la adeegsanayo badhanka WhatsApp/Telegram ee kore oo leh lambarka codsigaaga.',
     'faq-q5': 'Waa maxay xaddiga ugu yar iyo ugu badan?',
     'faq-a5': 'Xaddiga ugu yar waa 50 DJF gelinta iyo 250 DJF bixinta. Xad aad ah oo go\'an ma jiro, laakiin amarka weyn waxay u baahan karaan xaqiijin dheeraad ah.',
+    'toast-online': '✅ Xiriirka la soo celiyey',
+    'toast-offline': '⚠️ Xiriir la\'aan — qaarkood ma shaqayso',
     'btn-back': '← Guriga', 'btn-login': '🔓 Gal', 'login-or': 'AMA',
     'btn-google': 'Ku gal Google', 'btn-install': '⬇ Ku rakib',
     'btn-copy': '📋 Koobiyee', 'btn-paste': '📋 Dheji',
