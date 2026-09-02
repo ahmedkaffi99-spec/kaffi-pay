@@ -1259,20 +1259,13 @@ function doLogin(){
   _loginFetchAgentFirestore(em, p);
 }
 
+// Agent web login is intentionally disabled: it never verified the password,
+// it only picked the first active agent. Agents work through the Telegram bot,
+// which authorises on chat_id against the agents table server-side.
+// This path is also where a wrong admin password lands, so it must keep
+// calling _loginFail() to preserve the 5-attempt lockout.
 function _loginFetchAgentFirestore(email, pass){
-  showLoginError('⏳ Vérification…');
-  fetch(SUPABASE_URL+'/rest/v1/agents?select=nom,chat_id,role,actif&apikey='+SUPABASE_ANON_KEY)
-    .then(function(r){ return r.json(); })
-    .then(function(rows){
-      if(!Array.isArray(rows)){ _loginFail(); return; }
-      var ag = rows.find(function(a){ return a.actif; }); // Simplified — extend with email/pass later
-      if(ag){
-        loginSuccess({user:ag.nom||'Agent',role:ag.role||'Agent de paiement',isCreator:false,email:email});
-      } else {
-        _loginFail();
-      }
-    })
-    .catch(function(){ showLoginError('❌ Erreur réseau — vérifie ta connexion'); });
+  _loginFail();
 }
 
 function _loginFail(){
