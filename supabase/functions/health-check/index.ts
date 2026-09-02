@@ -1,9 +1,8 @@
 // v2
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { json, cors } from "../_shared/utils.ts";
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const headers = cors(req);
   if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
 

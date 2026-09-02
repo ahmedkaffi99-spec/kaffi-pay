@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { extractTransferId, extractMontant, extractNumClient } from "../_shared/parser.ts";
@@ -6,7 +5,7 @@ import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
 import { json, cors } from "../_shared/utils.ts";
 import { confirmerDepot } from "../_shared/confirmer.ts";
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const headers = cors(req);
   if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405, headers);

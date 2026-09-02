@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
@@ -12,7 +11,7 @@ const ERREURS_PERMANENTES = [
   "user not found", "invalid user", "account not found",
 ];
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const headers = cors(req);
   if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
   if (req.method !== "POST") return json({ error: "POST requis" }, 405, headers);

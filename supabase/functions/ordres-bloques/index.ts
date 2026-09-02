@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents, sendTelegramKeyboard } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
@@ -8,7 +7,7 @@ import { confirmerDepot } from "../_shared/confirmer.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
 
 // Called by pg_cron every 5 minutes (or manually via HTTP GET with secret)
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const headers = cors(req);
   if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
 

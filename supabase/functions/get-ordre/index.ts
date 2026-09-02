@@ -1,10 +1,9 @@
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { json, cors } from "../_shared/utils.ts";
 
 // Public endpoint to fetch order status for the tracking page
 // GET /get-ordre?order_id=082626&view_token=abc123de
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const headers = cors(req);
   if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
   if (req.method !== "GET") return json({ error: "GET requis" }, 405, headers);
