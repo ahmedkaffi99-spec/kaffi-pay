@@ -4228,7 +4228,7 @@ function setLang(l) {
 (function() { applyLang(localStorage.getItem('kp-lang') || 'fr'); })();
 
 // ── Service Worker PWA ──
-// Fonctionne sur baki-pay.com (Firebase Hosting sert sw.js)
+// Fonctionne sur baki-pay.com (Vercel sert sw.js)
 if('serviceWorker' in navigator && location.hostname !== 'claudeusercontent.com'){
   window.addEventListener('load', function(){
     navigator.serviceWorker.register('/sw.js', {scope:'/'})
