@@ -1,5 +1,6 @@
-// Kaffi-Pay — Service Worker v5.0
-const CACHE = 'kaffipay-v5';
+// Baki-Pay — Service Worker v10.1
+const CACHE = 'bakipay-v9';
+const ICON_URLS = ['/icon-192.png', '/icon-512.png', '/favicon.ico'];
 
 self.addEventListener('install', function(e){
   e.waitUntil(
@@ -24,12 +25,16 @@ self.addEventListener('activate', function(e){
 
 self.addEventListener('fetch', function(e){
   if(e.request.method !== 'GET') return;
-  // Firebase/API calls — réseau uniquement
-  if(e.request.url.includes('firestore') ||
-     e.request.url.includes('firebase') ||
-     e.request.url.includes('googleapis')) return;
+  // API calls — réseau uniquement (pas de cache)
+  if(e.request.url.includes('supabase.co') ||
+     e.request.url.includes('googleapis') ||
+     e.request.url.includes('greenapi.com') ||
+     e.request.url.includes('servcul.com')) return;
+  var url = new URL(e.request.url);
+  var isIcon = ICON_URLS.indexOf(url.pathname) !== -1;
+  var req = isIcon ? new Request(e.request, {cache: 'no-store'}) : e.request;
   e.respondWith(
-    fetch(e.request).then(function(resp){
+    fetch(req).then(function(resp){
       var clone = resp.clone();
       caches.open(CACHE).then(function(c){ c.put(e.request, clone); });
       return resp;
