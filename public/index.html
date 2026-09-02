@@ -2238,7 +2238,7 @@ async function admin-action-ordre(ref){
     if(data.ok){
       showToast('✅ Dépôt relancé — crédit réussi !', 'success');
       odmClose();
-      loadTxsFromFirebase();
+      listenTxs();
     } else {
       showToast('❌ '+data.error, 'error');
       if(btn){ btn.disabled=false; btn.textContent='🔄 Relancer le crédit 1xBet'; }
