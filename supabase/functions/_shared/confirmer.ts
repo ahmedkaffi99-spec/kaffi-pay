@@ -49,10 +49,12 @@ export async function confirmerDepot(
     confirmed_at: new Date().toISOString(),
   }).eq("id", ordre.id);
 
-  // Marquer notification Waafi comme matchée
+  // Marquer notification Waafi comme matchée.
+  // Pas de .catch() ici : le query builder Supabase est un PromiseLike sans
+  // méthode catch(), l'appeler lève un TypeError qui tuait tout le traitement.
   await supabase.from("waafi_notifications").update({
     status: "matché", ordre_ref: ordreId, matched_at: new Date().toISOString(),
-  }).eq("id", notif.id).catch(() => {});
+  }).eq("id", notif.id);
 
   logAudit("depot_paiement_confirme", { ordreId, transferId, montant: montantNotif });
 
@@ -89,7 +91,7 @@ export async function confirmerDepot(
 
     // Mettre à jour ordre_traite → "credite"
     await supabase.from("ordre_traite").update({ status: "credite" })
-      .eq("transfer_id", transferId || ordreId).catch(() => {});
+      .eq("transfer_id", transferId || ordreId);
 
     // Marquer "Crédité avec succès"
     await supabase.from("depot_orders").update({

@@ -211,11 +211,19 @@ Deno.serve(async (req: Request) => {
     logAudit("depot_rejete_tid_introuvable", { ordreId, transferId });
   })();
 
+  // Sans ce catch, une exception dans le traitement de fond disparaît sans
+  // aucune trace — l'ordre reste figé à mi-parcours et rien ne l'explique.
+  const guarded = process.catch((e) => {
+    const msg = (e as Error)?.message ?? String(e);
+    console.error("submit-depot traitement échoué:", msg);
+    logAudit("depot_traitement_erreur", { ordreId, err: msg });
+  });
+
   try {
     (globalThis as unknown as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } })
-      .EdgeRuntime?.waitUntil(process);
+      .EdgeRuntime?.waitUntil(guarded);
   } catch (_) {
-    await process;
+    await guarded;
   }
 
   return response;

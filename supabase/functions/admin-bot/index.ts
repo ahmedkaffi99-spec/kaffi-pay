@@ -79,7 +79,7 @@ Deno.serve(async (req: Request) => {
           ordre_id: ordreId,
           status: "finalise",
           credited_at: new Date().toISOString(),
-        }).catch(() => {});
+        });
         logAudit("retrait_finalise_admin", { ordreId, adminId, parAgent: fromId !== adminId });
         await sendTelegram(token, fromId, `✅ Retrait <b>#${ordreId}</b> — Payé. Notifications client en cours…`);
 
