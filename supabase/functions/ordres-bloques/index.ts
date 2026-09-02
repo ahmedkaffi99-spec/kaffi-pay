@@ -25,7 +25,10 @@ Deno.serve(async (req: Request) => {
   const { data: blockedDepots } = await supabase.from("depot_orders")
     .select("*")
     .eq("status", "Paiement Reçu")
-    .neq("webhook_status", "ok")
+    // NULL <> 'ok' vaut NULL en SQL, pas TRUE : un simple .neq() excluait les
+    // ordres sans webhook_status, donc exactement ceux qui sont restés bloqués
+    // avant tout appel MobCash — le cas que ce cron doit rattraper.
+    .or("webhook_status.is.null,webhook_status.neq.ok")
     .lt("confirmed_at", cutoff10)
     .limit(10);
 
