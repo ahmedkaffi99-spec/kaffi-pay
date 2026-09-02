@@ -1,3 +1,4 @@
 firebase-debug.log
 functions/.env.kaffi-pay
 functions/.env.local
+supabase/.temp/
