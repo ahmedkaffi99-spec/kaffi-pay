@@ -28,10 +28,10 @@ serve(async (req: Request) => {
 
   // Analyse fraude
   const fraude = analyserFraude(montant, transferId || null, phone);
-  const fraudeTag = fraude.score >= 70
-    ? `\n🚨 <b>Fraude ${fraude.risque.toUpperCase()} (${fraude.score}/100)</b> : ${fraude.raisons.join(", ")}`
-    : fraude.score >= 40
-    ? `\n⚠️ <i>Risque fraude moyen (${fraude.score}/100) : ${fraude.raisons.join(", ")}</i>`
+  const fraudeTag = fraude.score_fraude >= 70
+    ? `\n🚨 <b>Fraude ${fraude.risque.toUpperCase()} (${fraude.score_fraude}/100)</b> : ${fraude.raisons.join(", ")}`
+    : fraude.score_fraude >= 40
+    ? `\n⚠️ <i>Risque fraude moyen (${fraude.score_fraude}/100) : ${fraude.raisons.join(", ")}</i>`
     : "";
 
   // Insérer l'ordre en base
@@ -46,7 +46,7 @@ serve(async (req: Request) => {
     numero_payment: phone || null,
     whatsapp: whatsapp || null,
     view_token: viewToken,
-    score_fraude: fraude.score,
+    score_fraude: fraude.score_fraude,
     fraud_type: fraude.risque,
   }).select().single();
 
@@ -64,14 +64,14 @@ serve(async (req: Request) => {
         status: "Paiement Non Reçu",
         flag_raison: `Fraude détectée : ${fraude.raisons.join(", ")}`,
         fraud_type: fraude.risque,
-        score_fraude: fraude.score,
+        score_fraude: fraude.score_fraude,
         flagged_at: new Date().toISOString(),
         auto_notified: true,
       }).eq("id", ordre.id);
 
       await sendTelegram(token, adminId,
         `🚨 <b>Dépôt rejeté — Fraude</b> <code>#${ordreId}</code>\n` +
-        `Score: ${fraude.score}/100 | Risque: ${fraude.risque}\n` +
+        `Score: ${fraude.score_fraude}/100 | Risque: ${fraude.risque}\n` +
         fraude.raisons.map((r: string) => `• ${r}`).join("\n")
       );
       if (whatsapp) {
@@ -81,7 +81,7 @@ serve(async (req: Request) => {
           `📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
         ).catch(() => {});
       }
-      logAudit("depot_rejete_fraude", { ordreId, score: fraude.score });
+      logAudit("depot_rejete_fraude", { ordreId, score: fraude.score_fraude });
       return;
     }
 
