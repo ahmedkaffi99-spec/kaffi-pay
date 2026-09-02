@@ -3048,7 +3048,7 @@ async function sendRecapWhatsApp(){
   var orig = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = '⏳ Envoi...'; }
   try{
-    var resp = await fetch('/api/waRecap?ordreId='+encodeURIComponent(ordId));
+    var resp = await fetch(EDGE+'/wa-recap?ordreId='+encodeURIComponent(ordId));
     var data = await resp.json().catch(function(){ return {}; });
     if(resp.ok && data.ok){
       showToast('✅ Message envoyé sur WhatsApp !','success');

@@ -33,6 +33,7 @@ jobs:
             support-client
             get-ordre
             health-check
+            wa-recap
           )
           for fn in "${FUNCTIONS[@]}"; do
             echo "Deploying $fn..."

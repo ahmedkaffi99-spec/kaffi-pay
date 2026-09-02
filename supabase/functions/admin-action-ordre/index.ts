@@ -15,6 +15,24 @@ serve(async (req: Request) => {
   const ak = body._ak || req.headers.get("x-admin-key") || "";
   if (ak !== ADMIN_KEY) return json({ ok: false, error: "Non autorisé" }, 403, headers);
 
+  // Opérations CRUD sur tables admin (agents)
+  const { op, table: crudTable, row, id: crudId } = body;
+  if (op) {
+    if (op === "insert" && crudTable === "agents" && row) {
+      const { error } = await supabase.from("agents").insert({
+        nom: row.nom, chat_id: row.chat_id, role: row.role || "paiement", actif: row.actif ?? true,
+      });
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true }, 200, headers);
+    }
+    if (op === "delete" && crudTable === "agents" && crudId) {
+      const { error } = await supabase.from("agents").delete().eq("id", crudId);
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true }, 200, headers);
+    }
+    return json({ ok: false, error: "Opération CRUD inconnue" }, 400, headers);
+  }
+
   const { order_id, action, raison, new_user_id_1xbet } = body;
   if (!order_id || !action) return json({ ok: false, error: "order_id et action requis" }, 400, headers);
   if (!["confirmer", "rejeter", "retry"].includes(action)) {
