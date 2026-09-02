@@ -1607,6 +1607,8 @@ function switchTab(tab){
   document.getElementById('content-'+tab).classList.add('active');
   document.getElementById('tab-'+tab).classList.add('active');
   _prefetchOrderId(tab);
+  if(tab==='depot') try{ _resetTsDepot(); }catch(e){}
+  if(tab==='retrait') try{ _resetTsRetrait(); }catch(e){}
 }
 
 function toggleFaq(item){
@@ -1679,9 +1681,10 @@ async function genererOrderId(){
 var _captchaDepotAns=0, _captchaRetraitAns=0;
 function _genCaptcha(qId,ansInput){
   var a=Math.floor(Math.random()*9)+1, b=Math.floor(Math.random()*9)+1;
-  document.getElementById(qId).textContent='Vérification : '+a+' + '+b+' = ?';
-  document.getElementById(ansInput).value='';
-  document.getElementById(ansInput).className='';
+  var qEl=document.getElementById(qId), iEl=document.getElementById(ansInput);
+  if(!qEl||!iEl) return a+b;
+  qEl.textContent=a+' + '+b+' = ?';
+  iEl.value=''; iEl.className='';
   return a+b;
 }
 function initCaptchaDepot(){ _captchaDepotAns=_genCaptcha('captcha-depot-q','captcha-depot-ans'); }
