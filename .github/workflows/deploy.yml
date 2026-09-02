@@ -1,4 +1,4 @@
-name: Deploy Firebase (Functions + Hosting)
+name: Deploy (Vercel + Supabase)
 
 on:
   push:
@@ -6,54 +6,51 @@ on:
       - claude/fait-fix-DjJ6q
 
 jobs:
-  deploy:
+  deploy-frontend:
+    name: Deploy Frontend → Vercel
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+      - name: Deploy to Vercel
+        run: npx vercel --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+  deploy-functions:
+    name: Deploy Edge Functions → Supabase
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
         with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: functions/package-lock.json
+          deno-version: v1.x
 
-      - name: Install functions dependencies
-        run: cd functions && npm install
+      - name: Install Supabase CLI
+        run: npm install -g supabase@latest
 
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
-          create_credentials_file: true
-          export_environment_variables: true
-
-      - name: Delete existing Cloud Functions (gen2) to clear old secret bindings
+      - name: Deploy all Edge Functions
         run: |
-          REGION=europe-west1
-          PROJECT=kaffi-pay
           FUNCTIONS=(
-            onNouvelDepot onNouvelRetrait onDepotUpdated onRetraitUpdated
-            ordresBloques smsWebhook testTelegram testMobcash
-            waRecap supportClient adminBot adminRetryDeposit
-            adminActionOrdre purgeOrdresAnciens
-            healthCheck adminAgents adminReserves adminStats
+            sms-webhook
+            submit-depot
+            submit-retrait
+            admin-bot
+            admin-action-ordre
+            admin-stats
+            ordres-bloques
+            support-client
+            get-ordre
+            health-check
           )
           for fn in "${FUNCTIONS[@]}"; do
-            echo "Deleting gen2 function: $fn"
-            gcloud functions delete "$fn" \
-              --gen2 \
-              --region="$REGION" \
-              --project="$PROJECT" \
-              --quiet 2>/dev/null || true
+            echo "Deploying $fn..."
+            supabase functions deploy "$fn" \
+              --project-ref pasotcpwvdtpidelrqic \
+              --no-verify-jwt
           done
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
-
-      - name: Deploy to Firebase
-        run: npx firebase-tools@latest deploy --only functions,hosting,firestore --project kaffi-pay --force
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
