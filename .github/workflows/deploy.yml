@@ -1,4 +1,4 @@
-name: Deploy (Vercel + Supabase)
+name: Deploy Edge Functions → Supabase
 
 on:
   push:
@@ -6,18 +6,6 @@ on:
       - claude/fait-fix-DjJ6q
 
 jobs:
-  deploy-frontend:
-    name: Deploy Frontend → Vercel
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to Vercel
-        run: npx vercel --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
   deploy-functions:
     name: Deploy Edge Functions → Supabase
     runs-on: ubuntu-latest
