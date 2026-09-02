@@ -48,9 +48,11 @@ serve(async (req: Request) => {
   // Répondre immédiatement au client
   const response = json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
 
-  // Traitement asynchrone maintenu en vie par waitUntil
+  // Traitement en arrière-plan (maintenu vivant par waitUntil)
   const process = (async () => {
-    // Telegram admin + agents
+    const vt = viewToken ? `-${viewToken}` : "";
+
+    // Telegram admin + agents — nouvel ordre reçu
     const newDepotMsg =
       `📥 <b>Nouvel ordre Dépôt</b> — <code>#${ordreId}</code>\n\n` +
       `Montant : <b>${montant.toLocaleString()} DJF</b>\n` +
@@ -63,7 +65,7 @@ serve(async (req: Request) => {
       notifyPaiementAgents(token, newDepotMsg),
     ]);
 
-    // WhatsApp accusé de réception (fire-and-forget)
+    // WhatsApp — accusé de réception immédiat
     if (whatsapp) {
       sendWhatsApp(whatsapp,
         `🧾 *Baki-Pay — Ordre reçu* ✅\n\n` +
@@ -75,10 +77,11 @@ serve(async (req: Request) => {
         `N° expéditeur : ${phone || "—"}\n\n` +
         `Statut : ⏳ *En attente*\n\n` +
         `Vous recevrez une notification dès que votre paiement sera validé.\n` +
-        `📲 Suivi : baki-pay.com/#suivi-${ordreId}-${viewToken}`
+        `📲 Suivi : baki-pay.com/#suivi-${ordreId}${vt}`
       ).catch(() => {});
     }
 
+    // Pas de Transfer ID → rejet immédiat
     if (!transferId) {
       await supabase.from("depot_orders").update({
         status: "Paiement Non Reçu",
@@ -87,7 +90,15 @@ serve(async (req: Request) => {
         auto_notified: true,
       }).eq("id", ordre.id);
       await sendTelegram(token, adminId,
-        `❌ <b>Dépôt — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`);
+        `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`);
+      if (whatsapp) {
+        sendWhatsApp(whatsapp,
+          `❌ *Baki-Pay — Paiement non reçu*\n\n` +
+          `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+          `Raison : Transfer ID Waafi manquant.\n\n` +
+          `Vérifiez votre SMS Waafi et soumettez un nouvel ordre sur baki-pay.com`
+        ).catch(() => {});
+      }
       return;
     }
 
@@ -122,6 +133,7 @@ serve(async (req: Request) => {
       if (decision === "confirmer") {
         const confirmed = await confirmerDepot(ordre, waafiNotif, token, adminId);
         if (!confirmed) {
+          // Doublon TID : déjà utilisé par un autre ordre
           const { data: autreTraite } = await supabase.from("ordre_traite")
             .select("ordre_id").eq("transfer_id", waafiNotif.transfer_id || "").limit(1);
           const autreId = autreTraite && autreTraite.length > 0 ? autreTraite[0].ordre_id : "?";
@@ -134,10 +146,15 @@ serve(async (req: Request) => {
             }).eq("id", ordre.id);
             await sendTelegram(token, adminId,
               `⚠️ <b>Doublon TID — #${ordreId}</b>\n` +
-              `Transfer-ID <code>${transferId}</code> déjà utilisé par <code>#${autreId}</code>.`);
+              `Transfer-ID <code>${transferId}</code> déjà utilisé par <code>#${autreId}</code>.\n` +
+              `Montant: ${montant.toLocaleString()} DJF | ID 1xBet: <code>${userId1xbet || "?"}</code>`);
             if (whatsapp) {
               sendWhatsApp(whatsapp,
-                `❌ *Baki-Pay — Paiement non reçu*\nOrdre *#${ordreId}* : Transfer ID déjà utilisé.\n\n📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
+                `❌ *Baki-Pay — Paiement non reçu*\n\n` +
+                `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+                `Raison : Transfer ID déjà utilisé.\n\n` +
+                `Si vous avez soumis un nouvel ordre avec le même Transfer ID, contactez le support.\n` +
+                `📲 baki-pay.com/#suivi-${ordreId}${vt}`
               ).catch(() => {});
             }
           }
@@ -145,26 +162,56 @@ serve(async (req: Request) => {
         return;
       }
 
-      // Mauvaise correspondance — laisser "En attente" pour traitement manuel
+      // Correspondance partielle (score < 3) → Paiement Non Reçu (comme Firebase)
       const raison = mismatchToRaison(mismatches);
+      await supabase.from("depot_orders").update({
+        status: "Paiement Non Reçu",
+        flag_raison: raison,
+        flagged_at: new Date().toISOString(),
+        auto_notified: true,
+      }).eq("id", ordre.id);
+      if (whatsapp) {
+        sendWhatsApp(whatsapp,
+          `❌ *Baki-Pay — Paiement non reçu*\n\n` +
+          `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+          `Raison : ${raison}\n\n` +
+          `Vérifiez les informations et soumettez un nouvel ordre sur baki-pay.com`
+        ).catch(() => {});
+      }
       await sendTelegram(token, adminId,
-        `⚠️ <b>Correspondance partielle (${score}/3) — #${ordreId}</b>\n` +
-        `${mismatches.map((m: string) => `• ${m}`).join("\n")}\n` +
-        `<i>Ordre laissé En attente pour vérification manuelle.</i>`);
-      logAudit("depot_correspondance_partielle", { ordreId, score, mismatches, raison });
+        `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\n\n` +
+        `Ordre <code>#${ordreId}</code>\n${mismatches.map((m: string) => `• ${m}`).join("\n")}`);
+      await notifyPaiementAgents(token,
+        `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordreId}</code>`).catch(() => {});
+      logAudit("depot_rejete_mauvaise_correspondance", { ordreId, score, mismatches, raison });
       return;
     }
 
-    // SMS Waafi pas encore reçu — ordre reste "En attente", sms-webhook le confirmera à l'arrivée
+    // Aucun SMS Waafi avec ce TID → Paiement Non Reçu (comme Firebase)
+    const raisonIntrouvable = "Transfer ID introuvable — paiement non reçu";
+    await supabase.from("depot_orders").update({
+      status: "Paiement Non Reçu",
+      flag_raison: raisonIntrouvable,
+      flagged_at: new Date().toISOString(),
+      auto_notified: true,
+    }).eq("id", ordre.id);
+    if (whatsapp) {
+      sendWhatsApp(whatsapp,
+        `❌ *Baki-Pay — Paiement non reçu*\n\n` +
+        `Votre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+        `Raison : Transfer ID introuvable\n\n` +
+        `Vérifiez votre Transfer ID Waafi et soumettez un nouvel ordre sur baki-pay.com`
+      ).catch(() => {});
+    }
     await sendTelegram(token, adminId,
-      `⏳ <b>SMS Waafi pas encore reçu — #${ordreId}</b>\n` +
+      `❌ <b>Dépôt rejeté — TID introuvable</b>\n\n` +
+      `Ordre: <code>#${ordreId}</code>\n` +
       `Transfer-ID: <code>${transferId}</code>\n` +
-      `Montant: ${montant.toLocaleString()} DJF\n` +
-      `<i>L'ordre sera confirmé automatiquement à l'arrivée du SMS.</i>`);
-    logAudit("depot_en_attente_sms", { ordreId, transferId });
+      `Montant: ${montant.toLocaleString()} DJF\n\n` +
+      `<i>Aucun SMS Waafi avec ce Transfer ID dans les registres.</i>`);
+    logAudit("depot_rejete_tid_introuvable", { ordreId, transferId });
   })();
 
-  // Maintenir la fonction en vie pendant le traitement
   try {
     (globalThis as unknown as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } })
       .EdgeRuntime?.waitUntil(process);
