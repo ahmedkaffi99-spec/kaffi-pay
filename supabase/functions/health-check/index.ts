@@ -1,3 +1,4 @@
+// v2
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { json, cors } from "../_shared/utils.ts";
