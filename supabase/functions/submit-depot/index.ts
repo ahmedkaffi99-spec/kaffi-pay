@@ -54,11 +54,8 @@ serve(async (req: Request) => {
 
   logAudit("nouvel_depot", { ordreId, montant, phone });
 
-  // Répondre au client immédiatement
-  const response = json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
-
-  // Traitement asynchrone (best-effort)
-  (async () => {
+  // Traitement principal — doit s'exécuter avant de répondre (pas de fire-and-forget)
+  try {
     if (fraude.action === "rejeter") {
       await supabase.from("depot_orders").update({
         status: "Paiement Non Reçu",
@@ -75,14 +72,14 @@ serve(async (req: Request) => {
         fraude.raisons.map((r: string) => `• ${r}`).join("\n")
       );
       if (whatsapp) {
-        await sendWhatsApp(whatsapp,
+        sendWhatsApp(whatsapp,
           `❌ *Baki-Pay — Ordre refusé*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n\n` +
           `Pour toute question, contactez notre support :\n` +
           `📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
         ).catch(() => {});
       }
       logAudit("depot_rejete_fraude", { ordreId, score: fraude.score_fraude });
-      return;
+      return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
     }
 
     // Telegram admin + agents — nouvel ordre reçu
@@ -97,9 +94,9 @@ serve(async (req: Request) => {
       notifyPaiementAgents(token, newDepotMsg),
     ]);
 
-    // WhatsApp — accusé de réception immédiat
+    // WhatsApp — accusé de réception immédiat (fire-and-forget, ne bloque pas)
     if (whatsapp) {
-      await sendWhatsApp(whatsapp,
+      sendWhatsApp(whatsapp,
         `🧾 *Baki-Pay — Ordre reçu* ✅\n\n` +
         `Votre ordre *#${ordreId}* a bien été soumis.\n\n` +
         `📥 *Dépôt 1xBet*\n` +
@@ -122,7 +119,7 @@ serve(async (req: Request) => {
       }).eq("id", ordre.id);
       await sendTelegram(token, adminId,
         `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`);
-      return;
+      return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
     }
 
     // Recherche 1 : par Transfer ID exact
@@ -161,26 +158,26 @@ serve(async (req: Request) => {
           const { data: autreTraite } = await supabase.from("ordre_traite")
             .select("ordre_id").eq("transfer_id", waafiNotif.transfer_id || "").limit(1);
           const autreId = autreTraite && autreTraite.length > 0 ? autreTraite[0].ordre_id : "?";
-          if (autreId === ordreId) return;
-
-          await supabase.from("depot_orders").update({
-            status: "Paiement Non Reçu",
-            flag_raison: `Transfer-ID déjà utilisé par l'ordre #${autreId}`,
-            flagged_at: new Date().toISOString(),
-            auto_notified: true,
-          }).eq("id", ordre.id);
-          await sendTelegram(token, adminId,
-            `⚠️ <b>Doublon TID détecté — #${ordreId}</b>\n\n` +
-            `Transfer-ID <code>${transferId}</code> déjà utilisé par l'ordre <code>#${autreId}</code>.\n` +
-            `Montant: ${montant.toLocaleString()} DJF | ID 1xBet: <code>${userId1xbet || "?"}</code>`);
-          if (whatsapp) {
-            await sendWhatsApp(whatsapp,
-              `❌ *Baki-Pay — Paiement non reçu*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n` +
-              `Raison : Transfer ID déjà utilisé.\n\n📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
-            ).catch(() => {});
+          if (autreId !== ordreId) {
+            await supabase.from("depot_orders").update({
+              status: "Paiement Non Reçu",
+              flag_raison: `Transfer-ID déjà utilisé par l'ordre #${autreId}`,
+              flagged_at: new Date().toISOString(),
+              auto_notified: true,
+            }).eq("id", ordre.id);
+            await sendTelegram(token, adminId,
+              `⚠️ <b>Doublon TID détecté — #${ordreId}</b>\n\n` +
+              `Transfer-ID <code>${transferId}</code> déjà utilisé par l'ordre <code>#${autreId}</code>.\n` +
+              `Montant: ${montant.toLocaleString()} DJF | ID 1xBet: <code>${userId1xbet || "?"}</code>`);
+            if (whatsapp) {
+              sendWhatsApp(whatsapp,
+                `❌ *Baki-Pay — Paiement non reçu*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n` +
+                `Raison : Transfer ID déjà utilisé.\n\n📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
+              ).catch(() => {});
+            }
           }
         }
-        return;
+        return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
       }
 
       // Mauvaise correspondance
@@ -192,7 +189,7 @@ serve(async (req: Request) => {
         auto_notified: true,
       }).eq("id", ordre.id);
       if (whatsapp) {
-        await sendWhatsApp(whatsapp,
+        sendWhatsApp(whatsapp,
           `❌ *Baki-Pay — Paiement non reçu*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n` +
           `Raison : ${raison}\n\nVérifiez les informations et soumettez un nouvel ordre sur baki-pay.com`
         ).catch(() => {});
@@ -201,7 +198,7 @@ serve(async (req: Request) => {
         `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\n\n` +
         `Ordre <code>#${ordreId}</code>\n${mismatches.map((m: string) => `• ${m}`).join("\n")}`);
       logAudit("depot_rejete_mauvaise_correspondance", { ordreId, score, mismatches, raison });
-      return;
+      return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
     }
 
     // Aucun SMS Waafi avec ce TID
@@ -213,7 +210,7 @@ serve(async (req: Request) => {
       auto_notified: true,
     }).eq("id", ordre.id);
     if (whatsapp) {
-      await sendWhatsApp(whatsapp,
+      sendWhatsApp(whatsapp,
         `❌ *Baki-Pay — Paiement non reçu*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n` +
         `Raison : Transfer ID introuvable\n\nVérifiez votre Transfer ID Waafi et soumettez un nouvel ordre sur baki-pay.com`
       ).catch(() => {});
@@ -225,7 +222,10 @@ serve(async (req: Request) => {
       `Montant: ${montant.toLocaleString()} DJF\n\n` +
       `<i>Aucun SMS Waafi avec ce Transfer ID dans les registres.</i>`);
     logAudit("depot_rejete_tid_introuvable", { ordreId, transferId });
-  })().catch((e) => console.error("submit-depot async error:", e));
 
-  return response;
+  } catch (e) {
+    console.error("submit-depot processing error:", e);
+  }
+
+  return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
 });

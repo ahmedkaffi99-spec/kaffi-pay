@@ -13,7 +13,7 @@ export async function sendWhatsApp(phone: string, message: string): Promise<{ ok
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chatId, message }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(8000),
     });
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok || json.error) return { ok: false, reason: JSON.stringify(json) };
