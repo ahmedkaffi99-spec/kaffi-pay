@@ -502,7 +502,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-whatsapp">💬 Votre numéro WhatsApp</label>
         <div style="position:relative;">
           <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
-          <input type="tel" id="depot-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+          <input type="tel" id="depot-whatsapp" placeholder="Laisser vide si même numéro" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         </div>
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
@@ -576,7 +576,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-whatsapp-retrait">💬 Votre numéro WhatsApp</label>
         <div style="position:relative;">
           <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
-          <input type="tel" id="retrait-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+          <input type="tel" id="retrait-whatsapp" placeholder="Laisser vide si même numéro" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         </div>
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
@@ -1701,7 +1701,8 @@ async function submitDepot(){
   if(!id){showToast(t('err-id1x'),'error');return;}
   if(!h||!/^\d{6,15}$/.test(h)){showToast(t('err-tid'),'error');return;}
   if(!telDepot||telDepot.length!==8||!telDepot.startsWith('77')){showToast(t('err-sender'),'error');return;}
-  if(!whatsapp||whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
+  if(!whatsapp) whatsapp=telDepot; // même numéro par défaut — évite une double saisie
+  if(whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
   setLoading('depot',true);
   try{
     // ── Nouvel ordre — utilise l'ID pré-généré si disponible ──
@@ -1758,7 +1759,8 @@ async function submitRetrait(){
   if(!/^[A-Za-z0-9]{4,8}$/.test(c)||/^(copier|coller|copy|paste|code)$/i.test(c)){showToast(t('err-code-retrait'),'error');return;}
   if(!tel||tel.length!==8||!tel.startsWith('77')){showToast(t('err-waafi-num'),'error');return;}
   if(!m||Number(m)<250){showToast(t('err-min-retrait'),'error');return;}
-  if(!whatsapp||whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
+  if(!whatsapp) whatsapp=tel; // même numéro par défaut — évite une double saisie
+  if(whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
   setLoading('retrait',true);
   try{
     // ── Nouvel ordre — utilise l'ID pré-généré si disponible ──
