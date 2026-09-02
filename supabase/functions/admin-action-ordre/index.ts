@@ -23,9 +23,17 @@ Deno.serve(async (req: Request) => {
   // Opérations CRUD sur tables admin (agents)
   const { op, table: crudTable, row, id: crudId } = body;
   if (op) {
+    // Lecture des tables réservées à service_role par RLS — le frontend ne peut
+    // pas les lire directement, il passe donc par ici (protégé par la clé admin).
     if (op === "list" && crudTable === "agents") {
       const { data, error } = await supabase.from("agents")
         .select("id,nom,chat_id,role,actif").order("nom");
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true, rows: data || [] }, 200, headers);
+    }
+    if (op === "list" && crudTable === "waafi_notifications") {
+      const { data, error } = await supabase.from("waafi_notifications")
+        .select("*").order("created_at", { ascending: false }).limit(50);
       if (error) return json({ ok: false, error: error.message }, 500, headers);
       return json({ ok: true, rows: data || [] }, 200, headers);
     }

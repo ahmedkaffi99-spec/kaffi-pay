@@ -1635,14 +1635,10 @@ function copyNum(num,btn){
   doCopy();
 }
 
-function logAction(action, data){
-  // Fire-and-forget audit log via Supabase REST
-  fetch(SUPABASE_URL + '/rest/v1/audit_logs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Prefer': 'return=minimal' },
-    body: JSON.stringify({ action: action, data: data || {}, source: 'frontend' })
-  }).catch(function(){});
-}
+// No-op: audit_logs is service_role-only under RLS, so posting from the browser
+// was always silently rejected. The Edge Functions already write the audit
+// trail via logAudit(). Kept as a stub so existing call sites still work.
+function logAction(action, data){}
 
 function genRandomToken(){
   try{
@@ -1740,15 +1736,7 @@ async function submitDepot(){
     _resetTsDepot();
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx,viewToken);
-    if(!window.db){
-      showToast('⏳ Connexion Firebase en cours...','warning');
-      var waitFb = setInterval(function(){
-        if(window.db){ clearInterval(waitFb); saveTxFirebaseWithTimer(tx); }
-      }, 500);
-      setTimeout(function(){ clearInterval(waitFb); showToast('❌ Firebase indisponible','error'); }, 15000);
-    } else {
-      saveTxFirebaseWithTimer(tx);
-    }
+    saveTxFirebaseWithTimer(tx);
   } catch(e){
     showToast('❌ Erreur : '+e.message,'error');
     setLoading('depot',false);
@@ -1805,15 +1793,7 @@ async function submitRetrait(){
     _resetTsRetrait();
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx,viewToken);
-    if(!window.db){
-      showToast('⏳ Connexion Firebase en cours...','warning');
-      var waitFb2 = setInterval(function(){
-        if(window.db){ clearInterval(waitFb2); saveTxFirebase(tx); }
-      }, 500);
-      setTimeout(function(){ clearInterval(waitFb2); showToast('❌ Firebase indisponible','error'); }, 15000);
-    } else {
-      saveTxFirebase(tx);
-    }
+    saveTxFirebase(tx);
   } catch(e){
     showToast('❌ Erreur : '+e.message,'error');
     setLoading('retrait',false);
@@ -3209,11 +3189,16 @@ var _waafiSmsPollInterval = null;
 function listenWaafiSms(){
   if(_waafiSmsUnsub) return;
   function _fetchSms(){
-    fetch(SUPABASE_URL+'/rest/v1/waafi_notifications?select=*&order=created_at.desc&limit=50',
-      {headers:{'apikey':SUPABASE_ANON_KEY}})
+    // waafi_notifications is service_role-only under RLS → go through the admin
+    // Edge Function rather than /rest/v1, which always came back empty.
+    fetch(EDGE+'/admin-action-ordre', {
+      method:'POST', headers:cfHeaders(),
+      body:JSON.stringify({ _ak:getAdminKey(), op:'list', table:'waafi_notifications' })
+    })
       .then(function(r){ return r.json(); })
-      .then(function(rows){
-        if(!Array.isArray(rows)) return;
+      .then(function(d){
+        var rows = (d && d.ok && Array.isArray(d.rows)) ? d.rows : null;
+        if(!rows) return;
         renderWaafiSms(rows);
         var page = document.getElementById('page-notifs');
         var dot  = document.getElementById('notif-bell-dot');
