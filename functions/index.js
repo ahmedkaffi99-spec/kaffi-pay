@@ -1311,41 +1311,6 @@ exports.ordresBloques = onSchedule(
       }
     }
 
-    // ── PARTIE 2 : Alerte ordres > 60 min sans SMS trouvé ─────────
-    const cutoff60 = new Date(Date.now() - 60 * 60 * 1000);
-    const alertRef  = db.collection("alertes_etat").doc("ordres_bloques");
-    const alertSnap = await alertRef.get();
-    const dernierAlerte = alertSnap.exists
-      ? (alertSnap.data().ts?.toDate?.() || new Date(0))
-      : new Date(0);
-    const alertThrottle = Date.now() - dernierAlerte.getTime() < 60 * 60 * 1000;
-
-    if (!alertThrottle) {
-      const reSnapAttente = await db.collection("depot_orders")
-        .where("status", "==", "En attente").get().catch(() => ({ docs: [] }));
-
-      const vieux = reSnapAttente.docs.filter((d) => {
-        const ts = d.data().ts;
-        if (!ts) return false;
-        const tsDate = ts.toDate ? ts.toDate() : new Date(typeof ts === "number" ? ts : Number(ts));
-        return tsDate < cutoff60;
-      });
-
-      if (vieux.length) {
-        const lignes = vieux.map((d) => {
-          const o   = d.data();
-          const tsMs = o.ts && o.ts.toDate ? o.ts.toDate().getTime() : (o.ts ? Number(o.ts) : 0);
-          const age = Math.round((Date.now() - tsMs) / 60000);
-          return `• #${o.orderId || d.id} | ${o.montant} DJF | ⏱ ${age}min | TID:${o.waafitranfertID || "?"}`;
-        });
-        const alertMsg60 = `⚠️ <b>${vieux.length} ordre(s) > 60 min sans SMS Waafi</b>\n\n${lignes.join("\n")}\n\n` +
-          `<i>SMS Waafi introuvable — vérifiez le paiement.</i>`;
-        await sendTelegram(token, adminId, alertMsg60);
-        await notifyPaiementAgents(token, alertMsg60).catch(() => {});
-        await alertRef.set({ ts: FieldValue.serverTimestamp(), count: vieux.length });
-      }
-    }
-
     // ── PARTIE 3a : Recovery Dépôt — "Paiement Reçu" + webhookStatus != ok ──
     // MobCash Deposit n'a pas crédité 1xBet. Re-tente max 3 fois.
     const snapDepotRecu = await db.collection("depot_orders")
