@@ -13,7 +13,7 @@ const ERREURS_PERMANENTES = [
 
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (req.method !== "POST") return json({ error: "POST requis" }, 405, headers);
 
   const body = await req.json().catch(() => ({}));

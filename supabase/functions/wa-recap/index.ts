@@ -4,7 +4,7 @@ import { json, cors } from "../_shared/utils.ts";
 
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
   const url = new URL(req.url);
   const ordreId = url.searchParams.get("ordreId") || (await req.json().catch(() => ({}))).ordreId || "";

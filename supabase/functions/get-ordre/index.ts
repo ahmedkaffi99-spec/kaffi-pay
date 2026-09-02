@@ -5,7 +5,7 @@ import { json, cors } from "../_shared/utils.ts";
 // GET /get-ordre?order_id=082626&view_token=abc123de
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (req.method !== "GET") return json({ error: "GET requis" }, 405, headers);
 
   const url = new URL(req.url);

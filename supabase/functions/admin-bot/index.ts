@@ -31,7 +31,7 @@ async function isAuthorized(chatId: string, adminId: string): Promise<boolean> {
 
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405, headers);
 
   const body = await req.json().catch(() => ({}));

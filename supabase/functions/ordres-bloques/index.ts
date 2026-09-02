@@ -9,7 +9,7 @@ import { json, cors, logAudit } from "../_shared/utils.ts";
 // Called by pg_cron every 5 minutes (or manually via HTTP GET with secret)
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
   // Accept GET with secret header OR POST (from pg_cron via HTTP)
   const secret = req.headers.get("x-cron-secret") || new URL(req.url).searchParams.get("secret");

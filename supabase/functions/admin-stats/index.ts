@@ -5,7 +5,7 @@ const ADMIN_KEY = "kp2026_9f3aXmQ7";
 
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (req.method !== "GET" && req.method !== "POST") return json({ error: "Method Not Allowed" }, 405, headers);
 
   const url = new URL(req.url);
