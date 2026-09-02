@@ -1559,11 +1559,17 @@ function cfHeaders(){ return {'Content-Type':'application/json','X-Admin-Key':ge
 function getAgents(){ return _agentsCache; }
 var _agentsUnsubscribe = null;
 function loadAgentsFromFirestore(){
-  fetch(SUPABASE_URL+'/rest/v1/agents?select=id,nom,chat_id,role,actif&apikey='+SUPABASE_ANON_KEY+'&x-admin-key='+getAdminKey())
+  // agents is service_role-only under RLS, so this goes through the admin
+  // Edge Function (gated by the admin key) rather than the REST endpoint.
+  fetch(EDGE+'/admin-action-ordre', {
+    method: 'POST',
+    headers: cfHeaders(),
+    body: JSON.stringify({ _ak: getAdminKey(), op: 'list', table: 'agents' })
+  })
     .then(function(r){ return r.json(); })
-    .then(function(rows){
-      if(Array.isArray(rows)){
-        _agentsCache = rows.map(function(a){ return {id:a.id,nom:a.nom,telegramId:a.chat_id,role:a.role,actif:a.actif}; });
+    .then(function(d){
+      if(d && d.ok && Array.isArray(d.rows)){
+        _agentsCache = d.rows.map(function(a){ return {id:a.id,nom:a.nom,telegramId:a.chat_id,role:a.role,actif:a.actif}; });
         var agentsPage=document.getElementById('page-agents');
         if(agentsPage && agentsPage.classList.contains('active')) renderAgents();
       }

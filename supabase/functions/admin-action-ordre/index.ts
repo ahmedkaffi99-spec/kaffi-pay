@@ -23,6 +23,12 @@ Deno.serve(async (req: Request) => {
   // Opérations CRUD sur tables admin (agents)
   const { op, table: crudTable, row, id: crudId } = body;
   if (op) {
+    if (op === "list" && crudTable === "agents") {
+      const { data, error } = await supabase.from("agents")
+        .select("id,nom,chat_id,role,actif").order("nom");
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true, rows: data || [] }, 200, headers);
+    }
     if (op === "insert" && crudTable === "agents" && row) {
       const { error } = await supabase.from("agents").insert({
         nom: row.nom, chat_id: row.chat_id, role: row.role || "paiement", actif: row.actif ?? true,
