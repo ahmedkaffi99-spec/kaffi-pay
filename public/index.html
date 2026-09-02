@@ -1240,8 +1240,6 @@ function toggleLoginPass(){
 }
 
 function doLogin(){
-  const now=Date.now();
-  if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
   const em=document.getElementById('login-user').value.trim().toLowerCase();
   const p=document.getElementById('login-pass').value;
   if(!em||!p){showLoginError('⚠️ Email et mot de passe requis');return;}
@@ -1269,20 +1267,8 @@ function _loginFetchAgentFirestore(email, pass){
 }
 
 function _loginFail(){
-  fails++;
-  if(fails>=5){
-    lockedUntil=Date.now()+60000; fails=0;
-    showLoginError('🔒 Trop de tentatives. Bloqué 60s');
-    const iv=setInterval(function(){
-      const s=Math.ceil((lockedUntil-Date.now())/1000);
-      if(s<=0){clearInterval(iv);document.getElementById('login-attempts').textContent='';document.getElementById('login-error').style.display='none';}
-      else document.getElementById('login-attempts').textContent='Déverrouillage dans '+s+'s';
-    },1000);
-    return;
-  }
-  const r=5-fails;
-  showLoginError('❌ Identifiants incorrects — '+r+' tentative'+(r>1?'s':'')+' restante'+(r>1?'s':''));
-  document.getElementById('login-pass').value='';
+  showLoginError('❌ Email ou mot de passe incorrect');
+  var p=document.getElementById('login-pass'); if(p) p.value='';
 }
 
 function doGoogleLogin(){
@@ -1773,13 +1759,15 @@ async function submitRetrait(){
   const capValR=parseInt(document.getElementById('captcha-retrait-ans').value,10);
   if(capValR!==_captchaRetraitAns){showToast('⚠️ Captcha incorrect — réessayez','error');return;}
   const id1x=document.getElementById('retrait-id1x').value.trim();
-  const c=document.getElementById('retrait-code').value.trim();
+  const c=document.getElementById('retrait-code').value.replace(/\s/g,'');
   const tel=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
   let whatsapp=document.getElementById('retrait-whatsapp').value.trim().replace(/\D/g,'');
   if(whatsapp.startsWith('253')) whatsapp=whatsapp.slice(3);
   if(!id1x){showToast(t('err-id1x'),'error');return;}
-  if(!c||c.length<2){showToast(t('err-code-retrait'),'error');return;}
+  // Un code 1xBet est alphanumérique (ex: jK7o). On rejette aussi les libellés
+  // de boutons que les clients collent par erreur à la place du code.
+  if(!/^[A-Za-z0-9]{4,8}$/.test(c)||/^(copier|coller|copy|paste|code)$/i.test(c)){showToast(t('err-code-retrait'),'error');return;}
   if(!tel||tel.length!==8||!tel.startsWith('77')){showToast(t('err-waafi-num'),'error');return;}
   if(!m||Number(m)<250){showToast(t('err-min-retrait'),'error');return;}
   if(!whatsapp||whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
@@ -3995,7 +3983,7 @@ var KP_LANGS = {
     'err-tid': '⚠️ Waafi Transfer ID invalide',
     'err-sender': '⚠️ Numéro expéditeur requis (8 chiffres)',
     'err-whatsapp': '⚠️ Numéro WhatsApp requis (8 chiffres)',
-    'err-code-retrait': '⚠️ Code retrait requis',
+    'err-code-retrait': '⚠️ Code retrait invalide — 4 à 8 lettres/chiffres (ex: jK7o)',
     'err-waafi-num': '⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)',
     'err-min-retrait': '⚠️ Minimum 250 DJF',
     'toast-pasted': '📋 Collé !', 'toast-press-long': '📋 Appuyez longuement',
@@ -4089,7 +4077,7 @@ var KP_LANGS = {
     'err-tid': '⚠️ Invalid Waafi Transfer ID',
     'err-sender': '⚠️ Sender number required (8 digits)',
     'err-whatsapp': '⚠️ WhatsApp number required (8 digits)',
-    'err-code-retrait': '⚠️ Withdrawal code required',
+    'err-code-retrait': '⚠️ Invalid withdrawal code — 4 to 8 letters/digits (e.g. jK7o)',
     'err-waafi-num': '⚠️ Invalid Waafi number (8 digits, starts with 77)',
     'err-min-retrait': '⚠️ Minimum 250 DJF',
     'toast-pasted': '📋 Pasted!', 'toast-press-long': '📋 Long press to paste',
@@ -4183,7 +4171,7 @@ var KP_LANGS = {
     'err-tid': '⚠️ Lambarka Waafi Transfer-ka khalad ah',
     'err-sender': '⚠️ Lambarka diraha loo baahan yahay (8 lambar)',
     'err-whatsapp': '⚠️ Lambarka WhatsApp loo baahan yahay (8 lambar)',
-    'err-code-retrait': '⚠️ Koodhka lacag-qaadashada loo baahan yahay',
+    'err-code-retrait': '⚠️ Koodhka khalad ah — 4 ilaa 8 xaraf/lambar (tusaale: jK7o)',
     'err-waafi-num': '⚠️ Lambarka Waafi khalad ah (8 lambar, ku bilaabo 77)',
     'err-min-retrait': '⚠️ Ugu yaraan 250 DJF',
     'toast-pasted': '📋 La dhejiyay!', 'toast-press-long': '📋 Dheer u riix',
