@@ -2,7 +2,6 @@ import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
-import { analyserFraude } from "../_shared/fraud.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
 import { confirmerDepot } from "../_shared/confirmer.ts";
 import { json, cors, logAudit, genToken } from "../_shared/utils.ts";
@@ -26,14 +25,6 @@ serve(async (req: Request) => {
 
   if (!ordreId || !montant) return json({ error: "order_id et montant requis" }, 400, headers);
 
-  // Analyse fraude
-  const fraude = analyserFraude(montant, transferId || null, phone);
-  const fraudeTag = fraude.score_fraude >= 70
-    ? `\n🚨 <b>Fraude ${fraude.risque.toUpperCase()} (${fraude.score_fraude}/100)</b> : ${fraude.raisons.join(", ")}`
-    : fraude.score_fraude >= 40
-    ? `\n⚠️ <i>Risque fraude moyen (${fraude.score_fraude}/100) : ${fraude.raisons.join(", ")}</i>`
-    : "";
-
   // Insérer l'ordre en base
   const { data: ordre, error: insertErr } = await supabase.from("depot_orders").insert({
     order_id: ordreId,
@@ -46,55 +37,33 @@ serve(async (req: Request) => {
     numero_payment: phone || null,
     whatsapp: whatsapp || null,
     view_token: viewToken,
-    score_fraude: fraude.score_fraude,
-    fraud_type: fraude.risque,
+    score_fraude: 0,
+    fraud_type: "aucun",
   }).select().single();
 
   if (insertErr) return json({ error: insertErr.message }, 500, headers);
 
   logAudit("nouvel_depot", { ordreId, montant, phone });
 
-  // Traitement principal — doit s'exécuter avant de répondre (pas de fire-and-forget)
-  try {
-    if (fraude.action === "rejeter") {
-      await supabase.from("depot_orders").update({
-        status: "Paiement Non Reçu",
-        flag_raison: `Fraude détectée : ${fraude.raisons.join(", ")}`,
-        fraud_type: fraude.risque,
-        score_fraude: fraude.score_fraude,
-        flagged_at: new Date().toISOString(),
-        auto_notified: true,
-      }).eq("id", ordre.id);
+  // Répondre immédiatement au client
+  const response = json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
 
-      await sendTelegram(token, adminId,
-        `🚨 <b>Dépôt rejeté — Fraude</b> <code>#${ordreId}</code>\n` +
-        `Score: ${fraude.score_fraude}/100 | Risque: ${fraude.risque}\n` +
-        fraude.raisons.map((r: string) => `• ${r}`).join("\n")
-      );
-      if (whatsapp) {
-        sendWhatsApp(whatsapp,
-          `❌ *Baki-Pay — Ordre refusé*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n\n` +
-          `Pour toute question, contactez notre support :\n` +
-          `📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
-        ).catch(() => {});
-      }
-      logAudit("depot_rejete_fraude", { ordreId, score: fraude.score_fraude });
-      return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
-    }
-
-    // Telegram admin + agents — nouvel ordre reçu
-    const newDepotMsg = `📥 <b>Nouvel ordre Dépôt</b> — <code>#${ordreId}</code>\n\n` +
+  // Traitement asynchrone maintenu en vie par waitUntil
+  const process = (async () => {
+    // Telegram admin + agents
+    const newDepotMsg =
+      `📥 <b>Nouvel ordre Dépôt</b> — <code>#${ordreId}</code>\n\n` +
       `Montant : <b>${montant.toLocaleString()} DJF</b>\n` +
       `ID 1xBet : <code>${userId1xbet || "—"}</code>\n` +
       `Transfer-ID : <code>${transferId || "—"}</code>\n` +
-      `N° Waafi : <code>${phone || "—"}</code>${fraudeTag}\n\n` +
+      `N° Waafi : <code>${phone || "—"}</code>\n\n` +
       `<i>⏳ Vérification en cours...</i>`;
     await Promise.allSettled([
       sendTelegram(token, adminId, newDepotMsg),
       notifyPaiementAgents(token, newDepotMsg),
     ]);
 
-    // WhatsApp — accusé de réception immédiat (fire-and-forget, ne bloque pas)
+    // WhatsApp accusé de réception (fire-and-forget)
     if (whatsapp) {
       sendWhatsApp(whatsapp,
         `🧾 *Baki-Pay — Ordre reçu* ✅\n\n` +
@@ -118,8 +87,8 @@ serve(async (req: Request) => {
         auto_notified: true,
       }).eq("id", ordre.id);
       await sendTelegram(token, adminId,
-        `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`);
-      return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
+        `❌ <b>Dépôt — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`);
+      return;
     }
 
     // Recherche 1 : par Transfer ID exact
@@ -136,7 +105,6 @@ serve(async (req: Request) => {
       if (byPhone) {
         for (const n of byPhone) {
           if (n.montant && Math.abs(montant - Number(n.montant)) > tolerance) continue;
-          // Vérifier que le TID de cette notif n'est pas déjà utilisé
           if (n.transfer_id) {
             const { data: dejaTraite } = await supabase.from("ordre_traite")
               .select("id").eq("transfer_id", n.transfer_id).eq("status", "credite").limit(1);
@@ -154,7 +122,6 @@ serve(async (req: Request) => {
       if (decision === "confirmer") {
         const confirmed = await confirmerDepot(ordre, waafiNotif, token, adminId);
         if (!confirmed) {
-          // Doublon TID : appartient à un autre ordre
           const { data: autreTraite } = await supabase.from("ordre_traite")
             .select("ordre_id").eq("transfer_id", waafiNotif.transfer_id || "").limit(1);
           const autreId = autreTraite && autreTraite.length > 0 ? autreTraite[0].ordre_id : "?";
@@ -166,66 +133,44 @@ serve(async (req: Request) => {
               auto_notified: true,
             }).eq("id", ordre.id);
             await sendTelegram(token, adminId,
-              `⚠️ <b>Doublon TID détecté — #${ordreId}</b>\n\n` +
-              `Transfer-ID <code>${transferId}</code> déjà utilisé par l'ordre <code>#${autreId}</code>.\n` +
-              `Montant: ${montant.toLocaleString()} DJF | ID 1xBet: <code>${userId1xbet || "?"}</code>`);
+              `⚠️ <b>Doublon TID — #${ordreId}</b>\n` +
+              `Transfer-ID <code>${transferId}</code> déjà utilisé par <code>#${autreId}</code>.`);
             if (whatsapp) {
               sendWhatsApp(whatsapp,
-                `❌ *Baki-Pay — Paiement non reçu*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n` +
-                `Raison : Transfer ID déjà utilisé.\n\n📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
+                `❌ *Baki-Pay — Paiement non reçu*\nOrdre *#${ordreId}* : Transfer ID déjà utilisé.\n\n📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
               ).catch(() => {});
             }
           }
         }
-        return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
+        return;
       }
 
-      // Mauvaise correspondance
+      // Mauvaise correspondance — laisser "En attente" pour traitement manuel
       const raison = mismatchToRaison(mismatches);
-      await supabase.from("depot_orders").update({
-        status: "Paiement Non Reçu",
-        flag_raison: raison,
-        flagged_at: new Date().toISOString(),
-        auto_notified: true,
-      }).eq("id", ordre.id);
-      if (whatsapp) {
-        sendWhatsApp(whatsapp,
-          `❌ *Baki-Pay — Paiement non reçu*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n` +
-          `Raison : ${raison}\n\nVérifiez les informations et soumettez un nouvel ordre sur baki-pay.com`
-        ).catch(() => {});
-      }
       await sendTelegram(token, adminId,
-        `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\n\n` +
-        `Ordre <code>#${ordreId}</code>\n${mismatches.map((m: string) => `• ${m}`).join("\n")}`);
-      logAudit("depot_rejete_mauvaise_correspondance", { ordreId, score, mismatches, raison });
-      return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
+        `⚠️ <b>Correspondance partielle (${score}/3) — #${ordreId}</b>\n` +
+        `${mismatches.map((m: string) => `• ${m}`).join("\n")}\n` +
+        `<i>Ordre laissé En attente pour vérification manuelle.</i>`);
+      logAudit("depot_correspondance_partielle", { ordreId, score, mismatches, raison });
+      return;
     }
 
-    // Aucun SMS Waafi avec ce TID
-    const raisonIntrouvable = "Transfer ID introuvable — paiement non reçu";
-    await supabase.from("depot_orders").update({
-      status: "Paiement Non Reçu",
-      flag_raison: raisonIntrouvable,
-      flagged_at: new Date().toISOString(),
-      auto_notified: true,
-    }).eq("id", ordre.id);
-    if (whatsapp) {
-      sendWhatsApp(whatsapp,
-        `❌ *Baki-Pay — Paiement non reçu*\n\nVotre ordre *#${ordreId}* n'a pas pu être traité.\n` +
-        `Raison : Transfer ID introuvable\n\nVérifiez votre Transfer ID Waafi et soumettez un nouvel ordre sur baki-pay.com`
-      ).catch(() => {});
-    }
+    // SMS Waafi pas encore reçu — ordre reste "En attente", sms-webhook le confirmera à l'arrivée
     await sendTelegram(token, adminId,
-      `❌ <b>Dépôt rejeté — TID introuvable</b>\n\n` +
-      `Ordre: <code>#${ordreId}</code>\n` +
+      `⏳ <b>SMS Waafi pas encore reçu — #${ordreId}</b>\n` +
       `Transfer-ID: <code>${transferId}</code>\n` +
-      `Montant: ${montant.toLocaleString()} DJF\n\n` +
-      `<i>Aucun SMS Waafi avec ce Transfer ID dans les registres.</i>`);
-    logAudit("depot_rejete_tid_introuvable", { ordreId, transferId });
+      `Montant: ${montant.toLocaleString()} DJF\n` +
+      `<i>L'ordre sera confirmé automatiquement à l'arrivée du SMS.</i>`);
+    logAudit("depot_en_attente_sms", { ordreId, transferId });
+  })();
 
-  } catch (e) {
-    console.error("submit-depot processing error:", e);
+  // Maintenir la fonction en vie pendant le traitement
+  try {
+    (globalThis as unknown as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } })
+      .EdgeRuntime?.waitUntil(process);
+  } catch (_) {
+    await process;
   }
 
-  return json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
+  return response;
 });

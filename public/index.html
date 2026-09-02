@@ -1432,8 +1432,7 @@ function getTxs(){
   });
 }
 
-async function saveTxFirebase(tx, _retries){
-  _retries = _retries || 0;
+async function saveTxFirebase(tx){
   try{
     var isDepot = tx.type === 'Dépôt';
     var endpoint = isDepot ? (EDGE + '/submit-depot') : (EDGE + '/submit-retrait');
@@ -1463,15 +1462,10 @@ async function saveTxFirebase(tx, _retries){
     if(data.success || data.ok){
       showToast('✅ Ordre enregistré avec succès','success');
     } else {
-      throw new Error(data.error || 'Erreur serveur');
+      showToast('❌ '+(data.error || 'Erreur serveur'),'error');
     }
   } catch(e){
-    if(_retries < 5){
-      showToast('⚠️ Nouvelle tentative... ('+(5-_retries)+' restants)','warning');
-      setTimeout(function(){ saveTxFirebase(tx, _retries+1); }, 3000);
-    } else {
-      showToast('❌ Impossible de sauvegarder — vérifie ta connexion','error');
-    }
+    showToast('❌ Impossible de soumettre — vérifie ta connexion','error');
   }
 }
 
