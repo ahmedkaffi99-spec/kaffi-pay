@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
+import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { extractTransferId, extractMontant, extractNumClient } from "../_shared/parser.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
 import { json, cors } from "../_shared/utils.ts";
@@ -33,13 +34,17 @@ serve(async (req: Request) => {
     source: "macrodroid", status: "reçu",
   }).select().single();
 
-  if (insertErr) { console.error("sms-webhook insertErr:", insertErr.message); return json({ error: insertErr.message }, 500, headers); }
+  if (insertErr) {
+    console.error("sms-webhook insertErr:", insertErr.message);
+    return json({ error: insertErr.message }, 500, headers);
+  }
 
   console.log("sms-webhook: inserted id=", notifDoc.id, "tid=", transferId, "montant=", montant, "num=", numClient);
 
   // Notification Telegram admin
   if (transferId || montant) {
-    const msg = `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
+    const msg =
+      `📩 <b>SMS Waafi reçu — Paiement enregistré</b>\n\n` +
       `Transfer-ID: <code>${transferId || "?"}</code>\n` +
       `Montant: <b>${montant ? Number(montant).toLocaleString() : "?"} DJF</b>\n` +
       `Expéditeur: <code>${numClient || "?"}</code>\n\n` +
@@ -53,7 +58,7 @@ serve(async (req: Request) => {
   // Répondre à MacroDroid immédiatement
   const response = json({ success: true, id: notifDoc.id }, 200, headers);
 
-  // Vérifier si un ordre "En attente" avec ce TID existe déjà (cas rare)
+  // Matching inverse : chercher un ordre "En attente" avec ce TID
   if (transferId) {
     try {
       const { data: ordres } = await supabase.from("depot_orders")
@@ -61,25 +66,32 @@ serve(async (req: Request) => {
 
       if (ordres && ordres.length > 0) {
         const ordre = ordres[0];
+        const whatsapp = (ordre.whatsapp || "") as string;
+        const vt = ordre.view_token ? `-${ordre.view_token}` : "";
+        const ordreId = ordre.order_id as string;
+
+        // Anti-doublon : TID déjà crédité ?
         const { data: dejaTraite } = await supabase.from("ordre_traite")
           .select("id").eq("transfer_id", transferId).eq("status", "credite").limit(1);
+
         if (!dejaTraite || dejaTraite.length === 0) {
           const { score, mismatches, decision } = scorerCorrespondance(ordre, notifDoc);
+
           if (decision === "confirmer") {
+            // confirmerDepot appelle MobCash, envoie Telegram + WhatsApp
             await confirmerDepot(ordre, notifDoc, token, adminId);
           } else {
+            // Correspondance partielle — laisser "En attente" pour vérification manuelle
             const raison = mismatchToRaison(mismatches);
-            await supabase.from("depot_orders").update({
-              status: "Paiement Non Reçu", flag_raison: raison,
-              flagged_at: new Date().toISOString(), auto_notified: true,
-            }).eq("id", ordre.id);
             await sendTelegram(token, adminId,
-              `❌ <b>Dépôt rejeté (${score}/3) — ${raison}</b>\nOrdre <code>#${ordre.order_id}</code>`);
+              `⚠️ <b>SMS reçu — Correspondance partielle (${score}/3) — #${ordreId}</b>\n` +
+              `${mismatches.map((m: string) => `• ${m}`).join("\n")}\n` +
+              `<i>Ordre laissé En attente pour vérification manuelle.</i>`);
           }
         }
       }
     } catch (e) {
-      console.error("sms-webhook post-response error:", e);
+      console.error("sms-webhook matching error:", e);
     }
   }
 
