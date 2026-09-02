@@ -1,7 +1,16 @@
 import { supabase } from "./db.ts";
 import { sendTelegram, notifyPaiementAgents } from "./telegram.ts";
 import { sendWhatsApp } from "./whatsapp.ts";
+import { callMobcash } from "./mobcash.ts";
 import { logAudit } from "./utils.ts";
+
+const ERREURS_PERMANENTES = [
+  "currency does not match",
+  "account currency",
+  "user not found",
+  "invalid user",
+  "account not found",
+];
 
 export async function confirmerDepot(
   ordre: Record<string, unknown>,
@@ -10,11 +19,14 @@ export async function confirmerDepot(
   adminId: string
 ): Promise<boolean> {
   const ordreId = ordre.order_id as string;
-  const montantNotif = (notif.montant || ordre.montant) as number;
+  const montantNotif = Number(notif.montant || ordre.montant || 0);
   const numReel = (notif.num_client || ordre.numero_payment || "") as string;
   const transferId = (notif.transfer_id || "") as string;
+  const userId1xbet = (ordre.user_id_1xbet || ordre.id1x || "") as string;
+  const whatsapp = (ordre.whatsapp || "") as string;
+  const viewToken = (ordre.view_token || "") as string;
 
-  // Anti-doublon : upsert ordre_traite avec conflit sur transfer_id
+  // Anti-doublon : insert dans ordre_traite (échoue si TID déjà utilisé)
   const { error: traitErr } = await supabase.from("ordre_traite").insert({
     transfer_id: transferId || ordreId,
     ordre_id: ordreId,
@@ -28,7 +40,7 @@ export async function confirmerDepot(
     .select("status").eq("id", ordre.id).single();
   if (!fresh || fresh.status !== "En attente") return false;
 
-  // Marquer paiement reçu
+  // Marquer "Paiement Reçu"
   await supabase.from("depot_orders").update({
     status: "Paiement Reçu",
     confirmed_by: "auto_match_waafi",
@@ -44,28 +56,86 @@ export async function confirmerDepot(
 
   logAudit("depot_paiement_confirme", { ordreId, transferId, montant: montantNotif });
 
-  const confirmeMsg = `💳 <b>Paiement Waafi validé</b>\n\n` +
-    `Ordre: <b>#${ordreId}</b> | <b>${Number(montantNotif).toLocaleString()} DJF</b>\n` +
-    `Transfer-ID: <code>${transferId || "?"}</code> | N°: <code>${numReel}</code>` +
-    (ordre.whatsapp ? `\nWhatsApp: <code>${ordre.whatsapp}</code>` : "") +
-    `\n\n<i>⏳ MobCash va créditer le compte 1xBet...</i>`;
+  // Telegram — paiement reçu, crédit en cours
+  const vt = viewToken ? `-${viewToken}` : "";
+  const confirmeMsg =
+    `💳 <b>Paiement Waafi validé — #${ordreId}</b>\n\n` +
+    `Montant : <b>${montantNotif.toLocaleString()} DJF</b>\n` +
+    `Transfer-ID : <code>${transferId || "?"}</code> | N° : <code>${numReel}</code>` +
+    (whatsapp ? `\nWhatsApp : <code>${whatsapp}</code>` : "") +
+    `\n\n<i>⏳ Appel MobCash en cours...</i>`;
   await sendTelegram(token, adminId, confirmeMsg);
   await notifyPaiementAgents(token, confirmeMsg).catch(() => {});
 
-  if (!ordre.user_id_1xbet && !ordre.id1x) {
-    await sendTelegram(token, adminId,
-      `⚠️ <b>ID 1xBet manquant</b> — #${ordreId}\n${Number(montantNotif).toLocaleString()} DJF en attente de crédit.`);
-  }
-
-  if (ordre.whatsapp) {
-    const vt = ordre.view_token ? `-${ordre.view_token}` : "";
-    await sendWhatsApp(ordre.whatsapp as string,
+  // WhatsApp — paiement reçu
+  if (whatsapp) {
+    sendWhatsApp(whatsapp,
       `💳 *Baki-Pay — Paiement reçu* ✅\n\n` +
-      `Votre paiement *#${ordreId}* de *${Number(montantNotif).toLocaleString()} DJF* a bien été reçu.\n\n` +
-      `Statut : 💳 *Paiement reçu*\n\n` +
+      `Votre paiement *#${ordreId}* de *${montantNotif.toLocaleString()} DJF* a bien été reçu.\n\n` +
       `⏳ Crédit de votre compte 1xBet en cours...\n` +
       `📲 baki-pay.com/#suivi-${ordreId}${vt}`
-    );
+    ).catch(() => {});
+  }
+
+  // MobCash — créditer le compte 1xBet
+  if (!userId1xbet) {
+    await sendTelegram(token, adminId,
+      `⚠️ <b>ID 1xBet manquant — #${ordreId}</b>\n${montantNotif.toLocaleString()} DJF — crédit impossible, vérifiez l'ordre.`);
+    return true;
+  }
+
+  try {
+    await callMobcash("Dépôt", userId1xbet, montantNotif, "");
+
+    // Mettre à jour ordre_traite → "credite"
+    await supabase.from("ordre_traite").update({ status: "credite" })
+      .eq("transfer_id", transferId || ordreId).catch(() => {});
+
+    // Marquer "Crédité avec succès"
+    await supabase.from("depot_orders").update({
+      status: "Crédité avec succès",
+      webhook_status: "ok",
+      webhook_at: new Date().toISOString(),
+    }).eq("id", ordre.id);
+
+    logAudit("depot_mobcash_ok", { ordreId, userId1xbet });
+
+    const creditMsg = `✅ <b>Dépôt crédité avec succès</b>\n#${ordreId} — ${montantNotif.toLocaleString()} DJF`;
+    await sendTelegram(token, adminId, creditMsg);
+    await notifyPaiementAgents(token, creditMsg).catch(() => {});
+
+    if (whatsapp) {
+      sendWhatsApp(whatsapp,
+        `🎉 *Baki-Pay — Compte 1xBet crédité !*\n\n` +
+        `Votre dépôt *#${ordreId}* de *${montantNotif.toLocaleString()} DJF* a été traité avec succès.\n\n` +
+        `✅ *Crédité avec succès*\n\n` +
+        `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
+      ).catch(() => {});
+    }
+  } catch (e) {
+    const errMsg = (e as Error).message || "";
+    const estPermanente = ERREURS_PERMANENTES.some((s) => errMsg.toLowerCase().includes(s));
+
+    await supabase.from("depot_orders").update({
+      webhook_status: estPermanente ? "echec_permanent" : "echec",
+      webhook_err: errMsg,
+    }).eq("id", ordre.id);
+
+    logAudit("depot_mobcash_echec", { ordreId, err: errMsg, permanent: estPermanente });
+
+    if (estPermanente) {
+      await sendTelegram(token, adminId,
+        `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
+        `ID 1xBet : <code>${userId1xbet}</code>\n` +
+        `<code>${errMsg}</code>\n\n` +
+        `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
+        `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement.`);
+    } else {
+      await sendTelegram(token, adminId,
+        `⚠️ <b>MobCash Dépôt échoué — #${ordreId}</b>\n` +
+        `<code>${errMsg}</code>\n` +
+        `<i>Relancez manuellement depuis le panel admin.</i>`);
+    }
   }
 
   return true;
