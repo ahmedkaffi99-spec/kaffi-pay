@@ -1051,9 +1051,8 @@ var _smsListener=null, _smsDejaTrait=new Set();
 // ═══════════════════════════════════════════════════
 function showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>{ s.classList.remove('active'); s.style.opacity='1'; });
-  var el = document.getElementById('screen-'+id);
-  el.classList.add('active');
-  el.style.opacity='1';
+  var el = document.getElementById('screen-'+id) || document.getElementById('screen-client');
+  if(el){ el.classList.add('active'); el.style.opacity='1'; }
   window.scrollTo(0,0);
 }
 
@@ -1176,9 +1175,13 @@ function _verifyFirebaseAuth(savedEmail){
 // Assurer que l'écran login est toujours visible si affiché
 document.querySelectorAll('.screen').forEach(function(s){ s.style.opacity='1'; });
 window.addEventListener('DOMContentLoaded', function(){
-  initCaptchaDepot();
-  initCaptchaRetrait();
-  checkURLAdmin();
+  try{ initCaptchaDepot(); }catch(e){}
+  try{ initCaptchaRetrait(); }catch(e){}
+  try{ checkURLAdmin(); }catch(e){ showScreen('client'); }
+  // Failsafe : si aucun écran n'est visible après 1s, afficher le client
+  setTimeout(function(){
+    if(!document.querySelector('.screen.active')) { try{ showScreen('client'); }catch(e){} }
+  }, 1000);
   // Démarrer écoute Firebase dès le chargement (pour suivi client)
   // Robuste : attend Firebase même si l'event a déjà tiré
   function startFirebaseListeners(){

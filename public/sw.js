@@ -1,5 +1,5 @@
-// Baki-Pay — Service Worker v10.1
-const CACHE = 'bakipay-v9';
+// Baki-Pay — Service Worker v10.2
+const CACHE = 'bakipay-v10';
 const ICON_URLS = ['/icon-192.png', '/icon-512.png', '/favicon.ico'];
 
 self.addEventListener('install', function(e){
