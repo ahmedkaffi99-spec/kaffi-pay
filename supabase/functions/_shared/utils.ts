@@ -46,17 +46,34 @@ export function estErreurPermanente(message: string): boolean {
 // reste "Paiement Reçu" sans webhook_status "echec*", ce qui garde la page de
 // suivi sur "Crédit en cours"). L'admin doit recharger le solde puis relancer
 // manuellement — le cron ne réessaie pas cette catégorie non plus.
+// Texte vérifié en direct contre l'API MobCash le 3 sept. 2026 (7000 DJF sur
+// un solde de 3700) : "Deposit limit exceeded. A maximum of 4199.00 can be
+// deposited". Les autres variantes restent en filet de sécurité au cas où le
+// libellé change selon le motif exact du dépassement.
 export const ERREURS_SOLDE_INSUFFISANT = [
+  "deposit limit exceeded",
+  "can be deposited",
   "insufficient",
   "not enough",
   "low balance",
   "balance too low",
-  "solde insuffisant",
 ];
 
 export function estSoldeInsuffisant(message: string): boolean {
   const m = (message || "").toLowerCase();
   return ERREURS_SOLDE_INSUFFISANT.some((s) => m.includes(s));
+}
+
+// MobCash refuse un second dépôt avec le même ID + le même montant dans les
+// 5 minutes suivant le premier. Texte vérifié en direct le 3 sept. 2026 :
+// "A payment of 50 has already been made to customer no. 1789408881. This
+// payment can be made again in 5 minutes." — entièrement auto-récupérable :
+// un seul DJF de plus suffit à distinguer la transaction, pas besoin d'admin.
+export const MOTIF_DOUBLON_MONTANT = ["already been made", "can be made again"];
+
+export function estDoublonMontant(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  return MOTIF_DOUBLON_MONTANT.every((s) => m.includes(s));
 }
 
 // Classe une erreur MobCash pour décider du webhook_status à écrire.

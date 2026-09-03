@@ -1,7 +1,7 @@
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
-import { callMobcash } from "../_shared/mobcash.ts";
+import { callMobcashDepot } from "../_shared/mobcash.ts";
 import { json, cors, logAudit, webhookStatusPourErreurMobcash } from "../_shared/utils.ts";
 
 const ADMIN_KEY = "kp2026_9f3aXmQ7";
@@ -103,7 +103,7 @@ Deno.serve(async (req: Request) => {
       }
 
       try {
-        await callMobcash("Dépôt", userId, montantVal, "");
+        await callMobcashDepot(userId, montantVal);
         await supabase.from(table).update({
           status: "Crédité avec succès",
           webhook_status: "ok",
@@ -189,7 +189,7 @@ Deno.serve(async (req: Request) => {
     if (!userId) return json({ ok: false, error: "ID 1xBet manquant" }, 400, headers);
 
     try {
-      await callMobcash("Dépôt", userId, montantVal, "");
+      await callMobcashDepot(userId, montantVal);
       const updates: Record<string, unknown> = {
         status: "Crédité avec succès",
         webhook_status: "ok",

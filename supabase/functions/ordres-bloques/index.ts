@@ -1,7 +1,7 @@
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents, sendTelegramKeyboard } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
-import { callMobcash } from "../_shared/mobcash.ts";
+import { callMobcashDepot } from "../_shared/mobcash.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
 import { confirmerDepot } from "../_shared/confirmer.ts";
 import { json, cors, logAudit, webhookStatusPourErreurMobcash } from "../_shared/utils.ts";
@@ -53,7 +53,7 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
-      await callMobcash("Dépôt", id1xbet, montantVal, "");
+      await callMobcashDepot(id1xbet, montantVal);
       await supabase.from("depot_orders").update({
         status: "Crédité avec succès",
         webhook_status: "ok",

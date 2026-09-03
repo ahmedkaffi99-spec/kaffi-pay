@@ -1,7 +1,7 @@
 import { supabase } from "./db.ts";
 import { sendTelegram, notifyPaiementAgents } from "./telegram.ts";
 import { sendWhatsApp } from "./whatsapp.ts";
-import { callMobcash } from "./mobcash.ts";
+import { callMobcashDepot } from "./mobcash.ts";
 import { logAudit, webhookStatusPourErreurMobcash } from "./utils.ts";
 
 export async function confirmerDepot(
@@ -79,7 +79,7 @@ export async function confirmerDepot(
   }
 
   try {
-    await callMobcash("Dépôt", userId1xbet, montantNotif, "");
+    await callMobcashDepot(userId1xbet, montantNotif);
 
     // Mettre à jour ordre_traite → "credite"
     await supabase.from("ordre_traite").update({ status: "credite" })
