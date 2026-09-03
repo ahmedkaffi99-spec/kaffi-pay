@@ -77,15 +77,20 @@ Deno.serve(async (req: Request) => {
   const totalDep = confDep.reduce((s, x) => s + Number(x.montant || 0), 0);
   const totalRet = confRet.reduce((s, x) => s + Number(x.montant || 0), 0);
 
-  // Chart data groupé par jour
+  // Chart data groupé par jour calendaire Djibouti (mêmes bornes que
+  // startDate/endDate ci-dessus) — un new Date().setHours(0,0,0,0) nu utilise
+  // le fuseau du runtime Deno (UTC), pas celui de Djibouti (UTC+3), et
+  // pouvait classer un ordre dans le mauvais jour ou le faire disparaître du
+  // graphique alors qu'il était bien compté dans le total de la période.
   const chart = [];
   for (let i = chartDays - 1; i >= 0; i--) {
-    const d0 = new Date(); d0.setDate(d0.getDate() - i); d0.setHours(0, 0, 0, 0);
-    const d1 = new Date(d0); d1.setHours(23, 59, 59, 999);
-    const label = `${String(d0.getDate()).padStart(2, "0")}/${String(d0.getMonth() + 1).padStart(2, "0")}`;
-    const dep = confDep.filter(x => { const t = new Date(x.created_at); return t >= d0 && t <= d1; })
+    const d0 = localMidnight(i);
+    const d1 = new Date(d0.getTime() + 24 * 60 * 60 * 1000 - 1);
+    const labelDate = new Date(d0.getTime() + TZ_OFFSET_MS);
+    const label = `${String(labelDate.getUTCDate()).padStart(2, "0")}/${String(labelDate.getUTCMonth() + 1).padStart(2, "0")}`;
+    const dep = confDep.filter(x => { const t = new Date(x.created_at).getTime(); return t >= d0.getTime() && t <= d1.getTime(); })
       .reduce((s, x) => s + Number(x.montant || 0), 0);
-    const ret = confRet.filter(x => { const t = new Date(x.created_at); return t >= d0 && t <= d1; })
+    const ret = confRet.filter(x => { const t = new Date(x.created_at).getTime(); return t >= d0.getTime() && t <= d1.getTime(); })
       .reduce((s, x) => s + Number(x.montant || 0), 0);
     chart.push({ label, dep, ret });
   }
