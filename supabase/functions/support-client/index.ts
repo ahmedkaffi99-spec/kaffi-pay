@@ -1,6 +1,6 @@
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifySupportAgents } from "../_shared/telegram.ts";
-import { json, cors } from "../_shared/utils.ts";
+import { json, cors, logAudit } from "../_shared/utils.ts";
 
 const SUPPORT_BOT_TOKEN_KEY = "SUPPORT_BOT_TOKEN";
 
@@ -74,10 +74,18 @@ Deno.serve(async (req: Request) => {
 
     // /agent
     if (t === "/agent" || t === "agent") {
-      const adminToken = Deno.env.get("TELEGRAM_TOKEN")!;
-      await notifySupportAgents(adminToken,
+      // Les agents "support" vivent sur le bot support, pas le bot admin —
+      // notifySupportAgents recevait pourtant TELEGRAM_TOKEN (bot admin) ici,
+      // le seul appel de cette fonction dans tout le repo. Un agent support
+      // qui n'a jamais démarré de conversation avec le bot admin ne recevait
+      // donc jamais rien, en silence : Telegram refuse un sendMessage vers un
+      // chat qui n'a pas /start la bonne app, et le .catch(()=>{}) avale
+      // l'erreur — le client voyait quand même "un agent va vous contacter".
+      const supportToken = Deno.env.get(SUPPORT_BOT_TOKEN_KEY)!;
+      await notifySupportAgents(supportToken,
         `🆘 <b>Demande d'agent humain</b>\n\nUtilisateur : <code>${chatId}</code>\nMessage : ${text}`
       ).catch(() => {});
+      logAudit("support_demande_agent", { chatId });
       await sendSupport(chatId,
         `👤 <b>Un agent va vous contacter</b>\n\n` +
         `Votre demande a été transmise à notre équipe support.\n` +
@@ -97,7 +105,7 @@ Deno.serve(async (req: Request) => {
 
       const ordreId = suiviMatch[1];
       const [d, r] = await Promise.all([
-        supabase.from("depot_orders").select("order_id,status,montant,flag_raison,created_at").eq("order_id", ordreId).limit(1),
+        supabase.from("depot_orders").select("order_id,status,montant,flag_raison,created_at,webhook_status").eq("order_id", ordreId).limit(1),
         supabase.from("retrait_orders").select("order_id,status,montant,flag_raison,created_at").eq("order_id", ordreId).limit(1),
       ]);
 
@@ -109,6 +117,14 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true }, 200, headers);
       }
 
+      // echec_solde n'est jamais un problème du client (cashdesk à sec, admin
+      // recharge puis relance) — le statut reste affiché comme "en cours",
+      // exactement comme sur baki-pay.com (voir wbFail dans public/index.html,
+      // qui exclut aussi echec_solde). Seuls echec_permanent/echec_max/echec
+      // signalent un vrai blocage nécessitant une action du client.
+      const wbFail = type === "Dépôt" &&
+        ["echec_permanent", "echec_max", "echec"].includes((ordre as { webhook_status?: string }).webhook_status || "");
+
       const statusEmoji: Record<string, string> = {
         "En attente": "⏳",
         "Paiement Reçu": "💳",
@@ -119,7 +135,7 @@ Deno.serve(async (req: Request) => {
         "Payé": "✅",
         "Annulé": "🚫",
       };
-      const emoji = statusEmoji[ordre.status] || "📋";
+      const emoji = (ordre.status === "Paiement Reçu" && wbFail) ? "🚨" : (statusEmoji[ordre.status] || "📋");
 
       let msg2 = `${emoji} <b>Ordre #${ordreId} — ${type}</b>\n\n`;
       msg2 += `Statut : <b>${ordre.status}</b>\n`;
@@ -128,16 +144,25 @@ Deno.serve(async (req: Request) => {
 
       if (ordre.status === "En attente") {
         msg2 += `\n⏳ Votre paiement est en cours de vérification.`;
+      } else if (ordre.status === "Paiement Reçu" && type === "Dépôt" && wbFail) {
+        const wStatus = (ordre as { webhook_status?: string }).webhook_status;
+        msg2 += wStatus === "echec_permanent"
+          ? `\n🚨 Crédit échoué — votre compte 1xBet semble être en devise étrangère (USD/EUR).\nContactez le support avec votre numéro d'ordre et l'ID de votre compte 1xBet en DJF : tapez /agent.`
+          : `\n🚨 Le crédit de votre compte 1xBet a échoué.\nContactez le support avec votre numéro d'ordre : tapez /agent.`;
       } else if (ordre.status === "Paiement Reçu") {
         msg2 += `\n💳 Paiement reçu — crédit 1xBet en cours...`;
       } else if (ordre.status === "Crédité avec succès") {
         msg2 += `\n✅ Votre compte 1xBet a été crédité avec succès !`;
       } else if (ordre.status === "Paiement Non Reçu") {
         msg2 += `\n❌ Paiement non reçu. Vérifiez votre Transfer ID Waafi.\nPour toute question, tapez /agent.`;
+      } else if (ordre.status === "Code Validé") {
+        msg2 += `\n⏳ Code validé — envoi Waafi en cours...`;
       } else if (ordre.status === "Payé") {
         msg2 += `\n✅ Retrait effectué — fonds transférés sur votre Waafi !`;
       } else if (ordre.status === "Code Invalide") {
         msg2 += `\n❌ Code invalide. Vérifiez votre code de retrait 1xBet.\nPour toute question, tapez /agent.`;
+      } else if (ordre.status === "Annulé") {
+        msg2 += `\n🚫 Ordre annulé.`;
       }
 
       await sendSupport(chatId, msg2);
