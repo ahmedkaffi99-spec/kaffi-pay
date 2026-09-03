@@ -2,15 +2,7 @@ import { supabase } from "./db.ts";
 import { sendTelegram, notifyPaiementAgents } from "./telegram.ts";
 import { sendWhatsApp } from "./whatsapp.ts";
 import { callMobcash } from "./mobcash.ts";
-import { logAudit } from "./utils.ts";
-
-const ERREURS_PERMANENTES = [
-  "currency does not match",
-  "account currency",
-  "user not found",
-  "invalid user",
-  "account not found",
-];
+import { logAudit, estErreurPermanente } from "./utils.ts";
 
 export async function confirmerDepot(
   ordre: Record<string, unknown>,
@@ -116,7 +108,7 @@ export async function confirmerDepot(
     }
   } catch (e) {
     const errMsg = (e as Error).message || "";
-    const estPermanente = ERREURS_PERMANENTES.some((s) => errMsg.toLowerCase().includes(s));
+    const estPermanente = estErreurPermanente(errMsg);
 
     await supabase.from("depot_orders").update({
       webhook_status: estPermanente ? "echec_permanent" : "echec",

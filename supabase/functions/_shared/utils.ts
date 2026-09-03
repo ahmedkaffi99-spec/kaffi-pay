@@ -24,6 +24,23 @@ export function transitionValide(de: string, vers: string): boolean {
   return (TRANSITIONS_VALIDES[de] || []).includes(vers);
 }
 
+// Erreurs MobCash qui ne se résoudront jamais en réessayant — typiquement un
+// compte 1xBet en devise étrangère (USD/EUR). Un nouvel ID DJF est requis,
+// donc webhook_status doit rester "echec_permanent" pour qu'aucun cron ne le
+// reprenne en boucle et que l'admin garde l'indice affiché.
+export const ERREURS_PERMANENTES = [
+  "currency does not match",
+  "account currency",
+  "user not found",
+  "invalid user",
+  "account not found",
+];
+
+export function estErreurPermanente(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  return ERREURS_PERMANENTES.some((s) => m.includes(s));
+}
+
 export function cors(req: Request) {
   const origin = req.headers.get("origin") || "*";
   return {

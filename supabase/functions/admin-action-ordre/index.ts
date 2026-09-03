@@ -2,14 +2,9 @@ import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { callMobcash } from "../_shared/mobcash.ts";
-import { json, cors, logAudit } from "../_shared/utils.ts";
+import { json, cors, logAudit, estErreurPermanente } from "../_shared/utils.ts";
 
 const ADMIN_KEY = "kp2026_9f3aXmQ7";
-
-const ERREURS_PERMANENTES = [
-  "currency does not match", "account currency",
-  "user not found", "invalid user", "account not found",
-];
 
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
@@ -129,7 +124,7 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, status: "Crédité avec succès" }, 200, headers);
       } catch (e: unknown) {
         const errMsg = (e as Error).message || "";
-        const estPermanente = ERREURS_PERMANENTES.some((s) => errMsg.toLowerCase().includes(s));
+        const estPermanente = estErreurPermanente(errMsg);
         await supabase.from(table).update({
           webhook_status: estPermanente ? "echec_permanent" : "echec",
           webhook_err: errMsg,
@@ -216,7 +211,7 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, message: `Ordre #${order_id} crédité avec succès` }, 200, headers);
     } catch (e: unknown) {
       const errMsg = (e as Error).message || "";
-      const estPermanente = ERREURS_PERMANENTES.some((s) => errMsg.toLowerCase().includes(s));
+      const estPermanente = estErreurPermanente(errMsg);
       await supabase.from(table).update({
         webhook_status: estPermanente ? "echec_permanent" : "echec",
         webhook_at: new Date().toISOString(),
