@@ -1568,16 +1568,28 @@ async function cfAgentAction(action, agent){
 }
 
 function getReserves(){ return _reservesCache; }
-function saveReservesData(r){ _reservesCache=r; /* Réserves locales uniquement */ }
+function saveReservesData(r){ _reservesCache=r; }
 function loadReservesFromFirestore(){
-  // Réserves stockées localement
-  try{
-    var stored = localStorage.getItem('kp_reserves');
-    if(stored){ _reservesCache = JSON.parse(stored); }
-  }catch(e){}
-  calcAndUpdateReserves();
-  // Simule la fin du fetch
-  (function(){ calcAndUpdateReserves(); })();
+  // reserves est réservée à service_role par RLS — lecture via l'Edge Function
+  // admin, pas de REST direct. Persisté en base (voir saveReserve) : la valeur
+  // ne change plus entre deux rafraîchissements ou deux appareils.
+  fetch(EDGE+'/admin-action-ordre', {
+    method:'POST', headers:cfHeaders(),
+    body:JSON.stringify({ _ak:getAdminKey(), op:'get_reserves' })
+  }).then(function(r){ return r.json(); }).then(function(d){
+    var rows = (d && d.ok && Array.isArray(d.rows)) ? d.rows : [];
+    var r1x = rows.find(function(r){ return r.platform==='1xbet'; });
+    var rW  = rows.find(function(r){ return r.platform==='waafi'; });
+    _reservesCache = {
+      r1x_base: r1x ? Number(r1x.montant)||0 : 0,
+      r1x_dep_offset: r1x ? Number(r1x.dep_offset)||0 : 0,
+      r1x_ret_offset: r1x ? Number(r1x.ret_offset)||0 : 0,
+      rW_base: rW ? Number(rW.montant)||0 : 0,
+      rW_dep_offset: rW ? Number(rW.dep_offset)||0 : 0,
+      rW_ret_offset: rW ? Number(rW.ret_offset)||0 : 0,
+    };
+    calcAndUpdateReserves();
+  }).catch(function(){ calcAndUpdateReserves(); });
 }
 
 // ═══════════════════════════════════════════════════
@@ -1894,7 +1906,7 @@ function updateReserveDisplay(r1x,rW){
   if(drWSub) drWSub.textContent=rW<8000?'⚠️ Réserve critique':'DJF disponible';
 }
 
-function saveReserve(type){
+async function saveReserve(type){
   const stored=getReserves();
   const val=parseInt(document.getElementById('r'+type+'-input').value);
   if(isNaN(val)||val<0){showToast('⚠️ Montant invalide','error');return;}
@@ -1902,6 +1914,15 @@ function saveReserve(type){
   const txs=getTxs().filter(x=>x.status==='Crédité avec succès'||x.status==='Payé');
   const depNow=txs.filter(x=>x.type==='Dépôt').reduce((s,x)=>s+Number(x.montant),0);
   const retNow=txs.filter(x=>x.type==='Retrait').reduce((s,x)=>s+Number(x.montant),0);
+  const platform = type==='1x' ? '1xbet' : 'waafi';
+  try{
+    const r = await fetch(EDGE+'/admin-action-ordre', {
+      method:'POST', headers:cfHeaders(),
+      body:JSON.stringify({ _ak:getAdminKey(), op:'save_reserve', platform:platform, montant:val, dep_offset:depNow, ret_offset:retNow })
+    });
+    const d = await r.json();
+    if(!d.ok){ showToast('❌ '+(d.error||'Erreur sauvegarde réserve'),'error'); return; }
+  }catch(e){ showToast('❌ Erreur réseau réserve','error'); return; }
   if(type==='1x'){
     stored.r1x_base=val; stored.r1x_dep_offset=depNow; stored.r1x_ret_offset=retNow;
   } else {

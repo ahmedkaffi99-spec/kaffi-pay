@@ -32,6 +32,27 @@ Deno.serve(async (req: Request) => {
       if (error) return json({ ok: false, error: error.message }, 500, headers);
       return json({ ok: true, rows: data || [] }, 200, headers);
     }
+    if (op === "get_reserves") {
+      const { data, error } = await supabase.from("reserves")
+        .select("platform,montant,dep_offset,ret_offset,updated_at").not("platform", "is", null);
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true, rows: data || [] }, 200, headers);
+    }
+    if (op === "save_reserve") {
+      const { platform, montant, dep_offset, ret_offset } = body;
+      if (!["1xbet", "waafi"].includes(platform) || typeof montant !== "number" || montant < 0) {
+        return json({ ok: false, error: "platform ('1xbet'|'waafi') et montant requis" }, 400, headers);
+      }
+      const { error } = await supabase.from("reserves").upsert({
+        platform,
+        montant,
+        dep_offset: Number(dep_offset) || 0,
+        ret_offset: Number(ret_offset) || 0,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "platform" });
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true }, 200, headers);
+    }
     if (op === "insert" && crudTable === "agents" && row) {
       const { error } = await supabase.from("agents").insert({
         nom: row.nom, chat_id: row.chat_id, role: row.role || "paiement", actif: row.actif ?? true,
