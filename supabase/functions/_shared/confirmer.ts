@@ -27,10 +27,13 @@ export async function confirmerDepot(
   });
   if (traitErr) return false; // TID déjà utilisé
 
-  // Vérifier que l'ordre est encore "En attente"
+  // Vérifier que l'ordre est encore confirmable. "Paiement Non Reçu" est admis
+  // en plus de "En attente" : un rejet "Transfer ID introuvable" peut être
+  // rouvert par un SMS Waafi arrivé en retard (sms-webhook) — tout autre
+  // statut (déjà crédité, annulé...) reste définitif.
   const { data: fresh } = await supabase.from("depot_orders")
     .select("status").eq("id", ordre.id).single();
-  if (!fresh || fresh.status !== "En attente") return false;
+  if (!fresh || !["En attente", "Paiement Non Reçu"].includes(fresh.status)) return false;
 
   // Marquer "Paiement Reçu"
   await supabase.from("depot_orders").update({

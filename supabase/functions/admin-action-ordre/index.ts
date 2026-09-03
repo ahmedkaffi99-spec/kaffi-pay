@@ -1,8 +1,8 @@
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
-import { callMobcashDepot } from "../_shared/mobcash.ts";
-import { json, cors, logAudit, webhookStatusPourErreurMobcash } from "../_shared/utils.ts";
+import { callMobcash, callMobcashDepot } from "../_shared/mobcash.ts";
+import { json, cors, logAudit, webhookStatusPourErreurMobcash, transitionValide } from "../_shared/utils.ts";
 
 const ADMIN_KEY = "kp2026_9f3aXmQ7";
 
@@ -32,6 +32,63 @@ Deno.serve(async (req: Request) => {
       if (error) return json({ ok: false, error: error.message }, 500, headers);
       return json({ ok: true, rows: data || [] }, 200, headers);
     }
+    if (op === "get_reserves") {
+      const { data, error } = await supabase.from("reserves")
+        .select("platform,montant,dep_offset,ret_offset,updated_at").not("platform", "is", null);
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true, rows: data || [] }, 200, headers);
+    }
+    if (op === "save_reserve") {
+      const { platform, montant, dep_offset, ret_offset } = body;
+      if (!["1xbet", "waafi"].includes(platform) || typeof montant !== "number" || montant < 0) {
+        return json({ ok: false, error: "platform ('1xbet'|'waafi') et montant requis" }, 400, headers);
+      }
+      const { error } = await supabase.from("reserves").upsert({
+        platform,
+        montant,
+        dep_offset: Number(dep_offset) || 0,
+        ret_offset: Number(ret_offset) || 0,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "platform" });
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true }, 200, headers);
+    }
+    // Panel "Paiement Manuel" — traiter un dépôt/retrait MobCash hors flux
+    // normal (ex: correction, cas non couvert par un ordre existant). Le
+    // frontend envoyait auparavant {type,userId,montant,code} sans op ni
+    // action, ce que cette fonction n'a jamais su traiter — 400 à chaque
+    // appel, l'outil n'a jamais fonctionné.
+    if (op === "manual_mobcash") {
+      const userIdStr = String(body.userId || "").trim();
+      const montantNum = Number(body.montant) || 0;
+      if (!userIdStr || montantNum <= 0) {
+        return json({ ok: false, error: "userId et montant requis" }, 400, headers);
+      }
+      try {
+        const data = body.type === "retrait"
+          ? await callMobcash("Retrait", userIdStr, montantNum, String(body.code || "").trim())
+          : await callMobcashDepot(userIdStr, montantNum);
+        logAudit("mobcash_manuel", { type: body.type || "depot", userId: userIdStr, montant: montantNum });
+        return json({ ok: true, data }, 200, headers);
+      } catch (e: unknown) {
+        return json({ ok: false, error: (e as Error).message || "Erreur MobCash" }, 400, headers);
+      }
+    }
+    // "🗑️ Supprimer ordres bloqués >24h" — le frontend envoyait {heures:24} sans
+    // op, ce que cette fonction n'a jamais su traiter (400 systématique).
+    if (op === "purge_old_pending") {
+      const heures = Number(body.heures) || 24;
+      const cutoff = new Date(Date.now() - heures * 3600 * 1000).toISOString();
+      const [d1, d2] = await Promise.all([
+        supabase.from("depot_orders").delete().eq("status", "En attente").lt("created_at", cutoff).select("id"),
+        supabase.from("retrait_orders").delete().eq("status", "En attente").lt("created_at", cutoff).select("id"),
+      ]);
+      if (d1.error) return json({ ok: false, error: d1.error.message }, 500, headers);
+      if (d2.error) return json({ ok: false, error: d2.error.message }, 500, headers);
+      const count = (d1.data?.length || 0) + (d2.data?.length || 0);
+      logAudit("admin_purge_ordres_24h", { heures, count });
+      return json({ ok: true, message: `${count} ordre(s) supprimé(s)` }, 200, headers);
+    }
     if (op === "insert" && crudTable === "agents" && row) {
       const { error } = await supabase.from("agents").insert({
         nom: row.nom, chat_id: row.chat_id, role: row.role || "paiement", actif: row.actif ?? true,
@@ -49,8 +106,8 @@ Deno.serve(async (req: Request) => {
 
   const { order_id, action, raison, new_user_id_1xbet } = body;
   if (!order_id || !action) return json({ ok: false, error: "order_id et action requis" }, 400, headers);
-  if (!["confirmer", "rejeter", "retry"].includes(action)) {
-    return json({ ok: false, error: "action doit être confirmer, rejeter ou retry" }, 400, headers);
+  if (!["confirmer", "rejeter", "retry", "finaliser"].includes(action)) {
+    return json({ ok: false, error: "action doit être confirmer, rejeter, retry ou finaliser" }, 400, headers);
   }
 
   const token = Deno.env.get("TELEGRAM_TOKEN")!;
@@ -175,6 +232,30 @@ Deno.serve(async (req: Request) => {
     }
     logAudit("admin_rejete_web", { order_id, raison: raisonText });
     return json({ ok: true, status: rejetStatus }, 200, headers);
+  }
+
+  // ── FINALISER (retrait payé en Waafi) ──
+  // Le bouton "Terminer" du panel web appelait updateTxFirebase({status:'Payé'}),
+  // qui ne mappe "Payé" vers aucune action connue et ne fait donc rien — le
+  // retrait restait bloqué malgré le toast de succès affiché à l'admin. Miroir
+  // exact du callback Telegram `terminer_` qui, lui, fonctionne déjà.
+  if (action === "finaliser") {
+    if (isDepot) return json({ ok: false, error: "finaliser uniquement pour les retraits" }, 400, headers);
+    if (!transitionValide(ordre.status, "Payé")) {
+      return json({ ok: false, error: `Statut actuel '${ordre.status}' — impossible de finaliser` }, 400, headers);
+    }
+    await supabase.from(table).update({
+      status: "Payé",
+      finalise_par: "admin_web_manuel",
+      finalise_at: new Date().toISOString(),
+    }).eq("id", ordre.id);
+    await supabase.from("ordre_traite").insert({
+      transfer_id: order_id, ordre_id: order_id, status: "finalise", credited_at: new Date().toISOString(),
+    });
+    const msg = `✅ Retrait #${order_id} finalisé (web) → Payé\n${montantVal.toLocaleString()} DJF`;
+    await Promise.allSettled([sendTelegram(token, adminId, msg), notifyPaiementAgents(token, msg)]);
+    logAudit("admin_finalise_retrait_web", { order_id });
+    return json({ ok: true, status: "Payé" }, 200, headers);
   }
 
   // ── RETRY (MobCash sur ordre déjà "Paiement Reçu") ──
