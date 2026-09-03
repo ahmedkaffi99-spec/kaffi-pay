@@ -2,14 +2,53 @@ import { supabase } from "./db.ts";
 
 const TG = (token: string) => `https://api.telegram.org/bot${token}`;
 
+// fetch() résout normalement pour un 429 (ce n'est pas une exception réseau)
+// — le .catch() qu'avaient sendTelegram/sendTelegramKeyboard auparavant ne
+// voyait donc jamais un rate-limit Telegram, seulement une vraie coupure
+// réseau. Sous une rafale (ex: 10 SMS Waafi dans la même seconde, chacun
+// déclenchant plusieurs envois Telegram — admin + agents), Telegram peut
+// répondre 429 et le message partait silencieusement à la poubelle. Un seul
+// retry, borné à 3s max (le retry_after réel peut être plus long mais on ne
+// bloque pas indéfiniment un appelant synchrone comme le panel admin).
+async function postTelegram(url: string, body: unknown): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) {
+    console.warn("Telegram fetch échoué:", (e as Error).message);
+    return;
+  }
+  if (res.ok) return;
+  if (res.status === 429) {
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    const params = data.parameters as { retry_after?: number } | undefined;
+    const retryAfter = Math.min(Number(params?.retry_after) || 1, 3);
+    console.warn(`Telegram 429 — retry dans ${retryAfter}s`);
+    await new Promise((r) => setTimeout(r, retryAfter * 1000));
+    try {
+      const retryRes = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!retryRes.ok) console.warn("Telegram retry échoué:", retryRes.status, await retryRes.text().catch(() => ""));
+    } catch (e) {
+      console.warn("Telegram retry fetch échoué:", (e as Error).message);
+    }
+    return;
+  }
+  console.warn("Telegram API erreur:", res.status, await res.text().catch(() => ""));
+}
+
 export async function sendTelegram(token: string, chatId: string, text: string) {
   if (!token || !chatId) return;
-  await fetch(`${TG(token)}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
-    signal: AbortSignal.timeout(8000),
-  }).catch((e) => console.warn("Telegram failed:", e.message));
+  await postTelegram(`${TG(token)}/sendMessage`, { chat_id: chatId, text, parse_mode: "HTML" });
 }
 
 export async function sendTelegramKeyboard(
@@ -17,15 +56,10 @@ export async function sendTelegramKeyboard(
   keyboard: { text: string; callback_data?: string }[][]
 ) {
   if (!token || !chatId) return;
-  await fetch(`${TG(token)}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId, text, parse_mode: "HTML",
-      reply_markup: { inline_keyboard: keyboard },
-    }),
-    signal: AbortSignal.timeout(8000),
-  }).catch((e) => console.warn("Telegram keyboard failed:", e.message));
+  await postTelegram(`${TG(token)}/sendMessage`, {
+    chat_id: chatId, text, parse_mode: "HTML",
+    reply_markup: { inline_keyboard: keyboard },
+  });
 }
 
 export async function answerCallback(token: string, callbackId: string, text = "") {
