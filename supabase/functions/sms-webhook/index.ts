@@ -2,7 +2,7 @@ import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { extractTransferId, extractMontant, extractNumClient } from "../_shared/parser.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
-import { json, cors } from "../_shared/utils.ts";
+import { json, cors, logAudit } from "../_shared/utils.ts";
 import { confirmerDepot } from "../_shared/confirmer.ts";
 
 Deno.serve(async (req: Request) => {
@@ -59,15 +59,28 @@ Deno.serve(async (req: Request) => {
   // Répondre à MacroDroid immédiatement
   const response = json({ success: true, id: notifDoc.id }, 200, headers);
 
-  // Cas rare : ordre déjà soumis avant que le SMS arrive (matching inverse)
+  // Matching inverse : SMS arrivé après coup — soit l'ordre est encore "En
+  // attente" (cas normal), soit il a déjà été rejeté "Transfer ID introuvable"
+  // par submit-depot faute de SMS au moment de la soumission. Ce dernier cas
+  // est exactement un SMS Waafi en retard (MacroDroid lent, silencieux ou en
+  // erreur) : on rouvre le dossier plutôt que de laisser un paiement réel
+  // bloqué en rejet permanent. Les autres raisons de rejet (montant/N°
+  // expéditeur incorrect, TID déjà utilisé) restent inchangées — ce ne sont
+  // pas des cas de retard, revalider dessus serait risqué.
   if (transferId) {
     try {
-      const { data: ordres } = await supabase.from("depot_orders")
-        .select("*").eq("waafi_transfert_id", transferId).eq("status", "En attente").limit(1);
+      const { data: candidats } = await supabase.from("depot_orders")
+        .select("*").eq("waafi_transfert_id", transferId)
+        .in("status", ["En attente", "Paiement Non Reçu"]).limit(5);
 
-      if (ordres && ordres.length > 0) {
-        const ordre = ordres[0];
+      const ordre = (candidats || []).find((o) =>
+        o.status === "En attente" ||
+        (o.status === "Paiement Non Reçu" && (o.flag_raison || "").includes("introuvable"))
+      );
+
+      if (ordre) {
         const ordreId = ordre.order_id as string;
+        const etaitDejaRejete = ordre.status === "Paiement Non Reçu";
 
         // Anti-doublon : TID déjà crédité ?
         const { data: dejaTraite } = await supabase.from("ordre_traite")
@@ -76,6 +89,7 @@ Deno.serve(async (req: Request) => {
           const { score, mismatches, decision } = scorerCorrespondance(ordre, notifDoc);
 
           if (decision === "confirmer") {
+            if (etaitDejaRejete) logAudit("depot_sms_tardif_reconcilie", { ordreId, transferId });
             // confirmerDepot → "Paiement Reçu" → MobCash → "Crédité avec succès"
             await confirmerDepot(ordre, notifDoc, token, adminId);
           } else {

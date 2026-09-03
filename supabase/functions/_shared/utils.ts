@@ -13,7 +13,7 @@ export const TRANSITIONS_VALIDES: Record<string, string[]> = {
   "En attente": ["Paiement Reçu", "Paiement Non Reçu", "Annulé", "Code Validé", "Code Invalide"],
   "Paiement Reçu": ["Crédité avec succès", "Paiement Non Reçu"],
   "Crédité avec succès": [],
-  "Paiement Non Reçu": ["En attente"],
+  "Paiement Non Reçu": ["En attente", "Paiement Reçu"],
   "Annulé": ["En attente"],
   "Code Validé": ["Payé", "Code Invalide"],
   "Code Invalide": ["En attente", "Code Validé"],
