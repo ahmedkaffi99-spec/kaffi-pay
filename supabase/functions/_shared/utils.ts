@@ -41,6 +41,34 @@ export function estErreurPermanente(message: string): boolean {
   return ERREURS_PERMANENTES.some((s) => m.includes(s));
 }
 
+// Solde du cashdesk MobCash insuffisant pour honorer le dépôt — ce n'est pas
+// une faute du client, donc pas d'affichage "échec" côté client (le statut
+// reste "Paiement Reçu" sans webhook_status "echec*", ce qui garde la page de
+// suivi sur "Crédit en cours"). L'admin doit recharger le solde puis relancer
+// manuellement — le cron ne réessaie pas cette catégorie non plus.
+export const ERREURS_SOLDE_INSUFFISANT = [
+  "insufficient",
+  "not enough",
+  "low balance",
+  "balance too low",
+  "solde insuffisant",
+];
+
+export function estSoldeInsuffisant(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  return ERREURS_SOLDE_INSUFFISANT.some((s) => m.includes(s));
+}
+
+// Classe une erreur MobCash pour décider du webhook_status à écrire.
+// echec_permanent : ID/devise invalide — le client doit fournir un nouvel ID DJF.
+// echec_solde     : cashdesk à sec — l'admin doit recharger, pas le client.
+// echec           : erreur transitoire — le cron peut réessayer automatiquement.
+export function webhookStatusPourErreurMobcash(message: string): "echec_permanent" | "echec_solde" | "echec" {
+  if (estErreurPermanente(message)) return "echec_permanent";
+  if (estSoldeInsuffisant(message)) return "echec_solde";
+  return "echec";
+}
+
 export function cors(req: Request) {
   const origin = req.headers.get("origin") || "*";
   return {

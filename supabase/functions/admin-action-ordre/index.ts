@@ -2,7 +2,7 @@ import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { callMobcash } from "../_shared/mobcash.ts";
-import { json, cors, logAudit, estErreurPermanente } from "../_shared/utils.ts";
+import { json, cors, logAudit, webhookStatusPourErreurMobcash } from "../_shared/utils.ts";
 
 const ADMIN_KEY = "kp2026_9f3aXmQ7";
 
@@ -124,15 +124,17 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, status: "Crédité avec succès" }, 200, headers);
       } catch (e: unknown) {
         const errMsg = (e as Error).message || "";
-        const estPermanente = estErreurPermanente(errMsg);
+        const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
         await supabase.from(table).update({
-          webhook_status: estPermanente ? "echec_permanent" : "echec",
+          webhook_status: webhookStatus,
           webhook_err: errMsg,
         }).eq("id", ordre.id);
-        await sendTelegram(token, adminId,
-          `⚠️ <b>MobCash échoué (admin) — #${order_id}</b>\n<code>${errMsg}</code>`);
-        logAudit("admin_confirme_mobcash_echec", { order_id, errMsg });
-        return json({ ok: false, error: errMsg, permanent: estPermanente }, 400, headers);
+        const msgSolde = webhookStatus === "echec_solde"
+          ? `🏦 <b>Solde MobCash insuffisant (admin) — #${order_id}</b>\n<code>${errMsg}</code>\n<i>Rechargez le cashdesk puis relancez.</i>`
+          : `⚠️ <b>MobCash échoué (admin) — #${order_id}</b>\n<code>${errMsg}</code>`;
+        await sendTelegram(token, adminId, msgSolde);
+        logAudit("admin_confirme_mobcash_echec", { order_id, errMsg, webhookStatus });
+        return json({ ok: false, error: errMsg, webhook_status: webhookStatus }, 400, headers);
       }
     } else {
       // Retrait : confirmer → Code Validé
@@ -211,13 +213,14 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, message: `Ordre #${order_id} crédité avec succès` }, 200, headers);
     } catch (e: unknown) {
       const errMsg = (e as Error).message || "";
-      const estPermanente = estErreurPermanente(errMsg);
+      const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
       await supabase.from(table).update({
-        webhook_status: estPermanente ? "echec_permanent" : "echec",
+        webhook_status: webhookStatus,
+        webhook_err: errMsg,
         webhook_at: new Date().toISOString(),
         ...(new_user_id_1xbet ? { user_id_1xbet: userId } : {}),
       }).eq("id", ordre.id);
-      return json({ ok: false, error: errMsg, permanent: estPermanente }, 400, headers);
+      return json({ ok: false, error: errMsg, webhook_status: webhookStatus }, 400, headers);
     }
   }
 

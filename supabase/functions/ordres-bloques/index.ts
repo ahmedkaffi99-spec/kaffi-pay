@@ -4,7 +4,7 @@ import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { callMobcash } from "../_shared/mobcash.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
 import { confirmerDepot } from "../_shared/confirmer.ts";
-import { json, cors, logAudit, estErreurPermanente } from "../_shared/utils.ts";
+import { json, cors, logAudit, webhookStatusPourErreurMobcash } from "../_shared/utils.ts";
 
 // Called by pg_cron every 5 minutes (or manually via HTTP GET with secret)
 Deno.serve(async (req: Request) => {
@@ -71,19 +71,26 @@ Deno.serve(async (req: Request) => {
       processed++;
     } catch (e: unknown) {
       const errMsg = (e as Error).message || "";
-      const permanente = estErreurPermanente(errMsg);
+      const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
       await supabase.from("depot_orders").update({
-        webhook_status: permanente ? "echec_permanent" : "echec",
+        webhook_status: webhookStatus,
         webhook_err: errMsg,
         webhook_at: new Date().toISOString(),
       }).eq("id", ordre.id);
-      if (permanente) {
+      if (webhookStatus === "echec_permanent") {
         await sendTelegram(token, adminId,
           `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
           `ID 1xBet : <code>${id1xbet}</code>\n` +
           `<code>${errMsg.substring(0, 200)}</code>\n\n` +
           `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
           `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement. Ce cron ne réessaiera plus cet ordre.`);
+      } else if (webhookStatus === "echec_solde") {
+        await sendTelegram(token, adminId,
+          `🏦 <b>Solde MobCash insuffisant — #${ordreId}</b>\n` +
+          `ID 1xBet : <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF\n` +
+          `<code>${errMsg.substring(0, 200)}</code>\n\n` +
+          `<i>Le client ne voit pas d'échec — sa page affiche "crédit en cours".</i>\n` +
+          `<b>Action requise :</b> rechargez le solde cashdesk puis <code>recharge ${ordreId}</code> sur ce bot. Ce cron ne réessaiera plus cet ordre tout seul.`);
       } else {
         await sendTelegram(token, adminId,
           `❌ <b>Relance MobCash échouée</b> — #${ordreId}\n` +

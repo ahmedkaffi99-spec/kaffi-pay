@@ -2,7 +2,7 @@ import { supabase } from "./db.ts";
 import { sendTelegram, notifyPaiementAgents } from "./telegram.ts";
 import { sendWhatsApp } from "./whatsapp.ts";
 import { callMobcash } from "./mobcash.ts";
-import { logAudit, estErreurPermanente } from "./utils.ts";
+import { logAudit, webhookStatusPourErreurMobcash } from "./utils.ts";
 
 export async function confirmerDepot(
   ordre: Record<string, unknown>,
@@ -108,22 +108,29 @@ export async function confirmerDepot(
     }
   } catch (e) {
     const errMsg = (e as Error).message || "";
-    const estPermanente = estErreurPermanente(errMsg);
+    const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
 
     await supabase.from("depot_orders").update({
-      webhook_status: estPermanente ? "echec_permanent" : "echec",
+      webhook_status: webhookStatus,
       webhook_err: errMsg,
     }).eq("id", ordre.id);
 
-    logAudit("depot_mobcash_echec", { ordreId, err: errMsg, permanent: estPermanente });
+    logAudit("depot_mobcash_echec", { ordreId, err: errMsg, webhookStatus });
 
-    if (estPermanente) {
+    if (webhookStatus === "echec_permanent") {
       await sendTelegram(token, adminId,
         `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
         `ID 1xBet : <code>${userId1xbet}</code>\n` +
         `<code>${errMsg}</code>\n\n` +
         `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
         `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement.`);
+    } else if (webhookStatus === "echec_solde") {
+      await sendTelegram(token, adminId,
+        `🏦 <b>Solde MobCash insuffisant — #${ordreId}</b>\n` +
+        `ID 1xBet : <code>${userId1xbet}</code> | ${montantNotif.toLocaleString()} DJF\n` +
+        `<code>${errMsg}</code>\n\n` +
+        `<i>Le client ne voit pas d'échec — sa page affiche "crédit en cours".</i>\n` +
+        `<b>Action requise :</b> rechargez le solde cashdesk puis <code>recharge ${ordreId}</code> sur ce bot.`);
     } else {
       await sendTelegram(token, adminId,
         `⚠️ <b>MobCash Dépôt échoué — #${ordreId}</b>\n` +
