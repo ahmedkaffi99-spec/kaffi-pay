@@ -90,7 +90,12 @@ export function cors(req: Request) {
   const origin = req.headers.get("origin") || "*";
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    // x-admin-key : header custom envoyé par cfHeaders() dans public/index.html
+    // pour tout l'onglet admin (agents, réserves, purge, finaliser, test API).
+    // Absent d'ici, le préflight OPTIONS le rejette silencieusement et le
+    // fetch() échoue côté navigateur ("Erreur réseau") — alors qu'un appel
+    // direct via pg_net (sans préflight) semble parfaitement fonctionner.
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-admin-key",
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
   };
 }
