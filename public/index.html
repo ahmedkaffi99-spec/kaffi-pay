@@ -1385,7 +1385,7 @@ function getTsMs(tx){
 }
 var _txsCache = [];
 var _agentsCache = [];
-var _reservesCache = {r1x:0,rW:0,r1x_base:0,rW_base:0,r1x_dep_offset:0,r1x_ret_offset:0,rW_dep_offset:0,rW_ret_offset:0};
+var _reservesCache = {r1x:0,rW:0,r1x_base:0,rW_base:0,r1x_dep_offset:0,r1x_ret_offset:0,rW_dep_offset:0,rW_ret_offset:0,dep_total:0,ret_total:0};
 var _dashPeriod = 'today';
 var _dashStatsSeq = 0;
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1569,6 +1569,10 @@ function loadReservesFromFirestore(){
   // reserves est réservée à service_role par RLS — lecture via l'Edge Function
   // admin, pas de REST direct. Persisté en base (voir saveReserve) : la valeur
   // ne change plus entre deux rafraîchissements ou deux appareils.
+  // dep_total/ret_total viennent d'un SUM SQL exact côté serveur (voir
+  // reserve_totals() en base) — jamais recalculés depuis _txsCache, qui ne
+  // contient que les 200 derniers dépôts/retraits (/rest/v1/...limit=200) et
+  // faisait dériver silencieusement le calcul au-delà de ce volume.
   fetch(EDGE+'/admin-action-ordre', {
     method:'POST', headers:cfHeaders(),
     body:JSON.stringify({ _ak:getAdminKey(), op:'get_reserves' })
@@ -1583,9 +1587,11 @@ function loadReservesFromFirestore(){
       rW_base: rW ? Number(rW.montant)||0 : 0,
       rW_dep_offset: rW ? Number(rW.dep_offset)||0 : 0,
       rW_ret_offset: rW ? Number(rW.ret_offset)||0 : 0,
+      dep_total: (d && d.ok) ? Number(d.dep_total)||0 : 0,
+      ret_total: (d && d.ok) ? Number(d.ret_total)||0 : 0,
     };
-    calcAndUpdateReserves();
-  }).catch(function(){ calcAndUpdateReserves(); });
+    applyReserveCalc();
+  }).catch(function(){ applyReserveCalc(); });
 }
 
 // ═══════════════════════════════════════════════════
@@ -1855,14 +1861,16 @@ function updateStats(){
 // ═══════════════════════════════════════════════════
 // ADMIN — RÉSERVES
 // ═══════════════════════════════════════════════════
-function calcAndUpdateReserves(){
-  const txs=getTxs().filter(x=>x.status==='Crédité avec succès'||x.status==='Payé');
-  const dep=txs.filter(x=>x.type==='Dépôt').reduce((s,x)=>s+Number(x.montant),0);
-  const ret=txs.filter(x=>x.type==='Retrait').reduce((s,x)=>s+Number(x.montant),0);
+function applyReserveCalc(){
+  // dep/ret viennent du SUM SQL exact renvoyé par get_reserves (reserve_totals()
+  // en base) — plus jamais de getTxs(), qui plafonnait à 200 ordres/type et
+  // faisait dériver le calcul dès que ce volume était dépassé.
   const stored=getReserves();
+  const dep = stored.dep_total||0;
+  const ret = stored.ret_total||0;
   const base1x = stored.r1x_base||0;
   const baseW  = stored.rW_base||0;
-  // Offsets = totaux au moment du dernier ajustement manuel
+  // Offsets = totaux exacts au moment du dernier ajustement manuel
   // Seules les transactions APRÈS l'ajustement sont comptées
   const d1xOff = stored.r1x_dep_offset||0;
   const r1xOff = stored.r1x_ret_offset||0;
@@ -1875,6 +1883,9 @@ function calcAndUpdateReserves(){
   updateReserveDisplay(r1x,rW);
   checkAlert(r1x,rW);
 }
+// Point d'entrée public : refetch systématique depuis le backend plutôt que
+// de recalculer sur un cache local potentiellement tronqué.
+function calcAndUpdateReserves(){ loadReservesFromFirestore(); }
 
 function updateReserveDisplay(r1x,rW){
   const pct1x=Math.min(100,Math.round(r1x/100000*100));
@@ -1903,28 +1914,20 @@ function updateReserveDisplay(r1x,rW){
 }
 
 async function saveReserve(type){
-  const stored=getReserves();
   const val=parseInt(document.getElementById('r'+type+'-input').value);
   if(isNaN(val)||val<0){showToast('⚠️ Montant invalide','error');return;}
-  // Snapshot des totaux actuels → seules les nouvelles transactions compteront
-  const txs=getTxs().filter(x=>x.status==='Crédité avec succès'||x.status==='Payé');
-  const depNow=txs.filter(x=>x.type==='Dépôt').reduce((s,x)=>s+Number(x.montant),0);
-  const retNow=txs.filter(x=>x.type==='Retrait').reduce((s,x)=>s+Number(x.montant),0);
   const platform = type==='1x' ? '1xbet' : 'waafi';
   try{
+    // L'offset (totaux dép/ret au moment de l'ajustement) est capturé côté
+    // serveur via un SUM SQL exact — plus de snapshot client sur getTxs(),
+    // qui plafonnait à 200 ordres/type.
     const r = await fetch(EDGE+'/admin-action-ordre', {
       method:'POST', headers:cfHeaders(),
-      body:JSON.stringify({ _ak:getAdminKey(), op:'save_reserve', platform:platform, montant:val, dep_offset:depNow, ret_offset:retNow })
+      body:JSON.stringify({ _ak:getAdminKey(), op:'save_reserve', platform:platform, montant:val })
     });
     const d = await r.json();
     if(!d.ok){ showToast('❌ '+(d.error||'Erreur sauvegarde réserve'),'error'); return; }
   }catch(e){ showToast('❌ Erreur réseau réserve','error'); return; }
-  if(type==='1x'){
-    stored.r1x_base=val; stored.r1x_dep_offset=depNow; stored.r1x_ret_offset=retNow;
-  } else {
-    stored.rW_base=val; stored.rW_dep_offset=depNow; stored.rW_ret_offset=retNow;
-  }
-  saveReservesData(stored);
   document.getElementById('r'+type+'-input').value='';
   calcAndUpdateReserves();
   showToast('💾 Réserve mise à jour','success');

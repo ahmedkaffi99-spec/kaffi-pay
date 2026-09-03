@@ -33,21 +33,38 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, rows: data || [] }, 200, headers);
     }
     if (op === "get_reserves") {
-      const { data, error } = await supabase.from("reserves")
-        .select("platform,montant,dep_offset,ret_offset,updated_at").not("platform", "is", null);
+      // Totaux exacts (SUM SQL, sans plafond de lignes) — le frontend calculait
+      // ça en sommant _txsCache, limité aux 200 derniers dépôts/retraits par
+      // /rest/v1/...limit=200. Au-delà de 200 ordres confirmés depuis le
+      // dernier ajustement manuel, les plus anciens sortaient de la fenêtre et
+      // le calcul de réserve dérivait silencieusement.
+      const [{ data, error }, { data: totals, error: totalsErr }] = await Promise.all([
+        supabase.from("reserves").select("platform,montant,dep_offset,ret_offset,updated_at").not("platform", "is", null),
+        supabase.rpc("reserve_totals").single(),
+      ]);
       if (error) return json({ ok: false, error: error.message }, 500, headers);
-      return json({ ok: true, rows: data || [] }, 200, headers);
+      if (totalsErr) return json({ ok: false, error: totalsErr.message }, 500, headers);
+      return json({
+        ok: true,
+        rows: data || [],
+        dep_total: Number(totals?.dep_total || 0),
+        ret_total: Number(totals?.ret_total || 0),
+      }, 200, headers);
     }
     if (op === "save_reserve") {
-      const { platform, montant, dep_offset, ret_offset } = body;
+      const { platform, montant } = body;
       if (!["1xbet", "waafi"].includes(platform) || typeof montant !== "number" || montant < 0) {
         return json({ ok: false, error: "platform ('1xbet'|'waafi') et montant requis" }, 400, headers);
       }
+      // Offset capturé côté serveur à partir du total exact — jamais du chiffre
+      // que le client calculait lui-même sur sa fenêtre de 200 ordres.
+      const { data: totals, error: totalsErr } = await supabase.rpc("reserve_totals").single();
+      if (totalsErr) return json({ ok: false, error: totalsErr.message }, 500, headers);
       const { error } = await supabase.from("reserves").upsert({
         platform,
         montant,
-        dep_offset: Number(dep_offset) || 0,
-        ret_offset: Number(ret_offset) || 0,
+        dep_offset: Number(totals?.dep_total || 0),
+        ret_offset: Number(totals?.ret_total || 0),
         updated_at: new Date().toISOString(),
       }, { onConflict: "platform" });
       if (error) return json({ ok: false, error: error.message }, 500, headers);
