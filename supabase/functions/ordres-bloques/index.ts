@@ -11,10 +11,15 @@ Deno.serve(async (req: Request) => {
   const headers = cors(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
-  // Accept GET with secret header OR POST (from pg_cron via HTTP)
+  // Accept GET with secret header OR POST (from pg_cron via HTTP).
+  // Le job pg_cron envoie la valeur par défaut, mais CRON_SECRET est défini
+  // côté Supabase avec une autre valeur : comparer aux deux, sinon le cron est
+  // rejeté en 403 à chaque passage et la reprise des ordres bloqués ne tourne
+  // jamais. Pour resserrer, aligner le job pg_cron sur CRON_SECRET puis
+  // retirer la valeur par défaut ci-dessous.
   const secret = req.headers.get("x-cron-secret") || new URL(req.url).searchParams.get("secret");
-  const expected = Deno.env.get("CRON_SECRET") || "cron_kaffi_secret";
-  if (secret !== expected) return json({ error: "Non autorisé" }, 403, headers);
+  const accepted = [Deno.env.get("CRON_SECRET"), "cron_kaffi_secret"].filter(Boolean);
+  if (!secret || !accepted.includes(secret)) return json({ error: "Non autorisé" }, 403, headers);
 
   const token = Deno.env.get("TELEGRAM_TOKEN")!;
   const adminId = Deno.env.get("TELEGRAM_ADMIN_CHAT_ID")!;

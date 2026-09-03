@@ -59,6 +59,37 @@ Donc tout accès du frontend à ces tables doit passer par une Edge Function,
 jamais par `/rest/v1/` avec la clé anon — sinon la requête revient vide en
 silence. C'est ce qui cassait la liste des agents dans le panel admin.
 
+### Webhooks Telegram — non gérés par le CI
+Les bots pointaient encore vers Firebase (`europe-west1-kaffi-pay.cloudfunctions.net/adminBot`)
+longtemps après la migration, en 503 permanent. Les notifications **sortantes**
+marchaient quand même, ce qui masquait le problème : seul l'**entrant** était
+mort — boutons inline, commandes admin, et tout le bot support.
+
+URLs correctes, à re-poser après tout changement de projet Supabase :
+- admin → `https://pasotcpwvdtpidelrqic.supabase.co/functions/v1/admin-bot`
+- support → `https://pasotcpwvdtpidelrqic.supabase.co/functions/v1/support-client`
+
+`allowed_updates` doit contenir `["message","callback_query"]`, sinon les
+boutons ne remontent pas. Le CI ne configure rien de tout ça.
+
+Piège : la commande `webhook admin` du bot répare le webhook, mais elle arrive
+*par* le webhook — inutilisable quand il est cassé. Passer par l'API Telegram.
+
+### `.catch()` interdit sur une requête Supabase
+```ts
+await supabase.from("t").update({...}).eq("id", x).catch(() => {});  // ❌ TypeError
+await supabase.from("t").update({...}).eq("id", x);                  // ✅
+```
+Le query builder est un `PromiseLike` : il a `then()` mais **pas `catch()`**.
+L'appeler lève avant même l'envoi de la requête. Ça a bloqué tous les dépôts à
+`Paiement Reçu` (MobCash jamais appelé) et cassé le bouton « Terminer ».
+Ces requêtes ne rejettent pas — elles renvoient `{data, error}`, à tester.
+
+### NULL en SQL n'est pas `TRUE`
+`.neq("webhook_status","ok")` excluait les lignes à `NULL`, donc exactement les
+ordres bloqués avant tout appel MobCash que le cron doit rattraper. Utiliser
+`.or("webhook_status.is.null,webhook_status.neq.ok")`.
+
 ### Nommage de colonnes
 `retrait_orders` a historiquement `waafi_number`, mais le code utilise
 `numero_waafi` partout. La colonne `numero_waafi` a été ajoutée et les données
