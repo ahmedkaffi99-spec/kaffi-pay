@@ -807,7 +807,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     <div class="reserve-card">
       <div class="reserve-header"><div class="reserve-name">🏦 Réserve 1xBet</div><div class="reserve-djf" id="r1x-djf" style="color:var(--gold)">—</div></div>
       <div class="reserve-track"><div class="reserve-bar gold" id="r1x-bar" style="width:0%"></div></div>
-      <div style="font-size:.65rem;color:var(--muted);margin-bottom:8px" id="r1x-sub">Seuil alerte : 10 000 DJF</div>
+      <div style="font-size:.65rem;color:var(--muted);margin-bottom:8px" id="r1x-sub">Seuil alerte : 5 000 DJF</div>
       <div class="reserve-edit-row">
         <input class="reserve-input" type="number" id="r1x-input" placeholder="Saisir montant DJF...">
         <button class="reserve-save-btn" onclick="saveReserve('1x')">💾 Sauver</button>
@@ -855,18 +855,11 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <div class="mini-field"><label>Nom</label><input type="text" id="new-agent-name" placeholder="Ex: Ahmed"></div>
         <div class="mini-field"><label>Rôle</label>
           <select id="new-agent-role">
-            <option value="Agent de paiement">Agent de paiement</option>
-            <option value="Agent de surveillance">Agent de surveillance</option>
-            <option value="Agent de support">Agent de support</option>
+            <option value="paiement">Agent de paiement</option>
+            <option value="surveillance">Agent de surveillance</option>
+            <option value="support">Agent de support</option>
           </select>
         </div>
-      </div>
-      <div class="form-row">
-        <div class="mini-field" style="flex:1"><label>Email <span style="color:var(--muted);font-weight:400">(adresse de connexion)</span></label><input type="email" id="new-agent-email" placeholder="agent@example.com"></div>
-      </div>
-      <div class="form-row">
-        <div class="mini-field"><label>Mot de passe</label><input type="password" id="new-agent-pass" placeholder="Min. 6 caractères"></div>
-        <div class="mini-field"><label>Confirmer</label><input type="password" id="new-agent-pass2" placeholder="••••••••"></div>
       </div>
       <div class="form-row">
         <div class="mini-field" style="flex:1"><label>Telegram ID <span style="color:var(--muted);font-weight:400">(optionnel — notifications bot)</span></label><input type="text" id="new-agent-telegram" placeholder="Ex: 123456789"></div>
@@ -1885,8 +1878,8 @@ function updateReserveDisplay(r1x,rW){
   const pctW=Math.min(100,Math.round(rW/60000*100));
   document.getElementById('r1x-djf').textContent=r1x.toLocaleString()+' DJF';
   document.getElementById('r1x-bar').style.width=pct1x+'%';
-  document.getElementById('r1x-bar').className='reserve-bar '+(r1x<10000?'danger':'gold');
-  document.getElementById('r1x-sub').textContent='Seuil : 10 000 DJF · Référence max : 100 000 DJF';
+  document.getElementById('r1x-bar').className='reserve-bar '+(r1x<5000?'danger':'gold');
+  document.getElementById('r1x-sub').textContent='Seuil : 5 000 DJF · Référence max : 100 000 DJF';
   document.getElementById('rW-djf').textContent=rW.toLocaleString()+' DJF';
   document.getElementById('rW-bar').style.width=pctW+'%';
   document.getElementById('rW-bar').className='reserve-bar '+(rW<8000?'danger':'pink');
@@ -1895,9 +1888,9 @@ function updateReserveDisplay(r1x,rW){
   var dr1x=document.getElementById('dash-r1x');
   if(dr1x) dr1x.textContent=r1x.toLocaleString()+' DJF';
   var dr1xBar=document.getElementById('dash-r1x-bar');
-  if(dr1xBar){dr1xBar.style.width=pct1x+'%';dr1xBar.style.background=r1x<10000?'var(--error)':'var(--gold)';}
+  if(dr1xBar){dr1xBar.style.width=pct1x+'%';dr1xBar.style.background=r1x<5000?'var(--error)':'var(--gold)';}
   var dr1xSub=document.getElementById('dash-r1x-sub');
-  if(dr1xSub) dr1xSub.textContent=r1x<10000?'⚠️ Réserve critique':'DJF disponible';
+  if(dr1xSub) dr1xSub.textContent=r1x<5000?'⚠️ Réserve critique':'DJF disponible';
   var drW=document.getElementById('dash-rW');
   if(drW) drW.textContent=rW.toLocaleString()+' DJF';
   var drWBar=document.getElementById('dash-rW-bar');
@@ -1936,7 +1929,7 @@ async function saveReserve(type){
 
 function checkAlert(r1x,rW){
   const al=[];
-  if(r1x<10000) al.push('1xBet ('+r1x.toLocaleString()+' DJF)');
+  if(r1x<5000) al.push('1xBet ('+r1x.toLocaleString()+' DJF)');
   if(rW<8000)   al.push('Waafi ('+rW.toLocaleString()+' DJF)');
   const el=document.getElementById('reserve-alert');
   if(al.length){
@@ -2283,7 +2276,7 @@ async function adminPurgeOrdre24h(){
   try{
     showToast('⏳ Purge en cours...','');
     var r=await fetch(CF_BASE+'/admin-action-ordre',{method:'POST',headers:cfHeaders(),
-      body:JSON.stringify({_ak:getAdminKey(),heures:24})});
+      body:JSON.stringify({_ak:getAdminKey(),op:'purge_old_pending',heures:24})});
     var d=await r.json();
     if(!d.ok) throw new Error(d.error||'Erreur serveur');
     showToast('🗑️ '+d.message,'success');
@@ -2291,32 +2284,18 @@ async function adminPurgeOrdre24h(){
 }
 
 async function terminerRetrait(ref){
-  if(!window.db){ showToast('❌ Firebase non connecté','error'); return; }
   // Désactive tous les boutons Terminer liés à cet ordre
   document.querySelectorAll('[onclick*="terminerRetrait(\''+ref+'\')"]').forEach(function(b){
     b.disabled=true; b.textContent='⏳ Finalisation…';
   });
   try{
-    var tx=getTxs().find(function(t){ return t.ref===ref; });
-    await updateTxFirebase(ref,{
-      status:'Payé',
-      finalisePar:'admin_web',
-      finaliseAt:new Date()
-    });
-    // Archiver dans ordre_traite
-    if(window.fsCollection && window.db && tx){
-      window.fsAddDoc(window.fsCollection(window.db,'ordre_traite'),{
-        ordreId: tx.orderId||tx.ref||ref,
-        type:'Retrait',
-        montant: tx.montant||0,
-        waafiNumber: tx.waafiNumber||tx.tel||'',
-        finalisePar:'admin_web',
-        finaliseAt: new Date(),
-        status:'finalise'
-      }).catch(function(){});
-    }
+    var r=await fetch(CF_BASE+'/admin-action-ordre',{method:'POST',headers:cfHeaders(),
+      body:JSON.stringify({_ak:getAdminKey(),order_id:ref,action:'finaliser'})});
+    var d=await r.json();
+    if(!d.ok) throw new Error(d.error||'Erreur serveur');
     odmClose();
     showToast('✅ Retrait finalisé — client notifié','success');
+    listenTxs();
   }catch(e){
     document.querySelectorAll('[onclick*="terminerRetrait(\''+ref+'\')"]').forEach(function(b){
       b.disabled=false; b.textContent='✅ Terminer';
@@ -2360,7 +2339,7 @@ window.addEventListener('popstate', function(){
   }
   if(hash.startsWith('#admin-')){
     var page = hash.replace('#admin-','');
-    var valid = ['dashboard','orders','reserves','agents','notifs'];
+    var valid = ['dashboard','orders','testapi','reserves','agents','notifs'];
     if(valid.indexOf(page) >= 0) showPage(page);
   }
 });
@@ -2380,32 +2359,15 @@ async function testMobcashAPI(type){
     var r=await fetch(baseUrl,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({type,userId,montant,code,_ak:ak})
+      body:JSON.stringify({_ak:ak, op:'manual_mobcash', type:type, userId:userId, montant:montant, code:code})
     });
     var data=await r.json();
     if(data.ok){
       pre.style.color='#7fff9a';
       var d=data.data||{};
       var lines=['✅ SUCCÈS MobCash',''];
-      // Archiver l'opération manuelle dans ordre_traite
       var orderId = (document.getElementById('test-'+type+'-orderid')||{}).value||'';
       orderId = orderId.trim().replace(/^0+/,'').replace(/[^0-9A-Za-z]/g,'');
-      var opId0 = d.OperationId ?? d.operationId ?? d.MessageId ?? d.messageId ?? null;
-      if(window.db && window.fsAddDoc && window.fsCollection){
-        window.fsAddDoc(window.fsCollection(window.db,'ordre_traite'),{
-          _ak: getAdminKey(),
-          source: 'manuel',
-          type: type==='depot'?'Dépôt':'Retrait',
-          montant: montant,
-          userId1xBet: userId,
-          ordreId: orderId||('MANUEL-'+Date.now()),
-          agentEmail: currentUser&&currentUser.email||'',
-          agentNom: currentUser&&currentUser.user||'',
-          mobcashOpId: String(opId0||''),
-          finaliseAt: new Date(),
-          status: 'finalise',
-        }).catch(function(){});
-      }
       // Si N° Ordre lié → confirmer l'ordre via CF (met à jour statut + notifs)
       if(orderId && window.CF_BASE){
         fetch(CF_BASE+'/admin-action-ordre',{method:'POST',headers:cfHeaders(),
@@ -2549,21 +2511,22 @@ function fetchAdminStats(period){
 // ADMIN — AGENTS
 // ═══════════════════════════════════════════════════
 function renderAgents(){
-  var ROLE_ICON={'Agent de paiement':'💳','Agent de surveillance':'🔍','Agent de support':'💬'};
-  var ROLE_ORDER=['Agent de paiement','Agent de surveillance','Agent de support'];
+  var ROLE_ICON={'paiement':'💳','surveillance':'🔍','support':'💬'};
+  var ROLE_LABEL={'paiement':'Agent de paiement','surveillance':'Agent de surveillance','support':'Agent de support'};
+  var ROLE_ORDER=['paiement','surveillance','support'];
   var all=getAgents();
   var h=`<div class="agent-item"><div class="agent-avatar">K</div><div class="agent-info"><div class="agent-name">admin <span style="font-size:.62rem;color:var(--gold)">👑 Créateur</span></div><div class="agent-role">Accès total — Toutes permissions</div></div></div>`;
   ROLE_ORDER.forEach(function(role){
     var grp=all.filter(function(a){return a.role===role;});
     if(!grp.length) return;
-    h+=`<div style="font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin:14px 0 6px;padding:0 4px;">${ROLE_ICON[role]||'👤'} ${role}</div>`;
+    h+=`<div style="font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin:14px 0 6px;padding:0 4px;">${ROLE_ICON[role]||'👤'} ${ROLE_LABEL[role]||role}</div>`;
     grp.forEach(function(a,_){
       var i=all.indexOf(a);
+      var nom=a.nom||a.name||'?';
       var tgLine=a.telegramId?`<span style="font-size:.6rem;color:#29a8eb;">Telegram: ${a.telegramId}</span>`:'';
-      var emLine=(a.email||a.gmail)?`<span style="font-size:.6rem;color:var(--muted);">📧 ${a.email||a.gmail}</span>`:'';
       h+=`<div class="agent-item">
-        <div class="agent-avatar">${a.name[0].toUpperCase()}</div>
-        <div class="agent-info"><div class="agent-name">${a.name}</div><div class="agent-role">${emLine} ${tgLine}</div></div>
+        <div class="agent-avatar">${nom[0].toUpperCase()}</div>
+        <div class="agent-info"><div class="agent-name">${nom}</div><div class="agent-role">${tgLine}</div></div>
         ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
       </div>`;
     });
@@ -2579,51 +2542,21 @@ function toggleAddAgent(){
 function addAgent(){
   const n=document.getElementById('new-agent-name').value.trim();
   const r=document.getElementById('new-agent-role').value;
-  const em=document.getElementById('new-agent-email').value.trim().toLowerCase();
-  const p=document.getElementById('new-agent-pass').value;
-  const p2=document.getElementById('new-agent-pass2').value;
   const tg=document.getElementById('new-agent-telegram').value.trim();
   if(!n){showToast('⚠️ Nom requis','error');return;}
-  if(!em||!em.includes('@')){showToast('⚠️ Email valide requis','error');return;}
-  if(!p||p.length<6){showToast('⚠️ Mot de passe min. 6 caractères','error');return;}
-  if(p!==p2){showToast('⚠️ Mots de passe différents','error');return;}
-  const ag=getAgents();
-  if(ag.find(function(a){return a.email&&a.email.toLowerCase()===em;})){showToast('⚠️ Cet email est déjà utilisé','error');return;}
-  if(!window.fsCreateUser){showToast('⚠️ Auth non disponible','error');return;}
+  const agentData={name:n,role:r};
+  if(tg) agentData.telegramId=tg;
   const btn=document.querySelector('.add-agent-btn');
   if(btn){btn.disabled=true;btn.textContent='⏳ Création...';}
-  const u=n.toLowerCase().replace(/\s+/g,'');
-  const agentData={name:n,user:u,email:em,role:r};
-  if(tg) agentData.telegramId=tg;
-  window.fsCreateUser(em, p)
-    .catch(function(err){
-      if(err.code==='auth/email-already-in-use'){
-        showToast('ℹ️ Compte Firebase existant — mise à jour Firestore','warning');
-        return; // continuer quand même pour sauvegarder dans Firestore
-      }
-      throw err;
-    })
-    .then(function(){
-      return cfAgentAction('add',agentData);
-    })
+  cfAgentAction('add',agentData)
     .then(function(ok){
       if(btn){btn.disabled=false;btn.textContent='✅ Ajouter l\'agent';}
       if(!ok) return;
       renderAgents();
       document.getElementById('new-agent-name').value='';
-      document.getElementById('new-agent-email').value='';
-      document.getElementById('new-agent-pass').value='';
-      document.getElementById('new-agent-pass2').value='';
       document.getElementById('new-agent-telegram').value='';
       document.getElementById('add-agent-form').classList.remove('show');
       showToast('✅ Agent '+n+' ajouté','success');
-    })
-    .catch(function(err){
-      if(btn){btn.disabled=false;btn.textContent='✅ Ajouter l\'agent';}
-      var msg='❌ Erreur Firebase Auth';
-      if(err.code==='auth/invalid-email') msg='⚠️ Email invalide';
-      else if(err.code==='auth/weak-password') msg='⚠️ Mot de passe trop faible';
-      showToast(msg,'error');
     });
 }
 
