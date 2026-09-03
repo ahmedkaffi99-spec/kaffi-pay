@@ -1,12 +1,11 @@
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { json, cors } from "../_shared/utils.ts";
 
 const ADMIN_KEY = "kp2026_9f3aXmQ7";
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (req.method !== "GET" && req.method !== "POST") return json({ error: "Method Not Allowed" }, 405, headers);
 
   const url = new URL(req.url);

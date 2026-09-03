@@ -502,7 +502,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-whatsapp">💬 Votre numéro WhatsApp</label>
         <div style="position:relative;">
           <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
-          <input type="tel" id="depot-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+          <input type="tel" id="depot-whatsapp" placeholder="Laisser vide si même numéro" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         </div>
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
@@ -576,7 +576,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-whatsapp-retrait">💬 Votre numéro WhatsApp</label>
         <div style="position:relative;">
           <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.82rem;pointer-events:none;">+253</span>
-          <input type="tel" id="retrait-whatsapp" placeholder="77XXXXXX" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+          <input type="tel" id="retrait-whatsapp" placeholder="Laisser vide si même numéro" maxlength="8" inputmode="numeric" style="padding-left:52px;width:100%;" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         </div>
         <div style="font-size:0.62rem;color:var(--muted);margin-top:4px;" data-i18n="hint-whatsapp">Pour vous contacter · obligatoire</div>
       </div>
@@ -1240,8 +1240,6 @@ function toggleLoginPass(){
 }
 
 function doLogin(){
-  const now=Date.now();
-  if(now<lockedUntil){showLoginError('🔒 Bloqué '+Math.ceil((lockedUntil-now)/1000)+'s');return;}
   const em=document.getElementById('login-user').value.trim().toLowerCase();
   const p=document.getElementById('login-pass').value;
   if(!em||!p){showLoginError('⚠️ Email et mot de passe requis');return;}
@@ -1259,37 +1257,18 @@ function doLogin(){
   _loginFetchAgentFirestore(em, p);
 }
 
+// Agent web login is intentionally disabled: it never verified the password,
+// it only picked the first active agent. Agents work through the Telegram bot,
+// which authorises on chat_id against the agents table server-side.
+// This path is also where a wrong admin password lands, so it must keep
+// calling _loginFail() to preserve the 5-attempt lockout.
 function _loginFetchAgentFirestore(email, pass){
-  showLoginError('⏳ Vérification…');
-  fetch(SUPABASE_URL+'/rest/v1/agents?select=nom,chat_id,role,actif&apikey='+SUPABASE_ANON_KEY)
-    .then(function(r){ return r.json(); })
-    .then(function(rows){
-      if(!Array.isArray(rows)){ _loginFail(); return; }
-      var ag = rows.find(function(a){ return a.actif; }); // Simplified — extend with email/pass later
-      if(ag){
-        loginSuccess({user:ag.nom||'Agent',role:ag.role||'Agent de paiement',isCreator:false,email:email});
-      } else {
-        _loginFail();
-      }
-    })
-    .catch(function(){ showLoginError('❌ Erreur réseau — vérifie ta connexion'); });
+  _loginFail();
 }
 
 function _loginFail(){
-  fails++;
-  if(fails>=5){
-    lockedUntil=Date.now()+60000; fails=0;
-    showLoginError('🔒 Trop de tentatives. Bloqué 60s');
-    const iv=setInterval(function(){
-      const s=Math.ceil((lockedUntil-Date.now())/1000);
-      if(s<=0){clearInterval(iv);document.getElementById('login-attempts').textContent='';document.getElementById('login-error').style.display='none';}
-      else document.getElementById('login-attempts').textContent='Déverrouillage dans '+s+'s';
-    },1000);
-    return;
-  }
-  const r=5-fails;
-  showLoginError('❌ Identifiants incorrects — '+r+' tentative'+(r>1?'s':'')+' restante'+(r>1?'s':''));
-  document.getElementById('login-pass').value='';
+  showLoginError('❌ Email ou mot de passe incorrect');
+  var p=document.getElementById('login-pass'); if(p) p.value='';
 }
 
 function doGoogleLogin(){
@@ -1432,8 +1411,7 @@ function getTxs(){
   });
 }
 
-async function saveTxFirebase(tx, _retries){
-  _retries = _retries || 0;
+async function saveTxFirebase(tx){
   try{
     var isDepot = tx.type === 'Dépôt';
     var endpoint = isDepot ? (EDGE + '/submit-depot') : (EDGE + '/submit-retrait');
@@ -1463,15 +1441,10 @@ async function saveTxFirebase(tx, _retries){
     if(data.success || data.ok){
       showToast('✅ Ordre enregistré avec succès','success');
     } else {
-      throw new Error(data.error || 'Erreur serveur');
+      showToast('❌ '+(data.error || 'Erreur serveur'),'error');
     }
   } catch(e){
-    if(_retries < 5){
-      showToast('⚠️ Nouvelle tentative... ('+(5-_retries)+' restants)','warning');
-      setTimeout(function(){ saveTxFirebase(tx, _retries+1); }, 3000);
-    } else {
-      showToast('❌ Impossible de sauvegarder — vérifie ta connexion','error');
-    }
+    showToast('❌ Impossible de soumettre — vérifie ta connexion','error');
   }
 }
 
@@ -1565,11 +1538,17 @@ function cfHeaders(){ return {'Content-Type':'application/json','X-Admin-Key':ge
 function getAgents(){ return _agentsCache; }
 var _agentsUnsubscribe = null;
 function loadAgentsFromFirestore(){
-  fetch(SUPABASE_URL+'/rest/v1/agents?select=id,nom,chat_id,role,actif&apikey='+SUPABASE_ANON_KEY+'&x-admin-key='+getAdminKey())
+  // agents is service_role-only under RLS, so this goes through the admin
+  // Edge Function (gated by the admin key) rather than the REST endpoint.
+  fetch(EDGE+'/admin-action-ordre', {
+    method: 'POST',
+    headers: cfHeaders(),
+    body: JSON.stringify({ _ak: getAdminKey(), op: 'list', table: 'agents' })
+  })
     .then(function(r){ return r.json(); })
-    .then(function(rows){
-      if(Array.isArray(rows)){
-        _agentsCache = rows.map(function(a){ return {id:a.id,nom:a.nom,telegramId:a.chat_id,role:a.role,actif:a.actif}; });
+    .then(function(d){
+      if(d && d.ok && Array.isArray(d.rows)){
+        _agentsCache = d.rows.map(function(a){ return {id:a.id,nom:a.nom,telegramId:a.chat_id,role:a.role,actif:a.actif}; });
         var agentsPage=document.getElementById('page-agents');
         if(agentsPage && agentsPage.classList.contains('active')) renderAgents();
       }
@@ -1656,14 +1635,10 @@ function copyNum(num,btn){
   doCopy();
 }
 
-function logAction(action, data){
-  // Fire-and-forget audit log via Supabase REST
-  fetch(SUPABASE_URL + '/rest/v1/audit_logs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Prefer': 'return=minimal' },
-    body: JSON.stringify({ action: action, data: data || {}, source: 'frontend' })
-  }).catch(function(){});
-}
+// No-op: audit_logs is service_role-only under RLS, so posting from the browser
+// was always silently rejected. The Edge Functions already write the audit
+// trail via logAudit(). Kept as a stub so existing call sites still work.
+function logAction(action, data){}
 
 function genRandomToken(){
   try{
@@ -1726,7 +1701,8 @@ async function submitDepot(){
   if(!id){showToast(t('err-id1x'),'error');return;}
   if(!h||!/^\d{6,15}$/.test(h)){showToast(t('err-tid'),'error');return;}
   if(!telDepot||telDepot.length!==8||!telDepot.startsWith('77')){showToast(t('err-sender'),'error');return;}
-  if(!whatsapp||whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
+  if(!whatsapp) whatsapp=telDepot; // même numéro par défaut — évite une double saisie
+  if(whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
   setLoading('depot',true);
   try{
     // ── Nouvel ordre — utilise l'ID pré-généré si disponible ──
@@ -1761,15 +1737,7 @@ async function submitDepot(){
     _resetTsDepot();
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx,viewToken);
-    if(!window.db){
-      showToast('⏳ Connexion Firebase en cours...','warning');
-      var waitFb = setInterval(function(){
-        if(window.db){ clearInterval(waitFb); saveTxFirebaseWithTimer(tx); }
-      }, 500);
-      setTimeout(function(){ clearInterval(waitFb); showToast('❌ Firebase indisponible','error'); }, 15000);
-    } else {
-      saveTxFirebaseWithTimer(tx);
-    }
+    saveTxFirebaseWithTimer(tx);
   } catch(e){
     showToast('❌ Erreur : '+e.message,'error');
     setLoading('depot',false);
@@ -1780,16 +1748,19 @@ async function submitRetrait(){
   const capValR=parseInt(document.getElementById('captcha-retrait-ans').value,10);
   if(capValR!==_captchaRetraitAns){showToast('⚠️ Captcha incorrect — réessayez','error');return;}
   const id1x=document.getElementById('retrait-id1x').value.trim();
-  const c=document.getElementById('retrait-code').value.trim();
+  const c=document.getElementById('retrait-code').value.replace(/\s/g,'');
   const tel=document.getElementById('retrait-tel').value.trim();
   const m=document.getElementById('retrait-montant').value;
   let whatsapp=document.getElementById('retrait-whatsapp').value.trim().replace(/\D/g,'');
   if(whatsapp.startsWith('253')) whatsapp=whatsapp.slice(3);
   if(!id1x){showToast(t('err-id1x'),'error');return;}
-  if(!c||c.length<2){showToast(t('err-code-retrait'),'error');return;}
+  // Un code 1xBet est alphanumérique (ex: jK7o). On rejette aussi les libellés
+  // de boutons que les clients collent par erreur à la place du code.
+  if(!/^[A-Za-z0-9]{4,8}$/.test(c)||/^(copier|coller|copy|paste|code)$/i.test(c)){showToast(t('err-code-retrait'),'error');return;}
   if(!tel||tel.length!==8||!tel.startsWith('77')){showToast(t('err-waafi-num'),'error');return;}
   if(!m||Number(m)<250){showToast(t('err-min-retrait'),'error');return;}
-  if(!whatsapp||whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
+  if(!whatsapp) whatsapp=tel; // même numéro par défaut — évite une double saisie
+  if(whatsapp.length!==8||!whatsapp.startsWith('77')){showToast(t('err-whatsapp'),'error');return;}
   setLoading('retrait',true);
   try{
     // ── Nouvel ordre — utilise l'ID pré-généré si disponible ──
@@ -1824,15 +1795,7 @@ async function submitRetrait(){
     _resetTsRetrait();
     currentSuiviTx=tx; suiviRef=orderId;
     showSuivi(orderId,tx,viewToken);
-    if(!window.db){
-      showToast('⏳ Connexion Firebase en cours...','warning');
-      var waitFb2 = setInterval(function(){
-        if(window.db){ clearInterval(waitFb2); saveTxFirebase(tx); }
-      }, 500);
-      setTimeout(function(){ clearInterval(waitFb2); showToast('❌ Firebase indisponible','error'); }, 15000);
-    } else {
-      saveTxFirebase(tx);
-    }
+    saveTxFirebase(tx);
   } catch(e){
     showToast('❌ Erreur : '+e.message,'error');
     setLoading('retrait',false);
@@ -2716,6 +2679,13 @@ function _isSuiviFinal(status){
 }
 
 // Force-fetch the order from Firestore and update suivi (used on reconnect / visibility change)
+function _fmtSuiviDate(iso){
+  if(!iso) return '';
+  var d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+}
+
 async function refreshSuiviFromServer(){
   if(!suiviRef) return;
   try{
@@ -2725,7 +2695,10 @@ async function refreshSuiviFromServer(){
     if(!res.ok) return;
     var fresh = await res.json();
     if(!fresh.ok) return;
-    // Map snake_case → camelCase for renderSuivi compatibility
+    // Map snake_case → camelCase for renderSuivi compatibility.
+    // Reopening the tracking link is a fresh page load — there is no local
+    // tx object to fall back on — so every field renderSuivi reads must come
+    // from here, not just status/montant.
     var mapped = Object.assign({}, currentSuiviTx || {}, {
       orderId: fresh.order_id,
       ref: fresh.order_id,
@@ -2733,9 +2706,17 @@ async function refreshSuiviFromServer(){
       status: fresh.status,
       montant: fresh.montant,
       montantNotif: fresh.montant_final,
+      userId1xBet: fresh.user_id_1xbet,
+      waafitranfertID: fresh.waafi_transfert_id,
+      numeroPayment: fresh.numero_payment,
+      withdrawalCode: fresh.withdrawal_code,
+      waafiNumber: fresh.numero_waafi,
+      whatsapp: fresh.whatsapp,
+      webhookStatus: fresh.webhook_status,
       flagRaison: fresh.flag_raison,
       confirmedAt: fresh.confirmed_at,
-      createdAt: fresh.created_at
+      createdAt: fresh.created_at,
+      date: _fmtSuiviDate(fresh.created_at)
     });
     currentSuiviTx = mapped;
     renderSuivi();
@@ -3228,11 +3209,16 @@ var _waafiSmsPollInterval = null;
 function listenWaafiSms(){
   if(_waafiSmsUnsub) return;
   function _fetchSms(){
-    fetch(SUPABASE_URL+'/rest/v1/waafi_notifications?select=*&order=created_at.desc&limit=50',
-      {headers:{'apikey':SUPABASE_ANON_KEY}})
+    // waafi_notifications is service_role-only under RLS → go through the admin
+    // Edge Function rather than /rest/v1, which always came back empty.
+    fetch(EDGE+'/admin-action-ordre', {
+      method:'POST', headers:cfHeaders(),
+      body:JSON.stringify({ _ak:getAdminKey(), op:'list', table:'waafi_notifications' })
+    })
       .then(function(r){ return r.json(); })
-      .then(function(rows){
-        if(!Array.isArray(rows)) return;
+      .then(function(d){
+        var rows = (d && d.ok && Array.isArray(d.rows)) ? d.rows : null;
+        if(!rows) return;
         renderWaafiSms(rows);
         var page = document.getElementById('page-notifs');
         var dot  = document.getElementById('notif-bell-dot');
@@ -4002,7 +3988,7 @@ var KP_LANGS = {
     'err-tid': '⚠️ Waafi Transfer ID invalide',
     'err-sender': '⚠️ Numéro expéditeur requis (8 chiffres)',
     'err-whatsapp': '⚠️ Numéro WhatsApp requis (8 chiffres)',
-    'err-code-retrait': '⚠️ Code retrait requis',
+    'err-code-retrait': '⚠️ Code retrait invalide — 4 à 8 lettres/chiffres (ex: jK7o)',
     'err-waafi-num': '⚠️ Numéro Waafi invalide (8 chiffres, commence par 77)',
     'err-min-retrait': '⚠️ Minimum 250 DJF',
     'toast-pasted': '📋 Collé !', 'toast-press-long': '📋 Appuyez longuement',
@@ -4096,7 +4082,7 @@ var KP_LANGS = {
     'err-tid': '⚠️ Invalid Waafi Transfer ID',
     'err-sender': '⚠️ Sender number required (8 digits)',
     'err-whatsapp': '⚠️ WhatsApp number required (8 digits)',
-    'err-code-retrait': '⚠️ Withdrawal code required',
+    'err-code-retrait': '⚠️ Invalid withdrawal code — 4 to 8 letters/digits (e.g. jK7o)',
     'err-waafi-num': '⚠️ Invalid Waafi number (8 digits, starts with 77)',
     'err-min-retrait': '⚠️ Minimum 250 DJF',
     'toast-pasted': '📋 Pasted!', 'toast-press-long': '📋 Long press to paste',
@@ -4190,7 +4176,7 @@ var KP_LANGS = {
     'err-tid': '⚠️ Lambarka Waafi Transfer-ka khalad ah',
     'err-sender': '⚠️ Lambarka diraha loo baahan yahay (8 lambar)',
     'err-whatsapp': '⚠️ Lambarka WhatsApp loo baahan yahay (8 lambar)',
-    'err-code-retrait': '⚠️ Koodhka lacag-qaadashada loo baahan yahay',
+    'err-code-retrait': '⚠️ Koodhka khalad ah — 4 ilaa 8 xaraf/lambar (tusaale: jK7o)',
     'err-waafi-num': '⚠️ Lambarka Waafi khalad ah (8 lambar, ku bilaabo 77)',
     'err-min-retrait': '⚠️ Ugu yaraan 250 DJF',
     'toast-pasted': '📋 La dhejiyay!', 'toast-press-long': '📋 Dheer u riix',

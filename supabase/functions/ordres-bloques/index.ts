@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents, sendTelegramKeyboard } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
@@ -8,14 +7,19 @@ import { confirmerDepot } from "../_shared/confirmer.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
 
 // Called by pg_cron every 5 minutes (or manually via HTTP GET with secret)
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
-  // Accept GET with secret header OR POST (from pg_cron via HTTP)
+  // Accept GET with secret header OR POST (from pg_cron via HTTP).
+  // Le job pg_cron envoie la valeur par défaut, mais CRON_SECRET est défini
+  // côté Supabase avec une autre valeur : comparer aux deux, sinon le cron est
+  // rejeté en 403 à chaque passage et la reprise des ordres bloqués ne tourne
+  // jamais. Pour resserrer, aligner le job pg_cron sur CRON_SECRET puis
+  // retirer la valeur par défaut ci-dessous.
   const secret = req.headers.get("x-cron-secret") || new URL(req.url).searchParams.get("secret");
-  const expected = Deno.env.get("CRON_SECRET") || "cron_kaffi_secret";
-  if (secret !== expected) return json({ error: "Non autorisé" }, 403, headers);
+  const accepted = [Deno.env.get("CRON_SECRET"), "cron_kaffi_secret"].filter(Boolean);
+  if (!secret || !accepted.includes(secret)) return json({ error: "Non autorisé" }, 403, headers);
 
   const token = Deno.env.get("TELEGRAM_TOKEN")!;
   const adminId = Deno.env.get("TELEGRAM_ADMIN_CHAT_ID")!;
@@ -26,7 +30,10 @@ serve(async (req: Request) => {
   const { data: blockedDepots } = await supabase.from("depot_orders")
     .select("*")
     .eq("status", "Paiement Reçu")
-    .neq("webhook_status", "ok")
+    // NULL <> 'ok' vaut NULL en SQL, pas TRUE : un simple .neq() excluait les
+    // ordres sans webhook_status, donc exactement ceux qui sont restés bloqués
+    // avant tout appel MobCash — le cas que ce cron doit rattraper.
+    .or("webhook_status.is.null,webhook_status.neq.ok")
     .lt("confirmed_at", cutoff10)
     .limit(10);
 

@@ -1,13 +1,12 @@
-import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents, sendTelegramKeyboard } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { callMobcash } from "../_shared/mobcash.ts";
 import { json, cors, logAudit, genToken } from "../_shared/utils.ts";
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const headers = cors(req);
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405, headers);
 
   const body = await req.json().catch(() => ({}));
