@@ -110,7 +110,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 .login-box{border-radius:22px;padding:34px 24px;width:100%;max-width:360px;animation:popIn .4s ease both;
   border:1px solid rgba(255,215,0,.1);background:linear-gradient(160deg,rgba(255,255,255,.04),rgba(7,16,30,.97));backdrop-filter:blur(14px);}
 .login-logo-area{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:6px;}
-.login-logo-img{width:60px;height:60px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,215,0,.35);background:#07101e;}
+.login-logo-img{width:88px;height:88px;border-radius:50%;object-fit:cover;background:#07101e;}
 .login-logo-name{font-family:'Playfair Display',serif;font-weight:900;font-size:1.65rem;}
 .login-logo-name span{color:var(--gold);}
 
@@ -131,7 +131,9 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
 /* ── CLIENT HEADER ── */
 .client-header{display:flex;align-items:center;justify-content:space-between;padding:10px 0 8px;border-bottom:1px solid rgba(255,215,0,.08);}
 .logo-area{display:flex;align-items:center;gap:13px;}
-.logo-img{width:55px;height:55px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,215,0,.35);background:#07101e;}
+/* icon-192/512.png sont déjà un médaillon avec son propre anneau doré — ne
+   pas ajouter de border ici, ça double le cercle doré (un du PNG, un du CSS). */
+.logo-img{width:76px;height:76px;border-radius:50%;object-fit:cover;background:#07101e;}
 .logo-text .logo-name{font-family:'Playfair Display',serif;font-weight:900;font-size:1.38rem;}
 .logo-text .logo-name span{color:var(--gold);}
 .logo-text .logo-slogan{font-size:.56rem;color:var(--muted);margin-top:1px;}
@@ -197,7 +199,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 /* ── ADMIN TOPBAR ── */
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 0 12px;border-bottom:1px solid rgba(255,215,0,.07);margin-bottom:14px;}
 .topbar-logo-area{display:flex;align-items:center;gap:10px;}
-.topbar-logo-img{width:39px;height:39px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,215,0,.3);background:#07101e;}
+.topbar-logo-img{width:54px;height:54px;border-radius:50%;object-fit:cover;background:#07101e;}
 .topbar-name{font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:900;}
 .topbar-name span{color:var(--gold);}
 .topbar-sub{font-size:.59rem;color:var(--muted);}
@@ -1389,14 +1391,24 @@ var _reservesCache = {r1x:0,rW:0,r1x_base:0,rW_base:0,r1x_dep_offset:0,r1x_ret_o
 var _dashPeriod = 'today';
 var _dashStatsSeq = 0;
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+// tsOf : _txsCache (voir listenTxs → normalize) n'a jamais eu de champ .date —
+// seulement createdAt/ts depuis la migration Supabase. filterTxByPeriod
+// comparait x.date (toujours undefined) et retournait donc un tableau VIDE
+// pour toute période autre que 'all' : dashboard à 0 partout et
+// "Transactions récentes" toujours vide par défaut (_dashPeriod='today').
+function tsOf(x){ return x.ts || (x.createdAt ? new Date(x.createdAt).getTime() : 0); }
 function filterTxByPeriod(txs,period){
   if(period==='all') return txs;
-  if(period==='today'){ const s=isoDate(new Date()); return txs.filter(x=>x.date&&x.date.startsWith(s)); }
-  if(period==='hier'){ const y=new Date(); y.setDate(y.getDate()-1); const s=isoDate(y); return txs.filter(x=>x.date&&x.date.startsWith(s)); }
-  if(period==='mois'){ const s=isoDate(new Date()).slice(0,7); return txs.filter(x=>x.date&&x.date.slice(0,7)===s); }
+  if(period==='today'){ const s=new Date(); s.setHours(0,0,0,0); return txs.filter(x=>tsOf(x)>=s.getTime()); }
+  if(period==='hier'){
+    const y0=new Date(); y0.setDate(y0.getDate()-1); y0.setHours(0,0,0,0);
+    const y1=new Date(y0); y1.setHours(23,59,59,999);
+    return txs.filter(x=>{ const t=tsOf(x); return t>=y0.getTime()&&t<=y1.getTime(); });
+  }
+  if(period==='mois'){ const m0=new Date(); m0.setDate(1); m0.setHours(0,0,0,0); return txs.filter(x=>tsOf(x)>=m0.getTime()); }
   const days=period==='7j'?7:30;
-  const cut=new Date(); cut.setDate(cut.getDate()-days+1); const cs=isoDate(cut);
-  return txs.filter(x=>x.date&&x.date.slice(0,10)>=cs);
+  const cut=new Date(); cut.setDate(cut.getDate()-days+1); cut.setHours(0,0,0,0);
+  return txs.filter(x=>tsOf(x)>=cut.getTime());
 }
 var _unsubTxs = null;
 
@@ -1497,7 +1509,14 @@ function listenTxs(){
         ...retraits.map(function(o){ return normalize(o,'retrait_orders'); })
       ].sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
 
-      if(currentUser){ updateStats(); renderRecentTx(); calcAndUpdateReserves(); }
+      if(currentUser){
+        updateStats(); renderRecentTx(); calcAndUpdateReserves();
+        // Recorrige avec les vrais totaux SQL (admin-stats) à chaque poll —
+        // sinon updateStats() (calculé sur _txsCache, plafonné à 200
+        // dépôts/200 retraits) réécrase les bons chiffres toutes les 10s.
+        var dashPageForStats=document.getElementById('page-dashboard');
+        if(dashPageForStats&&dashPageForStats.classList.contains('active')) fetchAdminStats(_dashPeriod);
+      }
       if(suiviRef) renderSuivi();
       if(currentUser && _txsCache.length > prev && prev > 0){
         var latest = _txsCache[0];

@@ -1,5 +1,6 @@
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, sendTelegramKeyboard, notifyPaiementAgents, answerCallback } from "../_shared/telegram.ts";
+import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { extractTransferId, extractMontant, extractNumClient } from "../_shared/parser.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
 import { callMobcash, callMobcashDepot } from "../_shared/mobcash.ts";
@@ -167,6 +168,52 @@ Deno.serve(async (req: Request) => {
         }
         await updateOrder(ordre._table, ordre.id, { status: "Paiement Reçu", confirmed_by: "admin_telegram", confirmed_at: new Date().toISOString() });
         await sendTelegram(token, replyId, `✅ Dépôt <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 MobCash en cours...`);
+        const clientWa = (ordre.whatsapp || "") as string;
+        const vtSuffix = ordre.view_token ? `-${ordre.view_token}` : "";
+        if (clientWa) {
+          sendWhatsApp(clientWa,
+            `💳 *Baki-Pay — Paiement reçu* ✅\n\n` +
+            `Votre paiement *#${num}* de *${montantVal.toLocaleString()} DJF* a bien été reçu.\n\n` +
+            `⏳ Crédit de votre compte 1xBet en cours...\n` +
+            `📲 baki-pay.com/#suivi-${num}${vtSuffix}`
+          ).catch(() => {});
+        }
+        // Le message ci-dessus disait "MobCash en cours" sans jamais l'appeler
+        // — l'ordre restait indéfiniment sur "Paiement Reçu" (webhook_status
+        // NULL) jusqu'à ce qu'un admin tape recharge #ID à la main, ou jusqu'au
+        // passage du cron ordres-bloques ~10 min plus tard. On appelle
+        // maintenant MobCash tout de suite, comme le fait déjà le panel web.
+        const id1xbet = ordre.user_id_1xbet || ordre.id1x || "";
+        if (!id1xbet) {
+          await sendTelegram(token, replyId, `⚠️ ID 1xBet manquant pour <b>#${num}</b> — crédit impossible, utilisez <code>recharge ${num} NOUVEL_ID</code>.`);
+        } else {
+          try {
+            await callMobcashDepot(id1xbet, montantVal);
+            await updateOrder(ordre._table, ordre.id, { status: "Crédité avec succès", webhook_status: "ok", webhook_at: new Date().toISOString() });
+            const creditMsg = `✅ <b>Dépôt crédité avec succès</b>\n#${num} — ${montantVal.toLocaleString()} DJF`;
+            await sendTelegram(token, replyId, creditMsg);
+            await notifyPaiementAgents(token, creditMsg).catch(() => {});
+            if (clientWa) {
+              sendWhatsApp(clientWa,
+                `🎉 *Baki-Pay — Compte 1xBet crédité !*\n\n` +
+                `Votre dépôt *#${num}* de *${montantVal.toLocaleString()} DJF* a été traité avec succès.\n\n` +
+                `✅ *Crédité avec succès*\n\nVotre compte 1xBet est rechargé. Bonne chance ! 🎮`
+              ).catch(() => {});
+            }
+            logAudit("confirme_admin_telegram_mobcash_ok", { num, adminId: chatId, id1xbet });
+          } catch (e: unknown) {
+            const errMsg = (e as Error).message || "";
+            const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
+            await updateOrder(ordre._table, ordre.id, { webhook_status: webhookStatus, webhook_err: errMsg, webhook_at: new Date().toISOString() });
+            const hint = webhookStatus === "echec_permanent"
+              ? `\n<i>Compte probablement en devise étrangère — <code>recharge ${num} NOUVEL_ID</code> avec un ID DJF.</i>`
+              : webhookStatus === "echec_solde"
+              ? "\n<i>Solde cashdesk insuffisant — rechargez puis <code>recharge " + num + "</code>.</i>"
+              : "";
+            await sendTelegram(token, replyId, `❌ MobCash échoué — #${num}\n<code>${errMsg}</code>${hint}`);
+            logAudit("confirme_admin_telegram_mobcash_echec", { num, adminId: chatId, errMsg, webhookStatus });
+          }
+        }
       }
       logAudit("confirme_admin_telegram", { num, adminId: chatId, type: ordre._table });
       return json({ ok: true }, 200, headers);
@@ -354,6 +401,14 @@ Deno.serve(async (req: Request) => {
         logAudit("recharge_manuelle_ok", { num, adminId: chatId, id1xbet });
         await sendTelegram(token, replyId,
           `✅ <b>Recharge réussie !</b>\n#${num} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
+        const clientWaRecharge = (ordre.whatsapp || "") as string;
+        if (clientWaRecharge && (ordre.type || "Dépôt") !== "Retrait") {
+          sendWhatsApp(clientWaRecharge,
+            `🎉 *Baki-Pay — Compte 1xBet crédité !*\n\n` +
+            `Votre dépôt *#${num}* de *${Number(montantVal).toLocaleString()} DJF* a été traité avec succès.\n\n` +
+            `✅ *Crédité avec succès*`
+          ).catch(() => {});
+        }
       } catch (e: unknown) {
         const errMsg = (e as Error).message || "";
         const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
