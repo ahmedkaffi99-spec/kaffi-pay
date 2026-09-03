@@ -72,8 +72,11 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true }, 200, headers);
     }
 
-    // /agent
-    if (t === "/agent" || t === "agent") {
+    // /agent [message] — la notification inclut ${text}, donc le message
+    // attaché doit être capturé ; un match strict sur "/agent" seul ratait
+    // silencieusement "/agent j'ai un problème..." (tombait dans "message non
+    // reconnu", client jamais mis en relation avec un humain).
+    if (t === "/agent" || t === "agent" || t.startsWith("/agent ") || t.startsWith("agent ")) {
       // Les agents "support" vivent sur le bot support, pas le bot admin —
       // notifySupportAgents recevait pourtant TELEGRAM_TOKEN (bot admin) ici,
       // le seul appel de cette fonction dans tout le repo. Un agent support
