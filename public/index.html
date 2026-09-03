@@ -2679,6 +2679,13 @@ function _isSuiviFinal(status){
 }
 
 // Force-fetch the order from Firestore and update suivi (used on reconnect / visibility change)
+function _fmtSuiviDate(iso){
+  if(!iso) return '';
+  var d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+}
+
 async function refreshSuiviFromServer(){
   if(!suiviRef) return;
   try{
@@ -2688,7 +2695,10 @@ async function refreshSuiviFromServer(){
     if(!res.ok) return;
     var fresh = await res.json();
     if(!fresh.ok) return;
-    // Map snake_case → camelCase for renderSuivi compatibility
+    // Map snake_case → camelCase for renderSuivi compatibility.
+    // Reopening the tracking link is a fresh page load — there is no local
+    // tx object to fall back on — so every field renderSuivi reads must come
+    // from here, not just status/montant.
     var mapped = Object.assign({}, currentSuiviTx || {}, {
       orderId: fresh.order_id,
       ref: fresh.order_id,
@@ -2696,9 +2706,17 @@ async function refreshSuiviFromServer(){
       status: fresh.status,
       montant: fresh.montant,
       montantNotif: fresh.montant_final,
+      userId1xBet: fresh.user_id_1xbet,
+      waafitranfertID: fresh.waafi_transfert_id,
+      numeroPayment: fresh.numero_payment,
+      withdrawalCode: fresh.withdrawal_code,
+      waafiNumber: fresh.numero_waafi,
+      whatsapp: fresh.whatsapp,
+      webhookStatus: fresh.webhook_status,
       flagRaison: fresh.flag_raison,
       confirmedAt: fresh.confirmed_at,
-      createdAt: fresh.created_at
+      createdAt: fresh.created_at,
+      date: _fmtSuiviDate(fresh.created_at)
     });
     currentSuiviTx = mapped;
     renderSuivi();
