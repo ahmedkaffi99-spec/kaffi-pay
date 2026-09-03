@@ -1,4 +1,5 @@
 import { crypto } from "https://deno.land/std@0.208.0/crypto/mod.ts";
+import { estDoublonMontant, logAudit } from "./utils.ts";
 
 const MOBCASH_BASE = "https://partners.servcul.com/CashdeskBotAPI";
 
@@ -53,4 +54,22 @@ export async function callMobcash(
     throw Object.assign(new Error(`MobCash ${endpoint}: ${msgText}`), { rawData: data });
   }
   return data;
+}
+
+// Dépôt avec retry automatique sur le refus MobCash "même ID + même montant
+// dans les 5 dernières minutes" (message vérifié en prod le 3 sept. 2026).
+// Ce n'est pas une erreur du client ni un souci de solde — un seul DJF de
+// plus suffit à distinguer la transaction, donc on le fait nous-mêmes plutôt
+// que de bloquer l'ordre ou de solliciter l'admin.
+export async function callMobcashDepot(userId1xbet: string, montant: number) {
+  try {
+    return await callMobcash("Dépôt", userId1xbet, montant, "");
+  } catch (e) {
+    const err = e as Error;
+    if (!estDoublonMontant(err.message || "")) throw e;
+    logAudit("mobcash_doublon_montant_ajuste", {
+      userId1xbet, montantOriginal: montant, montantEnvoye: montant + 1, err: err.message,
+    });
+    return await callMobcash("Dépôt", userId1xbet, montant + 1, "");
+  }
 }

@@ -2,9 +2,9 @@ import { supabase } from "../_shared/db.ts";
 import { sendTelegram, sendTelegramKeyboard, notifyPaiementAgents, answerCallback } from "../_shared/telegram.ts";
 import { extractTransferId, extractMontant, extractNumClient } from "../_shared/parser.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
-import { callMobcash } from "../_shared/mobcash.ts";
+import { callMobcash, callMobcashDepot } from "../_shared/mobcash.ts";
 import { confirmerDepot } from "../_shared/confirmer.ts";
-import { json, cors, logAudit, transitionValide } from "../_shared/utils.ts";
+import { json, cors, logAudit, transitionValide, webhookStatusPourErreurMobcash } from "../_shared/utils.ts";
 
 const ADMIN_KEY = "kp2026_9f3aXmQ7";
 
@@ -93,14 +93,28 @@ Deno.serve(async (req: Request) => {
         if (!id1xbet) { await sendTelegram(token, fromId, `⚠️ ID 1xBet manquant pour <b>#${ordreId}</b>.`); return json({ ok: true }, 200, headers); }
         await sendTelegram(token, fromId, `🔄 Relance MobCash — <b>#${ordreId}</b> | <code>${id1xbet}</code>…`);
         try {
-          await callMobcash(ordre.type || "Dépôt", id1xbet, montantVal, ordre.withdrawal_code || "");
+          if ((ordre.type || "Dépôt") === "Retrait") {
+            await callMobcash("Retrait", id1xbet, montantVal, ordre.withdrawal_code || "");
+          } else {
+            await callMobcashDepot(id1xbet, montantVal);
+          }
           const newStatus = ordre.type === "Retrait" ? "Code Validé" : "Crédité avec succès";
           await updateOrder(ordre._table, ordre.id, { status: newStatus, webhook_status: "ok", webhook_at: new Date().toISOString() });
           logAudit("recharge_agent_paiement_ok", { ordreId, agentId: fromId, id1xbet });
           await sendTelegram(token, fromId,
             `✅ <b>Recharge réussie !</b>\n#${ordreId} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
         } catch (e: unknown) {
-          await sendTelegram(token, fromId, `❌ Échec MobCash : <code>${(e as Error).message}</code>`);
+          const errMsg = (e as Error).message || "";
+          const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
+          await updateOrder(ordre._table, ordre.id, {
+            webhook_status: webhookStatus, webhook_err: errMsg, webhook_at: new Date().toISOString(),
+          });
+          const hint = webhookStatus === "echec_permanent"
+            ? "\n<i>Compte probablement en devise étrangère — utilisez <code>recharge " + ordreId + " NOUVEL_ID</code>.</i>"
+            : webhookStatus === "echec_solde"
+            ? "\n<i>Solde cashdesk insuffisant — rechargez puis relancez.</i>"
+            : "";
+          await sendTelegram(token, fromId, `❌ Échec MobCash : <code>${errMsg}</code>${hint}`);
         }
       } else {
         await answerCallback(token, cbId, "");
@@ -311,27 +325,48 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true }, 200, headers);
     }
 
-    // recharge #ID
-    const rechargeMatch = text.match(/^recharge\s+#?(\S+)\b/i);
+    // recharge #ID [nouvelID1xBet] — le second paramètre est optionnel, utile
+    // quand la relance précédente a échoué pour cause de compte en devise
+    // étrangère et que le client a fourni un nouvel ID en DJF.
+    const rechargeMatch = text.match(/^recharge\s+#?(\S+)(?:\s+(\S+))?\s*$/i);
     if (rechargeMatch) {
       const num = rechargeMatch[1];
+      const nouvelId = (rechargeMatch[2] || "").trim();
       const ordre = await findOrder(num);
       if (!ordre) { await sendTelegram(token, replyId, `❓ Ordre <b>#${num}</b> introuvable.`); return json({ ok: true }, 200, headers); }
       if (ordre.status !== "Paiement Reçu" || ordre.webhook_status === "ok") {
         await sendTelegram(token, replyId, `⛔ Ordre <b>#${num}</b> ne peut pas être rechargé (statut: <b>${ordre.status}</b>).`); return json({ ok: true }, 200, headers);
       }
-      const id1xbet = ordre.user_id_1xbet || ordre.id1x || "";
+      const id1xbet = nouvelId || ordre.user_id_1xbet || ordre.id1x || "";
       const montantVal = ordre.montant || 0;
       if (!id1xbet) { await sendTelegram(token, replyId, `⚠️ ID 1xBet manquant pour <b>#${num}</b>.`); return json({ ok: true }, 200, headers); }
       await sendTelegram(token, replyId, `🔄 Relance MobCash — <b>#${num}</b> | <code>${id1xbet}</code>…`);
       try {
-        await callMobcash(ordre.type || "Dépôt", id1xbet, montantVal, ordre.withdrawal_code || "");
-        await updateOrder(ordre._table, ordre.id, { status: "Crédité avec succès", webhook_status: "ok", webhook_at: new Date().toISOString(), recharge_admin: true });
+        if ((ordre.type || "Dépôt") === "Retrait") {
+          await callMobcash("Retrait", id1xbet, montantVal, ordre.withdrawal_code || "");
+        } else {
+          await callMobcashDepot(id1xbet, montantVal);
+        }
+        await updateOrder(ordre._table, ordre.id, {
+          status: "Crédité avec succès", webhook_status: "ok", webhook_at: new Date().toISOString(), recharge_admin: true,
+          ...(nouvelId ? { user_id_1xbet: nouvelId } : {}),
+        });
         logAudit("recharge_manuelle_ok", { num, adminId: chatId, id1xbet });
         await sendTelegram(token, replyId,
           `✅ <b>Recharge réussie !</b>\n#${num} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
       } catch (e: unknown) {
-        await sendTelegram(token, replyId, `❌ Échec MobCash : <code>${(e as Error).message}</code>`);
+        const errMsg = (e as Error).message || "";
+        const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
+        await updateOrder(ordre._table, ordre.id, {
+          webhook_status: webhookStatus, webhook_err: errMsg, webhook_at: new Date().toISOString(),
+          ...(nouvelId ? { user_id_1xbet: nouvelId } : {}),
+        });
+        const hint = webhookStatus === "echec_permanent"
+          ? "\n<i>Compte probablement en devise étrangère — <code>recharge " + num + " NOUVEL_ID</code> avec un ID DJF.</i>"
+          : webhookStatus === "echec_solde"
+          ? "\n<i>Solde cashdesk insuffisant — rechargez puis relancez.</i>"
+          : "";
+        await sendTelegram(token, replyId, `❌ Échec MobCash : <code>${errMsg}</code>${hint}`);
       }
       return json({ ok: true }, 200, headers);
     }

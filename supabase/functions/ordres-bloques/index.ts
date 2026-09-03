@@ -1,10 +1,10 @@
 import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents, sendTelegramKeyboard } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
-import { callMobcash } from "../_shared/mobcash.ts";
+import { callMobcashDepot } from "../_shared/mobcash.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
 import { confirmerDepot } from "../_shared/confirmer.ts";
-import { json, cors, logAudit } from "../_shared/utils.ts";
+import { json, cors, logAudit, webhookStatusPourErreurMobcash } from "../_shared/utils.ts";
 
 // Called by pg_cron every 5 minutes (or manually via HTTP GET with secret)
 Deno.serve(async (req: Request) => {
@@ -32,8 +32,11 @@ Deno.serve(async (req: Request) => {
     .eq("status", "Paiement Reçu")
     // NULL <> 'ok' vaut NULL en SQL, pas TRUE : un simple .neq() excluait les
     // ordres sans webhook_status, donc exactement ceux qui sont restés bloqués
-    // avant tout appel MobCash — le cas que ce cron doit rattraper.
-    .or("webhook_status.is.null,webhook_status.neq.ok")
+    // avant tout appel MobCash — le cas que ce cron doit rattraper. On exclut
+    // explicitement echec_permanent : ces ordres ont besoin d'un nouvel ID
+    // 1xBet fourni par le client, pas d'un nouvel essai automatique toutes les
+    // 5 minutes contre la même erreur.
+    .or("webhook_status.is.null,webhook_status.eq.echec")
     .lt("confirmed_at", cutoff10)
     .limit(10);
 
@@ -50,7 +53,7 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
-      await callMobcash("Dépôt", id1xbet, montantVal, "");
+      await callMobcashDepot(id1xbet, montantVal);
       await supabase.from("depot_orders").update({
         status: "Crédité avec succès",
         webhook_status: "ok",
@@ -68,14 +71,33 @@ Deno.serve(async (req: Request) => {
       processed++;
     } catch (e: unknown) {
       const errMsg = (e as Error).message || "";
-      await sendTelegram(token, adminId,
-        `❌ <b>Relance MobCash échouée</b> — #${ordreId}\n` +
-        `ID: <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF\n` +
-        `Erreur : <code>${errMsg.substring(0, 200)}</code>`);
+      const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
       await supabase.from("depot_orders").update({
-        webhook_status: "echec",
+        webhook_status: webhookStatus,
+        webhook_err: errMsg,
         webhook_at: new Date().toISOString(),
       }).eq("id", ordre.id);
+      if (webhookStatus === "echec_permanent") {
+        await sendTelegram(token, adminId,
+          `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
+          `ID 1xBet : <code>${id1xbet}</code>\n` +
+          `<code>${errMsg.substring(0, 200)}</code>\n\n` +
+          `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
+          `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement. Ce cron ne réessaiera plus cet ordre.`);
+      } else if (webhookStatus === "echec_solde") {
+        await sendTelegram(token, adminId,
+          `🏦 <b>Solde MobCash insuffisant — #${ordreId}</b>\n` +
+          `ID 1xBet : <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF\n` +
+          `<code>${errMsg.substring(0, 200)}</code>\n\n` +
+          `<i>Le client ne voit pas d'échec — sa page affiche "crédit en cours".</i>\n` +
+          `<b>Action requise :</b> rechargez le solde cashdesk puis <code>recharge ${ordreId}</code> sur ce bot. Ce cron ne réessaiera plus cet ordre tout seul.`);
+      } else {
+        await sendTelegram(token, adminId,
+          `❌ <b>Relance MobCash échouée</b> — #${ordreId}\n` +
+          `ID: <code>${id1xbet}</code> | ${montantVal.toLocaleString()} DJF\n` +
+          `Erreur : <code>${errMsg.substring(0, 200)}</code>\n` +
+          `<i>Nouvel essai dans 5 min.</i>`);
+      }
     }
   }
 

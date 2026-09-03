@@ -1970,7 +1970,7 @@ function renderAllTx(f,s){
   else if(f==='fraude') t=t.filter(x=>x.fraudType||(x.flagRaison&&x.flagRaison.toUpperCase().includes('FRAUDE')));
   else if(f==='bloque') t=t.filter(x=>{
     var tsMs=getTsMs(x);
-    return ['echec','echec_max','echec_permanent'].includes(x.webhookStatus)||
+    return ['echec','echec_max','echec_permanent','echec_solde'].includes(x.webhookStatus)||
       (x.status==='En attente'&&(tsMs===0||(Date.now()-tsMs)>30*60*1000));
   });
   else if(f!=='tous') t=t.filter(x=>x.type===f||x.status===f);
@@ -2001,6 +2001,7 @@ function friendlyStatus(tx){
   if(isRetraitPret) return t('status-code-validated');
   if(tx.status==='Paiement Reçu' && d && tx.webhookStatus==='echec_permanent') return t('status-invalid-account');
   if(tx.status==='Paiement Reçu' && d && tx.webhookStatus==='echec_max') return t('status-credit-failed-max');
+  if(tx.status==='Paiement Reçu' && d && tx.webhookStatus==='echec_solde') return t('status-insufficient-balance');
   if(tx.status==='Paiement Reçu' && d && tx.webhookStatus==='echec') return t('status-credit-failed');
   if(tx.status==='Paiement Reçu' && d) return t('status-credit-in-progress');
   if(tx.status==='Crédité avec succès') return t('status-credited');
@@ -2172,10 +2173,12 @@ function openOrderDetail(ref){
       '<div style="padding:8px 10px;background:rgba(255,170,0,0.08);border:1px solid rgba(255,170,0,0.25);border-radius:8px;margin-bottom:10px;font-size:0.76rem;color:#ffaa00;text-align:center;">🤖 Traitement auto en cours — intervenez si bloqué</div>'
       +'<button onclick="adminConfirmerOrdre(\''+tx.ref+'\')" style="width:100%;background:linear-gradient(135deg,#00d4a0,#00b589);border:none;color:#fff;border-radius:10px;padding:13px;font-size:0.88rem;font-weight:700;cursor:pointer;margin-bottom:8px;">'+confirmLabel2+'</button>'
       +'<button onclick="adminRejeterOrdre(\''+tx.ref+'\')" style="width:100%;background:rgba(255,64,96,0.12);border:1px solid rgba(255,64,96,0.3);color:#ff4060;border-radius:10px;padding:11px;font-size:0.85rem;font-weight:600;cursor:pointer;">❌ Rejeter l\'ordre</button>';
-  } else if(isDepot && tx.status==='Paiement Reçu' && (tx.webhookStatus==='echec_permanent'||tx.webhookStatus==='echec_max'||tx.webhookStatus==='echec')){
+  } else if(isDepot && tx.status==='Paiement Reçu' && (tx.webhookStatus==='echec_permanent'||tx.webhookStatus==='echec_max'||tx.webhookStatus==='echec'||tx.webhookStatus==='echec_solde')){
     var currentId = tx.userId1xBet||tx.id1x||'';
     var errHint = tx.webhookStatus==='echec_permanent'
       ? '<div style="font-size:0.7rem;color:#ff6b6b;margin-bottom:10px;line-height:1.4;">⚠️ Erreur permanente : compte 1xBet en USD/EUR.<br>Entrez l\'ID du compte DJF du client.</div>'
+      : tx.webhookStatus==='echec_solde'
+      ? '<div style="font-size:0.7rem;color:#5b9cff;margin-bottom:10px;line-height:1.4;">🏦 Solde MobCash insuffisant — pas une erreur du client.<br>Rechargez le cashdesk puis relancez (même ID).</div>'
       : '<div style="font-size:0.7rem;color:#ffb347;margin-bottom:10px;line-height:1.4;">⚠️ Échec MobCash. Vérifiez l\'ID 1xBet et relancez.</div>';
     actDiv.innerHTML = errHint
       +'<div style="display:flex;gap:8px;margin-bottom:10px;">'
@@ -2200,8 +2203,8 @@ async function adminRetryOrdre(ref){
   var newId = input ? input.value.trim() : '';
   if(btn){ btn.disabled=true; btn.textContent='⏳ Envoi en cours...'; }
   try{
-    var body = { _ak: getAdminKey(), orderId: ref };
-    if(newId) body.newUserId1xBet = newId;
+    var body = { _ak: getAdminKey(), order_id: ref, action: 'retry' };
+    if(newId) body.new_user_id_1xbet = newId;
     var resp = await fetch(CF_BASE+'/admin-action-ordre', {
       method: 'POST',
       headers: cfHeaders(),
@@ -2213,7 +2216,8 @@ async function adminRetryOrdre(ref){
       odmClose();
       listenTxs();
     } else {
-      showToast('❌ '+data.error, 'error');
+      var soldeHint = data.webhook_status==='echec_solde' ? ' (solde MobCash insuffisant — rechargez puis relancez)' : '';
+      showToast('❌ '+data.error+soldeHint, 'error');
       if(btn){ btn.disabled=false; btn.textContent='🔄 Relancer le crédit 1xBet'; }
     }
   } catch(e){
@@ -2229,7 +2233,7 @@ async function adminConfirmerOrdre(ref){
   if(!confirm('Confirmer manuellement l\'ordre #'+orderId+' ?')) return;
   try{
     var r=await fetch(CF_BASE+'/admin-action-ordre',{method:'POST',headers:cfHeaders(),
-      body:JSON.stringify({_ak:getAdminKey(),orderId:orderId,action:'confirmer'})});
+      body:JSON.stringify({_ak:getAdminKey(),order_id:orderId,action:'confirmer'})});
     var d=await r.json();
     if(!d.ok) throw new Error(d.error||'Erreur serveur');
     odmClose();
@@ -2244,7 +2248,7 @@ async function adminRejeterOrdre(ref){
   var raison=prompt('Raison du rejet (optionnel) :')||'Rejeté manuellement après délai';
   try{
     var r=await fetch(CF_BASE+'/admin-action-ordre',{method:'POST',headers:cfHeaders(),
-      body:JSON.stringify({_ak:getAdminKey(),orderId:orderId,action:'rejeter',raison:raison})});
+      body:JSON.stringify({_ak:getAdminKey(),order_id:orderId,action:'rejeter',raison:raison})});
     var d=await r.json();
     if(!d.ok) throw new Error(d.error||'Erreur serveur');
     odmClose();
@@ -2384,7 +2388,7 @@ async function testMobcashAPI(type){
       // Si N° Ordre lié → confirmer l'ordre via CF (met à jour statut + notifs)
       if(orderId && window.CF_BASE){
         fetch(CF_BASE+'/admin-action-ordre',{method:'POST',headers:cfHeaders(),
-          body:JSON.stringify({_ak:getAdminKey(),orderId:orderId,action:'confirmer'})
+          body:JSON.stringify({_ak:getAdminKey(),order_id:orderId,action:'confirmer'})
         }).then(function(r){return r.json();}).then(function(res){
           if(res.ok) lines.unshift('🔗 Ordre #'+orderId+' → '+res.status+'\n');
           else lines.unshift('⚠️ Mise à jour ordre #'+orderId+' : '+res.error+'\n');
@@ -4008,6 +4012,7 @@ var KP_LANGS = {
     'status-retrait-failed': '❌ Retrait échoué',
     'status-code-validated': '⏳ Code validé — Paiement en cours',
     'status-invalid-account': '🚨 Compte 1xBet invalide — support requis',
+    'status-insufficient-balance': '🏦 Solde MobCash insuffisant — recharge requise',
     'status-credit-failed-max': '🚨 Crédit échoué — support requis',
     'status-credit-failed': '⚠️ Paiement reçu — crédit échoué',
     'status-credit-in-progress': '💳 Paiement reçu — crédit en cours',
@@ -4102,6 +4107,7 @@ var KP_LANGS = {
     'status-retrait-failed': '❌ Withdrawal failed',
     'status-code-validated': '⏳ Code validated — Payment in progress',
     'status-invalid-account': '🚨 Invalid 1xBet account — support needed',
+    'status-insufficient-balance': '🏦 MobCash balance too low — top-up needed',
     'status-credit-failed-max': '🚨 Credit failed — support needed',
     'status-credit-failed': '⚠️ Payment received — credit failed',
     'status-credit-in-progress': '💳 Payment received — credit in progress',
@@ -4196,6 +4202,7 @@ var KP_LANGS = {
     'status-retrait-failed': '❌ Bixintu way ku guul-darraysatay',
     'status-code-validated': '⏳ Koodhka la xaqiijiyay — Lacag-bixinta socota',
     'status-invalid-account': '🚨 Xisaabta 1xBet khaldan — taageerada loo baahan yahay',
+    'status-insufficient-balance': '🏦 Lacagta MobCash way yartahay — dib u buuxi',
     'status-credit-failed-max': '🚨 Credit-ku wuu ku guul-darraysatay — taageerada loo baahan yahay',
     'status-credit-failed': '⚠️ Lacagta la helay — credit-ku way ku guul-darraysatay',
     'status-credit-in-progress': '💳 Lacagta la helay — credit-ku socdaa',
