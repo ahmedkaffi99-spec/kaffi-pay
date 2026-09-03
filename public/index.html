@@ -1107,7 +1107,10 @@ function checkURLAdmin(){
   var isAdmin = KP_TOKENS.includes(params.get('kp'));
 
   if(isAdmin || (_saved && _saved.user)){
-    try{ window.history.replaceState(null,'','/'); }catch(e){}
+    // Nettoie le ?kp=TOKEN de l'URL mais garde le hash #admin-XXX — sinon
+    // loginSuccess() ci-dessous ne peut plus le lire pour restaurer l'onglet
+    // actif après un F5, et l'admin retombe toujours sur Dashboard.
+    try{ window.history.replaceState(null,'', window.location.hash || '/'); }catch(e){}
     if(_saved && _saved.user){
       loginSuccess(_saved);
       return;
