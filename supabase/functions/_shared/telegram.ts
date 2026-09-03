@@ -55,11 +55,19 @@ export async function notifyPaiementAgents(
   }
 }
 
-export async function notifySupportAgents(supportToken: string, text: string) {
+export async function notifySupportAgents(
+  supportToken: string, text: string,
+  keyboard?: { text: string; callback_data?: string }[][]
+) {
   const { data } = await supabase.from("agents")
     .select("chat_id").eq("role", "support").eq("actif", true);
   if (!data) return;
   for (const agent of data) {
-    if (agent.chat_id) await sendTelegram(supportToken, agent.chat_id, text).catch(() => {});
+    if (!agent.chat_id) continue;
+    if (keyboard?.length) {
+      await sendTelegramKeyboard(supportToken, agent.chat_id, text, keyboard).catch(() => {});
+    } else {
+      await sendTelegram(supportToken, agent.chat_id, text).catch(() => {});
+    }
   }
 }
