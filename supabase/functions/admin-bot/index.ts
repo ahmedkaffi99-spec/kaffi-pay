@@ -30,6 +30,36 @@ async function isAuthorized(chatId: string, adminId: string): Promise<boolean> {
   return !!(data && data.length > 0);
 }
 
+// Nom affiché pour attribuer une action à son auteur dans les diffusions
+// créateur+agents (ex: "👤 Zakier a confirmé #ID").
+async function nomActeur(chatId: string, adminId: string): Promise<string> {
+  if (chatId === adminId) return "Créateur";
+  const { data } = await supabase.from("agents").select("nom").eq("chat_id", chatId).limit(1);
+  return (data && data[0]?.nom) || `Agent (${chatId})`;
+}
+
+// Diffuse le résultat d'une action (confirmer/rejeter/remettre/recharge/
+// terminer...) au créateur ET à tous les agents de paiement — sans jamais
+// renvoyer le message à son propre auteur, qui a déjà sa confirmation
+// directe via replyId. Avant ceci, seul l'auteur de la commande voyait le
+// résultat : le créateur et les autres agents ne savaient jamais qu'un
+// agent avait agi sur un ordre.
+async function diffuserAction(
+  token: string, adminId: string, acteurChatId: string,
+  msg: string, keyboard?: { text: string; callback_data?: string }[][]
+) {
+  const tasks: Promise<unknown>[] = [];
+  if (acteurChatId !== adminId) {
+    tasks.push(
+      keyboard?.length
+        ? sendTelegramKeyboard(token, adminId, msg, keyboard)
+        : sendTelegram(token, adminId, msg)
+    );
+  }
+  tasks.push(notifyPaiementAgents(token, msg, keyboard, acteurChatId));
+  await Promise.allSettled(tasks);
+}
+
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
@@ -83,6 +113,11 @@ Deno.serve(async (req: Request) => {
         });
         logAudit("retrait_finalise_admin", { ordreId, adminId, parAgent: fromId !== adminId });
         await sendTelegram(token, fromId, `✅ Retrait <b>#${ordreId}</b> — Payé. Notifications client en cours…`);
+        {
+          const nom = await nomActeur(fromId, adminId);
+          await diffuserAction(token, adminId, fromId,
+            `👤 <b>${nom}</b> a finalisé le retrait <b>#${ordreId}</b> → Payé (${Number(ordre.montant || 0).toLocaleString()} DJF).`);
+        }
 
       } else if (authorized && cbData.startsWith("pay_recharge_")) {
         const ordreId = cbData.replace("pay_recharge_", "");
@@ -104,6 +139,9 @@ Deno.serve(async (req: Request) => {
           logAudit("recharge_agent_paiement_ok", { ordreId, agentId: fromId, id1xbet });
           await sendTelegram(token, fromId,
             `✅ <b>Recharge réussie !</b>\n#${ordreId} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
+          const nomPay = await nomActeur(fromId, adminId);
+          await diffuserAction(token, adminId, fromId,
+            `👤 <b>${nomPay}</b> a relancé et crédité <b>#${ordreId}</b> (bouton) — ${Number(montantVal).toLocaleString()} DJF.`);
         } catch (e: unknown) {
           const errMsg = (e as Error).message || "";
           const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
@@ -116,6 +154,9 @@ Deno.serve(async (req: Request) => {
             ? "\n<i>Solde cashdesk insuffisant — rechargez puis relancez.</i>"
             : "";
           await sendTelegram(token, fromId, `❌ Échec MobCash : <code>${errMsg}</code>${hint}`);
+          const nomPayEchec = await nomActeur(fromId, adminId);
+          await diffuserAction(token, adminId, fromId,
+            `👤 <b>${nomPayEchec}</b> a tenté de relancer <b>#${ordreId}</b> (bouton) — échec MobCash : <code>${errMsg}</code>${hint}`);
         }
       } else {
         await answerCallback(token, cbId, "");
@@ -148,12 +189,15 @@ Deno.serve(async (req: Request) => {
         await sendTelegram(token, replyId, `ℹ️ <b>#${num}</b> déjà finalisé.`); return json({ ok: true }, 200, headers);
       }
       const montantVal = Number(ordre.montant || 0);
+      const nomConf = await nomActeur(chatId, adminId);
       if (ordre.type === "Retrait" || ordre._table === "retrait_orders") {
         if (!transitionValide(ordre.status, "Code Validé")) {
           await sendTelegram(token, replyId, `⛔ Impossible de confirmer — statut : <b>${ordre.status}</b>.`); return json({ ok: true }, 200, headers);
         }
         await updateOrder(ordre._table, ordre.id, { status: "Code Validé", confirmed_by: "admin_telegram", confirmed_at: new Date().toISOString() });
         await sendTelegram(token, replyId, `✅ Retrait <b>#${num}</b> — Code Validé — ${montantVal.toLocaleString()} DJF`);
+        await diffuserAction(token, adminId, chatId,
+          `👤 <b>${nomConf}</b> a confirmé le retrait <b>#${num}</b> → Code Validé (${montantVal.toLocaleString()} DJF).`);
         const wNum = (ordre.numero_waafi || ordre.tel || "").replace(/\s/g, "").replace(/^\+?253/, "");
         if (wNum) {
           const ussd = `*200*${wNum}*${montantVal}#`;
@@ -186,6 +230,8 @@ Deno.serve(async (req: Request) => {
         const id1xbet = ordre.user_id_1xbet || ordre.id1x || "";
         if (!id1xbet) {
           await sendTelegram(token, replyId, `⚠️ ID 1xBet manquant pour <b>#${num}</b> — crédit impossible, utilisez <code>recharge ${num} NOUVEL_ID</code>.`);
+          await diffuserAction(token, adminId, chatId,
+            `👤 <b>${nomConf}</b> a confirmé <b>#${num}</b> — ID 1xBet manquant, crédit impossible sans <code>recharge ${num} NOUVEL_ID</code>.`);
         } else {
           try {
             await callMobcashDepot(id1xbet, montantVal);
@@ -201,6 +247,8 @@ Deno.serve(async (req: Request) => {
               ).catch(() => {});
             }
             logAudit("confirme_admin_telegram_mobcash_ok", { num, adminId: chatId, id1xbet });
+            await diffuserAction(token, adminId, chatId,
+              `👤 <b>${nomConf}</b> a confirmé et crédité le dépôt <b>#${num}</b> — ${montantVal.toLocaleString()} DJF.`);
           } catch (e: unknown) {
             const errMsg = (e as Error).message || "";
             const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
@@ -212,6 +260,8 @@ Deno.serve(async (req: Request) => {
               : "";
             await sendTelegram(token, replyId, `❌ MobCash échoué — #${num}\n<code>${errMsg}</code>${hint}`);
             logAudit("confirme_admin_telegram_mobcash_echec", { num, adminId: chatId, errMsg, webhookStatus });
+            await diffuserAction(token, adminId, chatId,
+              `👤 <b>${nomConf}</b> a confirmé <b>#${num}</b> — échec MobCash : <code>${errMsg}</code>${hint}`);
           }
         }
       }
@@ -236,6 +286,11 @@ Deno.serve(async (req: Request) => {
       await updateOrder(ordre._table, ordre.id, { status: rejetStatut, flag_raison: raison, rejected_by: "admin_telegram", flagged_at: new Date().toISOString() });
       logAudit("rejete_admin_telegram", { num, raison, adminId: chatId, type: ordre._table });
       await sendTelegram(token, replyId, `❌ Ordre <b>#${num}</b> — ${rejetStatut}.\nRaison : <i>${raison}</i>`);
+      {
+        const nomRej = await nomActeur(chatId, adminId);
+        await diffuserAction(token, adminId, chatId,
+          `👤 <b>${nomRej}</b> a rejeté <b>#${num}</b> (${Number(ordre.montant || 0).toLocaleString()} DJF) — ${rejetStatut}.\nRaison : <i>${raison}</i>`);
+      }
       return json({ ok: true }, 200, headers);
     }
 
@@ -251,6 +306,11 @@ Deno.serve(async (req: Request) => {
       await updateOrder(ordre._table, ordre.id, { status: "En attente", remis_en_attente_by: "admin_telegram", remis_en_attente_at: new Date().toISOString() });
       logAudit("remis_en_attente_admin", { num, adminId: chatId, ancienStatut: ordre.status });
       await sendTelegram(token, replyId, `🔄 Ordre <b>#${num}</b> remis en attente.`);
+      {
+        const nomRem = await nomActeur(chatId, adminId);
+        await diffuserAction(token, adminId, chatId,
+          `👤 <b>${nomRem}</b> a remis <b>#${num}</b> en attente (précédemment : ${ordre.status}).`);
+      }
       return json({ ok: true }, 200, headers);
     }
 
@@ -409,6 +469,9 @@ Deno.serve(async (req: Request) => {
             `✅ *Crédité avec succès*`
           ).catch(() => {});
         }
+        const nomRecOk = await nomActeur(chatId, adminId);
+        await diffuserAction(token, adminId, chatId,
+          `👤 <b>${nomRecOk}</b> a relancé et crédité <b>#${num}</b> | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF.`);
       } catch (e: unknown) {
         const errMsg = (e as Error).message || "";
         const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
@@ -422,6 +485,9 @@ Deno.serve(async (req: Request) => {
           ? "\n<i>Solde cashdesk insuffisant — rechargez puis relancez.</i>"
           : "";
         await sendTelegram(token, replyId, `❌ Échec MobCash : <code>${errMsg}</code>${hint}`);
+        const nomRecEchec = await nomActeur(chatId, adminId);
+        await diffuserAction(token, adminId, chatId,
+          `👤 <b>${nomRecEchec}</b> a tenté <code>recharge #${num}</code> — échec MobCash : <code>${errMsg}</code>${hint}`);
       }
       return json({ ok: true }, 200, headers);
     }

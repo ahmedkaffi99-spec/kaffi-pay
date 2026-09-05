@@ -170,8 +170,8 @@ Deno.serve(async (req: Request) => {
       }
 
       if (!userId) {
-        await sendTelegram(token, adminId,
-          `⚠️ <b>ID 1xBet manquant — #${order_id}</b>\nConfirmé manuellement mais crédit impossible sans ID.`);
+        const msgSansId = `⚠️ <b>ID 1xBet manquant — #${order_id}</b>\nConfirmé manuellement mais crédit impossible sans ID.`;
+        await Promise.allSettled([sendTelegram(token, adminId, msgSansId), notifyPaiementAgents(token, msgSansId)]);
         logAudit("admin_confirme_web_sans_id", { order_id });
         return json({ ok: true, status: "Paiement Reçu", warning: "ID 1xBet manquant" }, 200, headers);
       }
@@ -206,7 +206,7 @@ Deno.serve(async (req: Request) => {
         const msgSolde = webhookStatus === "echec_solde"
           ? `🏦 <b>Solde MobCash insuffisant (admin) — #${order_id}</b>\n<code>${errMsg}</code>\n<i>Rechargez le cashdesk puis relancez.</i>`
           : `⚠️ <b>MobCash échoué (admin) — #${order_id}</b>\n<code>${errMsg}</code>`;
-        await sendTelegram(token, adminId, msgSolde);
+        await Promise.allSettled([sendTelegram(token, adminId, msgSolde), notifyPaiementAgents(token, msgSolde)]);
         logAudit("admin_confirme_mobcash_echec", { order_id, errMsg, webhookStatus });
         return json({ ok: false, error: errMsg, webhook_status: webhookStatus }, 400, headers);
       }
@@ -297,8 +297,8 @@ Deno.serve(async (req: Request) => {
       if (new_user_id_1xbet) updates.user_id_1xbet = userId;
       await supabase.from(table).update(updates).eq("id", ordre.id);
 
-      await sendTelegram(token, adminId,
-        `✅ <b>Retry Admin — Dépôt crédité</b>\n#${order_id} | <code>${userId}</code>\n${montantVal.toLocaleString()} DJF`);
+      const msgRetryOk = `✅ <b>Retry Admin — Dépôt crédité</b>\n#${order_id} | <code>${userId}</code>\n${montantVal.toLocaleString()} DJF`;
+      await Promise.allSettled([sendTelegram(token, adminId, msgRetryOk), notifyPaiementAgents(token, msgRetryOk)]);
 
       if (whatsapp) {
         sendWhatsApp(whatsapp,
@@ -318,6 +318,12 @@ Deno.serve(async (req: Request) => {
         webhook_at: new Date().toISOString(),
         ...(new_user_id_1xbet ? { user_id_1xbet: userId } : {}),
       }).eq("id", ordre.id);
+      // Ce catch ne notifiait jamais personne — un échec de retry passait
+      // totalement inaperçu côté Telegram (créateur comme agents).
+      const msgRetryEchec = webhookStatus === "echec_solde"
+        ? `🏦 <b>Retry Admin — Solde MobCash insuffisant — #${order_id}</b>\n<code>${errMsg}</code>\n<i>Rechargez le cashdesk puis relancez.</i>`
+        : `⚠️ <b>Retry Admin échoué — #${order_id}</b>\n<code>${errMsg}</code>`;
+      await Promise.allSettled([sendTelegram(token, adminId, msgRetryEchec), notifyPaiementAgents(token, msgRetryEchec)]);
       return json({ ok: false, error: errMsg, webhook_status: webhookStatus }, 400, headers);
     }
   }
