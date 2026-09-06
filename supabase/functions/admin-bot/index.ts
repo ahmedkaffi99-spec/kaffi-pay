@@ -30,6 +30,37 @@ async function isAuthorized(chatId: string, adminId: string): Promise<boolean> {
   return !!(data && data.length > 0);
 }
 
+// Rôle réel de l'auteur, pour le règlement interne (Agent de paiement seul
+// habilité à agir sur un ordre — Agent de support/surveillance consulte
+// uniquement). Un même chat_id peut porter plusieurs rôles (paiement +
+// support) : le tri alphabétique fait gagner "paiement" quand il existe,
+// même règle que sur le panel web (agent-auth).
+async function agentRole(chatId: string, adminId: string): Promise<string> {
+  if (chatId === adminId) return "creator";
+  const { data } = await supabase.from("agents")
+    .select("role").eq("chat_id", chatId).eq("actif", true)
+    .order("role", { ascending: true }).limit(1);
+  return (data && data[0]?.role) || "";
+}
+function canAct(role: string): boolean {
+  return role === "creator" || role === "paiement";
+}
+
+// Refuse une commande d'action à un agent non habilité — répond fermement à
+// l'auteur ET alerte immédiatement le créateur (rigueur : toute tentative
+// hors périmètre de rôle est tracée et signalée, pas seulement bloquée en
+// silence).
+async function signalerViolation(
+  token: string, adminId: string, chatId: string, role: string, commande: string
+) {
+  const nom = await nomActeur(chatId, adminId);
+  await sendTelegram(token, chatId,
+    `⛔ <b>Action refusée</b>\nLa commande <code>${commande}</code> est réservée aux Agents de paiement. Votre rôle (<b>${role || "inconnu"}</b>) n'y donne pas accès.\n\n<i>Cette tentative a été enregistrée et transmise à la direction.</i>`);
+  await sendTelegram(token, adminId,
+    `🚨 <b>Tentative d'action non autorisée</b>\n👤 <b>${nom}</b> (rôle : ${role || "inconnu"}) a tenté <code>${commande}</code> sans y être habilité.`);
+  logAudit("action_refusee_role", { chatId, role, commande });
+}
+
 // Nom affiché pour attribuer une action à son auteur dans les diffusions
 // créateur+agents (ex: "👤 Zakier a confirmé #ID").
 async function nomActeur(chatId: string, adminId: string): Promise<string> {
@@ -78,6 +109,13 @@ Deno.serve(async (req: Request) => {
       const fromId = String(cb.from.id);
 
       const authorized = await isAuthorized(fromId, adminId);
+
+      const roleCb = authorized ? await agentRole(fromId, adminId) : "";
+      if (authorized && (cbData.startsWith("terminer_") || cbData.startsWith("pay_recharge_")) && !canAct(roleCb)) {
+        await answerCallback(token, cbId, "⛔ Non autorisé pour votre rôle");
+        await signalerViolation(token, adminId, fromId, roleCb, cbData);
+        return json({ ok: true }, 200, headers);
+      }
 
       if (authorized && cbData.startsWith("terminer_")) {
         const ordreId = cbData.replace("terminer_", "");
@@ -178,10 +216,15 @@ Deno.serve(async (req: Request) => {
     if (!authorized) return json({ ok: true }, 200, headers);
 
     const t = text.toLowerCase().trim();
+    const roleTxt = await agentRole(chatId, adminId);
 
     // confirmer #ID
     const confirmMatch = text.match(/^confirmer?\s+#?(\S+)\b/i);
     if (confirmMatch) {
+      if (!canAct(roleTxt)) {
+        await signalerViolation(token, adminId, chatId, roleTxt, `confirmer ${confirmMatch[1]}`);
+        return json({ ok: true }, 200, headers);
+      }
       const num = confirmMatch[1];
       const ordre = await findOrder(num);
       if (!ordre) { await sendTelegram(token, replyId, `❓ Ordre <b>#${num}</b> introuvable.`); return json({ ok: true }, 200, headers); }
@@ -272,6 +315,10 @@ Deno.serve(async (req: Request) => {
     // rejeter #ID [raison]
     const rejectMatch = text.match(/^rejeter?\s+#?(\S+)(?:\s+(.+))?$/i);
     if (rejectMatch) {
+      if (!canAct(roleTxt)) {
+        await signalerViolation(token, adminId, chatId, roleTxt, `rejeter ${rejectMatch[1]}`);
+        return json({ ok: true }, 200, headers);
+      }
       const num = rejectMatch[1];
       const raison = (rejectMatch[2] || "Rejeté par admin").trim();
       const ordre = await findOrder(num);
@@ -297,6 +344,10 @@ Deno.serve(async (req: Request) => {
     // remettre #ID
     const remettreMatch = text.match(/^remettre\s+#?(\S+)\b/i);
     if (remettreMatch) {
+      if (!canAct(roleTxt)) {
+        await signalerViolation(token, adminId, chatId, roleTxt, `remettre ${remettreMatch[1]}`);
+        return json({ ok: true }, 200, headers);
+      }
       const num = remettreMatch[1];
       const ordre = await findOrder(num);
       if (!ordre) { await sendTelegram(token, replyId, `❓ Ordre <b>#${num}</b> introuvable.`); return json({ ok: true }, 200, headers); }
@@ -359,6 +410,13 @@ Deno.serve(async (req: Request) => {
     // /sms <texte>
     const smsMatch = text.match(/^\/sms\s+(.+)/is);
     if (smsMatch) {
+      // /sms peut déclencher confirmerDepot (même pouvoir que "confirmer") —
+      // même garde-fou de rôle, sinon un agent de support contournerait
+      // l'interdiction de confirmer en repassant par cette commande.
+      if (!canAct(roleTxt)) {
+        await signalerViolation(token, adminId, chatId, roleTxt, "/sms");
+        return json({ ok: true }, 200, headers);
+      }
       const smsText = smsMatch[1].trim();
       const tid = extractTransferId(smsText);
       const montantParsed = extractMontant(smsText);
@@ -437,6 +495,10 @@ Deno.serve(async (req: Request) => {
     // étrangère et que le client a fourni un nouvel ID en DJF.
     const rechargeMatch = text.match(/^recharge\s+#?(\S+)(?:\s+(\S+))?\s*$/i);
     if (rechargeMatch) {
+      if (!canAct(roleTxt)) {
+        await signalerViolation(token, adminId, chatId, roleTxt, `recharge ${rechargeMatch[1]}`);
+        return json({ ok: true }, 200, headers);
+      }
       const num = rechargeMatch[1];
       const nouvelId = (rechargeMatch[2] || "").trim();
       const ordre = await findOrder(num);

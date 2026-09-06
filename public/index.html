@@ -1104,16 +1104,18 @@ function checkURLAdmin(){
   var _saved = null;
   try{ _saved = JSON.parse(localStorage.getItem('kp_session')); }catch(e){}
 
-  // Accès admin : URL secrète ?kp=TOKEN — 7 tokens uniques (1 par personne)
-  // Créateur : 9f3aXmQ7 | Agents : kA1-kA6 (modifier pour révoquer un accès)
+  // Accès admin : URL secrète ?kp=TOKEN — révèle juste l'écran de connexion
+  // (l'identité réelle est ensuite vérifiée par Google Sign-In + agent-auth
+  // côté serveur, ce token ne donne aucun accès en lui-même). Changer le
+  // token d'un agent révoque son lien sans toucher aux autres.
   var KP_TOKENS = [
     '9f3aXmQ7',  // Créateur
-    'kA1Bx9mP',  // Agent 1
-    'kA2Ry7nV',  // Agent 2
-    'kA3Tz5wQ',  // Agent 3
-    'kA4Gv3kL',  // Agent 4
-    'kA5Hm8pX',  // Agent 5
-    'kA6Jc2fN',  // Agent 6
+    'kA1Bx9mP',  // Zakier
+    'kA2Ry7nV',  // Mohamed kadar / med khadar (chat_id partagé 1446772592)
+    'kA3Tz5wQ',  // Abdirahman
+    'kA4Gv3kL',  // Ibrahim Baki
+    'kA5Hm8pX',  // libre
+    'kA6Jc2fN',  // libre
   ];
   var isAdmin = KP_TOKENS.includes(params.get('kp'));
 
