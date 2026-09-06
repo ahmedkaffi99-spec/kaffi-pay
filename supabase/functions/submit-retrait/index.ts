@@ -46,15 +46,18 @@ Deno.serve(async (req: Request) => {
 
   // Traitement asynchrone
   (async () => {
-    // Telegram admin — accusé de réception
-    await sendTelegram(token, adminId,
+    // Telegram admin + agents — accusé de réception
+    const newRetraitMsg =
       `📤 <b>Nouvel ordre Retrait</b> — <code>#${ordreId}</code>\n\n` +
       `Montant : <b>${montant.toLocaleString()} DJF</b>\n` +
       `N° Waafi : <code>${waafiNum || "—"}</code>\n` +
       `Code retrait : <code>${withdrawalCode || "—"}</code>\n` +
       `ID 1xBet : <code>${userId1xbet || "—"}</code>\n\n` +
-      `<i>⏳ Appel MobCash en cours...</i>`
-    ).catch(() => {});
+      `<i>⏳ Appel MobCash en cours...</i>`;
+    await Promise.allSettled([
+      sendTelegram(token, adminId, newRetraitMsg),
+      notifyPaiementAgents(token, newRetraitMsg),
+    ]);
 
     // WhatsApp — accusé de réception
     if (whatsapp) {
@@ -74,20 +77,20 @@ Deno.serve(async (req: Request) => {
         flagged_at: new Date().toISOString(),
         auto_notified: true,
       }).eq("id", ordre.id);
-      await sendTelegram(token, adminId,
-        `⚠️ <b>Retrait sans numéro Waafi</b> — #${ordreId}\nNuméro Waafi manquant, impossible de composer le USSD.`);
+      const mSansWaafi = `⚠️ <b>Retrait sans numéro Waafi</b> — #${ordreId}\nNuméro Waafi manquant, impossible de composer le USSD.`;
+      await Promise.allSettled([sendTelegram(token, adminId, mSansWaafi), notifyPaiementAgents(token, mSansWaafi)]);
       return;
     }
 
     if (!withdrawalCode) {
-      await sendTelegram(token, adminId,
-        `⚠️ <b>Retrait sans code</b> — #${ordreId}\nCode retrait manquant, intervention manuelle requise.`);
+      const mSansCode = `⚠️ <b>Retrait sans code</b> — #${ordreId}\nCode retrait manquant, intervention manuelle requise.`;
+      await Promise.allSettled([sendTelegram(token, adminId, mSansCode), notifyPaiementAgents(token, mSansCode)]);
       return;
     }
 
     if (!userId1xbet) {
-      await sendTelegram(token, adminId,
-        `⚠️ <b>Retrait sans ID 1xBet</b> — #${ordreId}\nID compte 1xBet manquant, intervention manuelle requise.`);
+      const mSansId = `⚠️ <b>Retrait sans ID 1xBet</b> — #${ordreId}\nID compte 1xBet manquant, intervention manuelle requise.`;
+      await Promise.allSettled([sendTelegram(token, adminId, mSansId), notifyPaiementAgents(token, mSansId)]);
       return;
     }
 
@@ -106,9 +109,9 @@ Deno.serve(async (req: Request) => {
           flagged_at: new Date().toISOString(),
           auto_notified: true,
         }).eq("id", ordre.id);
-        await sendTelegram(token, adminId,
-          `❌ <b>Retrait — Code Invalide</b>\nOrdre : <code>#${ordreId}</code>\n${note}\n` +
-          `Soumis : ${montant.toLocaleString()} DJF | MobCash : ${montantMobcash.toLocaleString()} DJF`);
+        const mMontantInc = `❌ <b>Retrait — Code Invalide</b>\nOrdre : <code>#${ordreId}</code>\n${note}\n` +
+          `Soumis : ${montant.toLocaleString()} DJF | MobCash : ${montantMobcash.toLocaleString()} DJF`;
+        await Promise.allSettled([sendTelegram(token, adminId, mMontantInc), notifyPaiementAgents(token, mMontantInc)]);
         if (whatsapp) {
           await sendWhatsApp(whatsapp,
             `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
@@ -166,8 +169,8 @@ Deno.serve(async (req: Request) => {
         flagged_at: new Date().toISOString(),
         auto_notified: true,
       }).eq("id", ordre.id);
-      await sendTelegram(token, adminId,
-        `❌ <b>Retrait — Code Invalide</b> — #${ordreId}\n${note}\n<code>${err.message}</code>`);
+      const mCodeInv = `❌ <b>Retrait — Code Invalide</b> — #${ordreId}\n${note}\n<code>${err.message}</code>`;
+      await Promise.allSettled([sendTelegram(token, adminId, mCodeInv), notifyPaiementAgents(token, mCodeInv)]);
       if (whatsapp) {
         await sendWhatsApp(whatsapp,
           `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`

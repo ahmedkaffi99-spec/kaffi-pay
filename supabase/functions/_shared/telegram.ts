@@ -74,13 +74,15 @@ export async function answerCallback(token: string, callbackId: string, text = "
 
 export async function notifyPaiementAgents(
   token: string, text: string,
-  keyboard?: { text: string; callback_data?: string }[][]
+  keyboard?: { text: string; callback_data?: string }[][],
+  excludeChatId?: string
 ) {
   const { data } = await supabase.from("agents")
     .select("chat_id").eq("role", "paiement").eq("actif", true);
   if (!data) return;
   for (const agent of data) {
     if (!agent.chat_id) continue;
+    if (excludeChatId && agent.chat_id === excludeChatId) continue;
     if (keyboard?.length) {
       await sendTelegramKeyboard(token, agent.chat_id, text, keyboard).catch(() => {});
     } else {

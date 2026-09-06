@@ -76,8 +76,8 @@ export async function confirmerDepot(
 
   // MobCash — créditer le compte 1xBet
   if (!userId1xbet) {
-    await sendTelegram(token, adminId,
-      `⚠️ <b>ID 1xBet manquant — #${ordreId}</b>\n${montantNotif.toLocaleString()} DJF — crédit impossible, vérifiez l'ordre.`);
+    const m = `⚠️ <b>ID 1xBet manquant — #${ordreId}</b>\n${montantNotif.toLocaleString()} DJF — crédit impossible, vérifiez l'ordre.`;
+    await Promise.allSettled([sendTelegram(token, adminId, m), notifyPaiementAgents(token, m)]);
     return true;
   }
 
@@ -121,24 +121,24 @@ export async function confirmerDepot(
     logAudit("depot_mobcash_echec", { ordreId, err: errMsg, webhookStatus });
 
     if (webhookStatus === "echec_permanent") {
-      await sendTelegram(token, adminId,
-        `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
+      const m = `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
         `ID 1xBet : <code>${userId1xbet}</code>\n` +
         `<code>${errMsg}</code>\n\n` +
         `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
-        `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement.`);
+        `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement.`;
+      await Promise.allSettled([sendTelegram(token, adminId, m), notifyPaiementAgents(token, m)]);
     } else if (webhookStatus === "echec_solde") {
-      await sendTelegram(token, adminId,
-        `🏦 <b>Solde MobCash insuffisant — #${ordreId}</b>\n` +
+      const m = `🏦 <b>Solde MobCash insuffisant — #${ordreId}</b>\n` +
         `ID 1xBet : <code>${userId1xbet}</code> | ${montantNotif.toLocaleString()} DJF\n` +
         `<code>${errMsg}</code>\n\n` +
         `<i>Le client ne voit pas d'échec — sa page affiche "crédit en cours".</i>\n` +
-        `<b>Action requise :</b> rechargez le solde cashdesk puis <code>recharge ${ordreId}</code> sur ce bot.`);
+        `<b>Action requise :</b> rechargez le solde cashdesk puis <code>recharge ${ordreId}</code> sur ce bot.`;
+      await Promise.allSettled([sendTelegram(token, adminId, m), notifyPaiementAgents(token, m)]);
     } else {
-      await sendTelegram(token, adminId,
-        `⚠️ <b>MobCash Dépôt échoué — #${ordreId}</b>\n` +
+      const m = `⚠️ <b>MobCash Dépôt échoué — #${ordreId}</b>\n` +
         `<code>${errMsg}</code>\n` +
-        `<i>Relancez manuellement depuis le panel admin.</i>`);
+        `<i>Relancez manuellement depuis le panel admin.</i>`;
+      await Promise.allSettled([sendTelegram(token, adminId, m), notifyPaiementAgents(token, m)]);
     }
   }
 

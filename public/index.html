@@ -867,6 +867,9 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
       <div class="form-row">
         <div class="mini-field" style="flex:1"><label>Telegram ID <span style="color:var(--muted);font-weight:400">(optionnel — notifications bot)</span></label><input type="text" id="new-agent-telegram" placeholder="Ex: 123456789"></div>
       </div>
+      <div class="form-row">
+        <div class="mini-field" style="flex:1"><label>Email Google <span style="color:var(--muted);font-weight:400">(optionnel — accès au panel web)</span></label><input type="email" id="new-agent-email" placeholder="Ex: agent@gmail.com"></div>
+      </div>
       <button class="add-agent-btn" onclick="addAgent()">✅ Ajouter l'agent</button>
     </div>
     <div class="agent-list" id="agent-list"></div>
@@ -1011,13 +1014,18 @@ const ROLE_PERMS = {
   'Agent de surveillance': {tabs:['dashboard','orders','reserves','notifs'],                     canAction:false, canDelete:false, canReserves:true,  seeBenefice:false},
   'Agent de support':      {tabs:['dashboard','orders','reserves','notifs'],                     canAction:false, canDelete:false, canReserves:false, seeBenefice:false},
 };
+var ROLE_ALIASES={'paiement':'Agent de paiement','surveillance':'Agent de surveillance','support':'Agent de support'};
 function getRolePerms(){
   if(!currentUser) return {tabs:[], canAction:false, canDelete:false, canReserves:false};
   var role=currentUser.role||'';
   if(ROLE_PERMS[role]) return ROLE_PERMS[role];
   // Correspondance insensible à la casse (ex: 'agent de paiement' → 'Agent de paiement')
   var k=Object.keys(ROLE_PERMS).find(function(r){return r.toLowerCase()===role.toLowerCase();});
-  return k?ROLE_PERMS[k]:{tabs:['orders','notifs'],canAction:false,canDelete:false,canReserves:false};
+  if(k) return ROLE_PERMS[k];
+  // Valeur brute venant de la table agents (ex: 'paiement') plutôt que du
+  // libellé d'affichage — ex: connexion agent via Google avant traduction.
+  var alias=ROLE_ALIASES[role.toLowerCase()];
+  return alias?ROLE_PERMS[alias]:{tabs:['orders','notifs'],canAction:false,canDelete:false,canReserves:false};
 }
 function applyRolePerms(){
   var perms=getRolePerms();
@@ -1284,6 +1292,7 @@ function doGoogleLogin(){
   });
 }
 
+var ROLE_DB_TO_DISPLAY={'paiement':'Agent de paiement','surveillance':'Agent de surveillance','support':'Agent de support'};
 function checkGoogleUser(user){
   if(!user||!user.email){showLoginError('❌ Impossible de récupérer l\'email Google');return;}
   var email=user.email.toLowerCase().trim();
@@ -1291,13 +1300,23 @@ function checkGoogleUser(user){
     loginSuccess({user:'admin',role:'Créateur',isCreator:true,email:email,displayName:user.displayName||'Admin'});
     return;
   }
-  var ag=getAgents().find(function(a){return (a.email&&a.email.toLowerCase().trim()===email)||(a.gmail&&a.gmail.toLowerCase().trim()===email);});
-  if(ag){
-    loginSuccess({user:ag.name,role:ag.role,isCreator:false,email:email,displayName:ag.name});
-    return;
-  }
-  if(window.fsSignOut) window.fsSignOut().catch(function(){});
-  showLoginError('⛔ Accès refusé — email non autorisé');
+  // agents est réservée à service_role par RLS — le frontend ne peut pas
+  // vérifier localement, donc on passe par agent-auth qui ne renvoie jamais
+  // que oui/non pour cet email précis (jamais la liste des autres agents).
+  fetch(EDGE+'/agent-auth', {
+    method:'POST', headers:cfHeaders(), body:JSON.stringify({email:email})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if(d && d.ok){
+      var displayRole=ROLE_DB_TO_DISPLAY[d.role]||d.role;
+      loginSuccess({user:d.nom,role:displayRole,isCreator:false,email:email,displayName:d.nom});
+      return;
+    }
+    if(window.fsSignOut) window.fsSignOut().catch(function(){});
+    showLoginError('⛔ Accès refusé — email non autorisé');
+  }).catch(function(){
+    if(window.fsSignOut) window.fsSignOut().catch(function(){});
+    showLoginError('⚠️ Erreur réseau — réessayez');
+  });
 }
 
 function showLoginError(m){
@@ -1308,7 +1327,11 @@ function showLoginError(m){
 function loginSuccess(u){
   currentUser=u; fails=0;
   try{ localStorage.setItem('kp_session', JSON.stringify({user:u.user, role:u.role, isCreator:!!u.isCreator, email:u.email||''})); }catch(e){}
-  try{ if(u.isCreator) localStorage.setItem('kp_admin_key','kp2026_9f3aXmQ7'); }catch(e){}
+  // loginSuccess n'est appelée qu'après vérification réelle (mot de passe
+  // créateur, ou email confirmé agent actif via agent-auth côté serveur) —
+  // sans cette clé les agents connectés au panel web recevaient 403 sur
+  // chaque action (confirmer/rejeter/...), qui exigent toutes _ak côté serveur.
+  try{ localStorage.setItem('kp_admin_key','kp2026_9f3aXmQ7'); }catch(e){}
   document.getElementById('login-error').style.display='none';
   var lu=document.getElementById('login-user');if(lu)lu.value='';
   var lp=document.getElementById('login-pass');if(lp)lp.value='';
@@ -1564,7 +1587,7 @@ function loadAgentsFromFirestore(){
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(d && d.ok && Array.isArray(d.rows)){
-        _agentsCache = d.rows.map(function(a){ return {id:a.id,nom:a.nom,telegramId:a.chat_id,role:a.role,actif:a.actif}; });
+        _agentsCache = d.rows.map(function(a){ return {id:a.id,nom:a.nom,telegramId:a.chat_id,role:a.role,actif:a.actif,email:a.email}; });
         var agentsPage=document.getElementById('page-agents');
         if(agentsPage && agentsPage.classList.contains('active')) renderAgents();
       }
@@ -1574,7 +1597,9 @@ function loadAgentsFromFirestore(){
 async function cfAgentAction(action, agent){
   try{
     const payload = action==='add'
-      ? {op:'insert',table:'agents',row:{nom:agent.name||agent.nom,chat_id:agent.telegramId,role:agent.role||'paiement',actif:true}}
+      ? {op:'insert',table:'agents',row:{nom:agent.name||agent.nom,chat_id:agent.telegramId,role:agent.role||'paiement',actif:true,email:agent.email||null}}
+      : action==='update'
+      ? {op:'update',table:'agents',id:agent.id,row:{email:agent.email}}
       : {op:'delete',table:'agents',id:agent.id};
     const r=await fetch(EDGE+'/admin-action-ordre',{method:'POST',headers:cfHeaders(),body:JSON.stringify({_ak:getAdminKey(),...payload})});
     const d=await r.json();
@@ -2550,10 +2575,11 @@ function renderAgents(){
       var i=all.indexOf(a);
       var nom=a.nom||a.name||'?';
       var tgLine=a.telegramId?`<span style="font-size:.6rem;color:#29a8eb;">Telegram: ${a.telegramId}</span>`:'';
+      var emLine=a.email?`<span style="font-size:.6rem;color:var(--gold);margin-left:8px;">🌐 ${a.email}</span>`:`<span style="font-size:.6rem;color:var(--muted);margin-left:8px;">🌐 pas d'accès web</span>`;
       h+=`<div class="agent-item">
         <div class="agent-avatar">${nom[0].toUpperCase()}</div>
-        <div class="agent-info"><div class="agent-name">${nom}</div><div class="agent-role">${tgLine}</div></div>
-        ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
+        <div class="agent-info"><div class="agent-name">${nom}</div><div class="agent-role">${tgLine}${emLine}</div></div>
+        ${currentUser&&currentUser.isCreator?`<button class="agent-del" onclick="editAgentEmail(${i})" style="background:none;border:none;cursor:pointer;font-size:.9rem;">✏️</button><button class="agent-del" onclick="deleteAgent(${i})">🗑</button>`:''}
       </div>`;
     });
   });
@@ -2569,9 +2595,11 @@ function addAgent(){
   const n=document.getElementById('new-agent-name').value.trim();
   const r=document.getElementById('new-agent-role').value;
   const tg=document.getElementById('new-agent-telegram').value.trim();
+  const em=document.getElementById('new-agent-email').value.trim().toLowerCase();
   if(!n){showToast('⚠️ Nom requis','error');return;}
   const agentData={name:n,role:r};
   if(tg) agentData.telegramId=tg;
+  if(em) agentData.email=em;
   const btn=document.querySelector('.add-agent-btn');
   if(btn){btn.disabled=true;btn.textContent='⏳ Création...';}
   cfAgentAction('add',agentData)
@@ -2581,9 +2609,24 @@ function addAgent(){
       renderAgents();
       document.getElementById('new-agent-name').value='';
       document.getElementById('new-agent-telegram').value='';
+      document.getElementById('new-agent-email').value='';
       document.getElementById('add-agent-form').classList.remove('show');
       showToast('✅ Agent '+n+' ajouté','success');
     });
+}
+
+function editAgentEmail(i){
+  if(!currentUser||!currentUser.isCreator)return;
+  const ag=getAgents();
+  const agent=ag[i];
+  if(!agent) return;
+  const em=prompt('Email Google de '+(agent.nom||agent.name)+' (accès panel web) :', agent.email||'');
+  if(em===null) return;
+  cfAgentAction('update',{id:agent.id,email:em.trim().toLowerCase()}).then(function(ok){
+    if(!ok) return;
+    renderAgents();
+    showToast('✅ Email mis à jour','success');
+  });
 }
 
 function deleteAgent(i){

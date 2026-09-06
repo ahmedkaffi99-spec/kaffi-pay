@@ -22,7 +22,7 @@ Deno.serve(async (req: Request) => {
     // pas les lire directement, il passe donc par ici (protégé par la clé admin).
     if (op === "list" && crudTable === "agents") {
       const { data, error } = await supabase.from("agents")
-        .select("id,nom,chat_id,role,actif").order("nom");
+        .select("id,nom,chat_id,role,actif,email").order("nom");
       if (error) return json({ ok: false, error: error.message }, 500, headers);
       return json({ ok: true, rows: data || [] }, 200, headers);
     }
@@ -109,7 +109,21 @@ Deno.serve(async (req: Request) => {
     if (op === "insert" && crudTable === "agents" && row) {
       const { error } = await supabase.from("agents").insert({
         nom: row.nom, chat_id: row.chat_id, role: row.role || "paiement", actif: row.actif ?? true,
+        email: row.email || null,
       });
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true }, 200, headers);
+    }
+    if (op === "update" && crudTable === "agents" && crudId && row) {
+      // Édition ciblée (ex: renseigner l'email Google d'un agent existant pour
+      // lui donner accès au panel web) — seuls les champs fournis sont modifiés.
+      const patch: Record<string, unknown> = {};
+      if (row.email !== undefined) patch.email = row.email || null;
+      if (row.nom !== undefined) patch.nom = row.nom;
+      if (row.chat_id !== undefined) patch.chat_id = row.chat_id;
+      if (row.actif !== undefined) patch.actif = row.actif;
+      if (Object.keys(patch).length === 0) return json({ ok: false, error: "Rien à modifier" }, 400, headers);
+      const { error } = await supabase.from("agents").update(patch).eq("id", crudId);
       if (error) return json({ ok: false, error: error.message }, 500, headers);
       return json({ ok: true }, 200, headers);
     }
@@ -170,8 +184,8 @@ Deno.serve(async (req: Request) => {
       }
 
       if (!userId) {
-        await sendTelegram(token, adminId,
-          `⚠️ <b>ID 1xBet manquant — #${order_id}</b>\nConfirmé manuellement mais crédit impossible sans ID.`);
+        const msgSansId = `⚠️ <b>ID 1xBet manquant — #${order_id}</b>\nConfirmé manuellement mais crédit impossible sans ID.`;
+        await Promise.allSettled([sendTelegram(token, adminId, msgSansId), notifyPaiementAgents(token, msgSansId)]);
         logAudit("admin_confirme_web_sans_id", { order_id });
         return json({ ok: true, status: "Paiement Reçu", warning: "ID 1xBet manquant" }, 200, headers);
       }
@@ -206,7 +220,7 @@ Deno.serve(async (req: Request) => {
         const msgSolde = webhookStatus === "echec_solde"
           ? `🏦 <b>Solde MobCash insuffisant (admin) — #${order_id}</b>\n<code>${errMsg}</code>\n<i>Rechargez le cashdesk puis relancez.</i>`
           : `⚠️ <b>MobCash échoué (admin) — #${order_id}</b>\n<code>${errMsg}</code>`;
-        await sendTelegram(token, adminId, msgSolde);
+        await Promise.allSettled([sendTelegram(token, adminId, msgSolde), notifyPaiementAgents(token, msgSolde)]);
         logAudit("admin_confirme_mobcash_echec", { order_id, errMsg, webhookStatus });
         return json({ ok: false, error: errMsg, webhook_status: webhookStatus }, 400, headers);
       }
@@ -297,8 +311,8 @@ Deno.serve(async (req: Request) => {
       if (new_user_id_1xbet) updates.user_id_1xbet = userId;
       await supabase.from(table).update(updates).eq("id", ordre.id);
 
-      await sendTelegram(token, adminId,
-        `✅ <b>Retry Admin — Dépôt crédité</b>\n#${order_id} | <code>${userId}</code>\n${montantVal.toLocaleString()} DJF`);
+      const msgRetryOk = `✅ <b>Retry Admin — Dépôt crédité</b>\n#${order_id} | <code>${userId}</code>\n${montantVal.toLocaleString()} DJF`;
+      await Promise.allSettled([sendTelegram(token, adminId, msgRetryOk), notifyPaiementAgents(token, msgRetryOk)]);
 
       if (whatsapp) {
         sendWhatsApp(whatsapp,
@@ -318,6 +332,12 @@ Deno.serve(async (req: Request) => {
         webhook_at: new Date().toISOString(),
         ...(new_user_id_1xbet ? { user_id_1xbet: userId } : {}),
       }).eq("id", ordre.id);
+      // Ce catch ne notifiait jamais personne — un échec de retry passait
+      // totalement inaperçu côté Telegram (créateur comme agents).
+      const msgRetryEchec = webhookStatus === "echec_solde"
+        ? `🏦 <b>Retry Admin — Solde MobCash insuffisant — #${order_id}</b>\n<code>${errMsg}</code>\n<i>Rechargez le cashdesk puis relancez.</i>`
+        : `⚠️ <b>Retry Admin échoué — #${order_id}</b>\n<code>${errMsg}</code>`;
+      await Promise.allSettled([sendTelegram(token, adminId, msgRetryEchec), notifyPaiementAgents(token, msgRetryEchec)]);
       return json({ ok: false, error: errMsg, webhook_status: webhookStatus }, 400, headers);
     }
   }

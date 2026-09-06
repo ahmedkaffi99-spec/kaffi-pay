@@ -29,6 +29,7 @@ jobs:
             admin-bot
             admin-action-ordre
             admin-stats
+            agent-auth
             ordres-bloques
             support-client
             get-ordre
