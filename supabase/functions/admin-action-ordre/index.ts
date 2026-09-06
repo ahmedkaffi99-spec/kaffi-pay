@@ -22,7 +22,7 @@ Deno.serve(async (req: Request) => {
     // pas les lire directement, il passe donc par ici (protégé par la clé admin).
     if (op === "list" && crudTable === "agents") {
       const { data, error } = await supabase.from("agents")
-        .select("id,nom,chat_id,role,actif").order("nom");
+        .select("id,nom,chat_id,role,actif,email").order("nom");
       if (error) return json({ ok: false, error: error.message }, 500, headers);
       return json({ ok: true, rows: data || [] }, 200, headers);
     }
@@ -109,7 +109,21 @@ Deno.serve(async (req: Request) => {
     if (op === "insert" && crudTable === "agents" && row) {
       const { error } = await supabase.from("agents").insert({
         nom: row.nom, chat_id: row.chat_id, role: row.role || "paiement", actif: row.actif ?? true,
+        email: row.email || null,
       });
+      if (error) return json({ ok: false, error: error.message }, 500, headers);
+      return json({ ok: true }, 200, headers);
+    }
+    if (op === "update" && crudTable === "agents" && crudId && row) {
+      // Édition ciblée (ex: renseigner l'email Google d'un agent existant pour
+      // lui donner accès au panel web) — seuls les champs fournis sont modifiés.
+      const patch: Record<string, unknown> = {};
+      if (row.email !== undefined) patch.email = row.email || null;
+      if (row.nom !== undefined) patch.nom = row.nom;
+      if (row.chat_id !== undefined) patch.chat_id = row.chat_id;
+      if (row.actif !== undefined) patch.actif = row.actif;
+      if (Object.keys(patch).length === 0) return json({ ok: false, error: "Rien à modifier" }, 400, headers);
+      const { error } = await supabase.from("agents").update(patch).eq("id", crudId);
       if (error) return json({ ok: false, error: error.message }, 500, headers);
       return json({ ok: true }, 200, headers);
     }
