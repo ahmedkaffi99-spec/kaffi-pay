@@ -26,6 +26,7 @@
 <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 
 <script>
 // ═══════════════════════════════════════════════════
@@ -55,15 +56,47 @@ setTimeout(function(){
   if(typeof loadReservesFromFirestore === 'function') loadReservesFromFirestore();
 }, 2000);
 
-// Stub Firebase auth shims so legacy guards don't crash — fsGoogleSignIn,
-// fsSignOut et fsOnAuthStateChanged sont remplacés par de vraies implémentations
-// juste en dessous (Firebase Auth réactivé UNIQUEMENT pour Google Sign-In —
-// aucun autre service Firebase, tout le reste reste sur Supabase).
+// Stub Firebase auth shims so legacy guards don't crash — fsGoogleSignIn et
+// fsSignOut sont remplacés juste en dessous par l'Auth Supabase (Google
+// OAuth), fsOnAuthStateChanged reste un stub inerte : rien ne l'utilise
+// encore côté Supabase et cb(null) est un no-op sûr.
 window.fsSignInEmail = function(){ return Promise.reject(new Error('Firebase auth not available')); };
 window.fsSignOut = function(){ return Promise.resolve(); };
 window.fsGoogleSignIn = function(){ return Promise.reject(new Error('Google sign-in not available')); };
 window.fsOnAuthStateChanged = function(cb){ cb(null); return function(){}; };
 window.fsCreateUser = function(){ return Promise.reject(new Error('Firebase auth not available')); };
+
+// ─── GOOGLE SIGN-IN — via Supabase Auth (pas Firebase) ─────────────────────
+// Le projet Supabase a un provider Google OAuth natif : une seule clé OAuth
+// à créer sur Google Cloud Console, collée dans Supabase (Authentication >
+// Providers > Google) — aucune dépendance Firebase.
+var supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+window.fsGoogleSignIn = function(){
+  return supabaseClient.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.href }
+  });
+};
+window.fsSignOut = function(){ return supabaseClient.auth.signOut().catch(function(){}); };
+
+// Au retour de Google, Supabase a déjà lu le code d'autorisation dans l'URL
+// et restauré la session tout seul (detectSessionInUrl, par défaut) — il
+// suffit de la lire ici. Ignoré si une session kp_session existe déjà pour
+// ne pas déclencher loginSuccess() deux fois sur un agent déjà connecté.
+supabaseClient.auth.getSession().then(function(res){
+  var session = res && res.data && res.data.session;
+  if(!session || !session.user) return;
+  var dejaConnecte = false;
+  try{ dejaConnecte = !!(JSON.parse(localStorage.getItem('kp_session'))||{}).user; }catch(e){}
+  if(dejaConnecte) return;
+  if(typeof window.checkGoogleUser === 'function'){
+    window.checkGoogleUser({
+      email: session.user.email,
+      displayName: (session.user.user_metadata && session.user.user_metadata.full_name) || ''
+    });
+  }
+}).catch(function(e){ console.warn('Supabase getSession échoué:', e && e.message); });
 
 // Fire "firebase-ready" event so legacy listeners start
 window._firebaseReady = true;
@@ -76,53 +109,6 @@ window.addEventListener('online', function() {
   var toast = document.getElementById('toast');
   if(toast){ toast.textContent = (typeof t==='function'&&t('toast-online'))||'✅ Connexion rétablie'; toast.className = 'toast show success'; setTimeout(function(){ toast.className='toast'; }, 3000); }
 });
-</script>
-
-<script type="module">
-// ═══════════════════════════════════════════════════
-// GOOGLE SIGN-IN — Firebase Auth uniquement (aucun Firestore/Realtime DB,
-// tout le reste de l'app reste sur Supabase). Le projet Firebase "kaffi-pay"
-// existe toujours ; on ne réutilise que son Auth pour l'identité Google.
-// signInWithRedirect (pas signInWithPopup) : plus fiable sur mobile/PWA
-// installée, où les popups sont souvent bloqués silencieusement.
-// ═══════════════════════════════════════════════════
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import {
-  getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult,
-  onAuthStateChanged, signOut
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyCILUjQPp_wO-IJrp6WwckMRDN5ISbcexU",
-  authDomain: "kaffi-pay.firebaseapp.com",
-  projectId: "kaffi-pay",
-  appId: "1:747410568706:web:fa56a456d89a763e68591b",
-};
-
-try {
-  const _fbApp = initializeApp(firebaseConfig);
-  const _fbAuth = getAuth(_fbApp);
-
-  window.fsGoogleSignIn = function(){ return signInWithRedirect(_fbAuth, new GoogleAuthProvider()); };
-  window.fsSignOut = function(){ return signOut(_fbAuth).catch(function(){}); };
-  window.fsOnAuthStateChanged = function(cb){ return onAuthStateChanged(_fbAuth, cb); };
-
-  // Après le retour de Google, la page recharge normalement — le résultat
-  // n'arrive pas via la promesse de fsGoogleSignIn (elle ne résout jamais,
-  // la page navigue vers Google avant) mais ici, une fois de retour.
-  getRedirectResult(_fbAuth).then(function(result){
-    if(result && result.user && typeof window.checkGoogleUser === 'function'){
-      window.checkGoogleUser(result.user);
-    }
-  }).catch(function(err){
-    console.warn('Google redirect sign-in erreur:', err && err.message);
-    if(typeof window.showLoginError === 'function'){
-      window.showLoginError('❌ Erreur Google : ' + (err && err.message || 'inconnue'));
-    }
-  });
-} catch(e) {
-  console.warn('Firebase Auth init échoué:', e && e.message);
-}
 </script>
 
 <script>
@@ -1337,10 +1323,10 @@ function doGoogleLogin(){
   if(!window.fsGoogleSignIn){showLoginError('⚠️ Auth non disponible');return;}
   var btn=document.getElementById('login-google-btn');
   if(btn){btn.disabled=true;btn.style.opacity='0.7';}
-  // signInWithRedirect quitte la page vers Google puis revient — le résultat
-  // est traité au rechargement par getRedirectResult() (voir bloc Firebase Auth
-  // en haut du fichier), pas ici. On ne gère ici que l'échec du déclenchement
-  // lui-même (ex: domaine non autorisé côté Firebase).
+  // signInWithOAuth (Supabase Auth) quitte la page vers Google puis revient —
+  // le résultat est traité au rechargement via getSession() (voir bloc Google
+  // Sign-In en haut du fichier), pas ici. On ne gère ici que l'échec du
+  // déclenchement lui-même (ex: provider Google pas encore activé côté Supabase).
   window.fsGoogleSignIn().catch(function(err){
     if(btn){btn.disabled=false;btn.style.opacity='';}
     showLoginError('❌ Erreur Google : '+(err && err.message || 'inconnue'));
