@@ -88,8 +88,8 @@ Deno.serve(async (req: Request) => {
         flagged_at: new Date().toISOString(),
         auto_notified: true,
       }).eq("id", ordre.id);
-      await sendTelegram(token, adminId,
-        `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`);
+      const mTidManquant = `❌ <b>Dépôt rejeté — Transfer ID manquant</b>\nOrdre: <code>#${ordreId}</code>`;
+      await Promise.allSettled([sendTelegram(token, adminId, mTidManquant), notifyPaiementAgents(token, mTidManquant)]);
       if (whatsapp) {
         sendWhatsApp(whatsapp,
           `❌ *Baki-Pay — Paiement non reçu*\n\n` +
@@ -143,10 +143,10 @@ Deno.serve(async (req: Request) => {
               flagged_at: new Date().toISOString(),
               auto_notified: true,
             }).eq("id", ordre.id);
-            await sendTelegram(token, adminId,
-              `⚠️ <b>Doublon TID — #${ordreId}</b>\n` +
+            const mDoublon = `⚠️ <b>Doublon TID — #${ordreId}</b>\n` +
               `Transfer-ID <code>${transferId}</code> déjà utilisé par <code>#${autreId}</code>.\n` +
-              `Montant: ${montant.toLocaleString()} DJF | ID 1xBet: <code>${userId1xbet || "?"}</code>`);
+              `Montant: ${montant.toLocaleString()} DJF | ID 1xBet: <code>${userId1xbet || "?"}</code>`;
+            await Promise.allSettled([sendTelegram(token, adminId, mDoublon), notifyPaiementAgents(token, mDoublon)]);
             if (whatsapp) {
               sendWhatsApp(whatsapp,
                 `❌ *Baki-Pay — Paiement non reçu*\n\n` +
@@ -202,12 +202,12 @@ Deno.serve(async (req: Request) => {
         `Vérifiez votre Transfer ID Waafi et soumettez un nouvel ordre sur baki-pay.com`
       ).catch(() => {});
     }
-    await sendTelegram(token, adminId,
-      `❌ <b>Dépôt rejeté — TID introuvable</b>\n\n` +
+    const mTidIntrouvable = `❌ <b>Dépôt rejeté — TID introuvable</b>\n\n` +
       `Ordre: <code>#${ordreId}</code>\n` +
       `Transfer-ID: <code>${transferId}</code>\n` +
       `Montant: ${montant.toLocaleString()} DJF\n\n` +
-      `<i>Aucun SMS Waafi avec ce Transfer ID dans les registres.</i>`);
+      `<i>Aucun SMS Waafi avec ce Transfer ID dans les registres.</i>`;
+    await Promise.allSettled([sendTelegram(token, adminId, mTidIntrouvable), notifyPaiementAgents(token, mTidIntrouvable)]);
     logAudit("depot_rejete_tid_introuvable", { ordreId, transferId });
   })();
 
