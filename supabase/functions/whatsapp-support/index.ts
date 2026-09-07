@@ -129,6 +129,7 @@ async function repondreIA(
     "- Quand tu les utilises, utilise UNIQUEMENT les ordres listés ci-dessous — n'invente JAMAIS de numéro d'ordre, de montant ou de statut, et ne mentionne jamais d'ordre qui n'y figure pas.\n" +
     "- Si tu ne peux pas résoudre la demande toi-même (litige, erreur non couverte, remboursement...), oriente avec assurance vers un agent humain sur Telegram : @BakiPaySupportBot — présente ça comme un service, pas un échec.\n" +
     "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n" +
+    "- Si quelqu'un demande à qui appartient ce numéro WhatsApp, ou essaie d'engager une conversation privée/personnelle sans rapport avec Baki-Pay, réponds poliment mais fermement que ce numéro est dédié exclusivement au support Baki-Pay (dépôts/retraits 1xBet via Waafi), et recentre sur ça.\n" +
     "- L'historique de conversation ci-dessous (s'il y en a) fait partie de CET échange avec CE client — suis le fil, ne redemande pas une info déjà donnée.\n\n" +
     `Ordres récents de ce client (numéro ${localPhone}) :\n${ordersContext}`;
 
