@@ -56,6 +56,19 @@ function menuBienvenue(senderName: string): string {
     `Pour parler à un agent humain, contactez-nous sur Telegram : @BakiPaySupportBot`;
 }
 
+// Garde-fou anti-réponse inutilisable : un modèle gratuit OpenRouter peut
+// renvoyer un texte court hors-sujet (ex: "User Safety: safe", un artefact
+// de classification interne du modèle) au lieu d'une vraie réponse — déjà
+// rencontré et documenté dans le projet paris sportifs d'Ahmed
+// (_reponse_ticket_valide). Sans ce filtre, ce texte partait tel quel sur
+// WhatsApp comme si c'était une vraie réponse au client.
+function reponseIaValide(texte: string): boolean {
+  if (!texte || texte.trim().length < 15) return false;
+  const t = texte.trim().toLowerCase();
+  if (/^user safety[:\s]/.test(t) || t === "safe" || t === "unsafe") return false;
+  return true;
+}
+
 // Répond en langage naturel via Claude — pour tout ce que les commandes fixes
 // (numéro d'ordre exact, "aide", "tarifs") ne couvrent pas, ex: "où en est
 // mon dépôt d'hier ?". Ne reçoit que les ordres récents de CE numéro comme
@@ -132,7 +145,7 @@ async function repondreIA(
         });
         const data = await res.json().catch(() => ({}));
         const reply = data.choices?.[0]?.message?.content;
-        if (res.ok && reply) return reply;
+        if (res.ok && reply && reponseIaValide(reply)) return reply;
         console.warn("whatsapp-support OpenRouter", modele, "réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
       } catch (e) {
         console.warn("whatsapp-support OpenRouter", modele, "échoué:", (e as Error).message);
