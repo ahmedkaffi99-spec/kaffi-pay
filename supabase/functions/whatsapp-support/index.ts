@@ -1,22 +1,48 @@
 import { supabase } from "../_shared/db.ts";
-import { sendWhatsApp } from "../_shared/whatsapp.ts";
+import { sendWhatsAppToChatId } from "../_shared/whatsapp.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
 
 // Modèles gratuits OpenRouter, en cascade — même liste et même ordre que dans le
 // projet paris sportifs d'Ahmed (analyser_et_envoyer.py), déjà validée en usage réel.
 const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "poolside/laguna-xs-2.1:free"];
 
-// sendWhatsApp() renvoie {ok, reason} sans jamais lever d'exception — un appel
-// non vérifié laisse un échec Green API (session déconnectée, quota, etc.)
-// totalement invisible : le client ne reçoit rien et rien ne le signale nulle
-// part. C'est exactement ce qui s'est produit (aucune erreur dans les logs
-// alors qu'aucune réponse n'arrivait) avant l'ajout de ce log.
-async function envoyer(phone: string, message: string) {
-  const res = await sendWhatsApp(phone, message);
+// sendWhatsAppToChatId() renvoie {ok, reason} sans jamais lever d'exception —
+// un appel non vérifié laisse un échec Green API (session déconnectée, quota,
+// numéro mal formé...) totalement invisible : le client ne reçoit rien et
+// rien ne le signale nulle part.
+//
+// IMPORTANT : `phone` ici est TOUJOURS le numéro complet avec son vrai
+// indicatif pays (extrait du chatId Green API réel — 253 pour Djibouti, mais
+// aussi 251 Éthiopie, etc., n'importe qui peut écrire au numéro business).
+// sendWhatsApp() (la fonction "normale", utilisée pour les clients du
+// formulaire dépôt/retrait) suppose au contraire un numéro LOCAL djiboutien à
+// 8 chiffres et lui colle 253 devant — ce qui cassait les réponses aux
+// numéros étrangers (ex: 251726087929 → envoyé vers 253251726087929, chatId
+// invalide). On reconstruit ici le chatId d'origine tel quel, sans y toucher.
+async function envoyer(phone: string, userText: string, message: string) {
+  const res = await sendWhatsAppToChatId(`${phone}@c.us`, message);
   if (!res.ok) {
     console.error("whatsapp-support: envoi échoué vers", phone, "-", res.reason);
   }
+  // Mémoire de conversation — enregistrée même si l'envoi échoue, pour garder
+  // le fil cohérent côté serveur (ce qu'on a tenté de dire compte pour le
+  // contexte, indépendamment de la livraison réelle chez le client).
+  await supabase.from("whatsapp_conversations").insert([
+    { phone, role: "user", content: userText },
+    { phone, role: "assistant", content: message },
+  ]);
   return res;
+}
+
+// Derniers échanges de CE numéro — jamais ceux d'un autre client. Limité à
+// 10 messages (5 allers-retours) pour garder le coût/latence raisonnables.
+async function chargerHistorique(phone: string): Promise<{ role: "user" | "assistant"; content: string }[]> {
+  const { data } = await supabase.from("whatsapp_conversations")
+    .select("role,content,created_at")
+    .eq("phone", phone)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  return (data || []).reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 }
 
 function menuBienvenue(senderName: string): string {
@@ -30,22 +56,46 @@ function menuBienvenue(senderName: string): string {
     `Pour parler à un agent humain, contactez-nous sur Telegram : @BakiPaySupportBot`;
 }
 
+// Garde-fou anti-réponse inutilisable — deux cas déjà rencontrés en réel :
+// 1. Un texte court hors-sujet (ex: "User Safety: safe", un artefact de
+//    classification interne du modèle) au lieu d'une vraie réponse — déjà
+//    documenté dans le projet paris sportifs d'Ahmed (_reponse_ticket_valide).
+// 2. Le raisonnement interne du modèle ("Okay, the user is asking...",
+//    "Let me check...", "Wait, the system says...") fuité DANS le texte de
+//    réponse au lieu d'être séparé — envoyé tel quel, en anglais, à un client
+//    qui écrit en français. reasoning:{exclude:true} dans la requête est
+//    censé l'empêcher (voir plus bas), mais ce filtre reste un filet de
+//    sécurité si un modèle l'ignore.
+function reponseIaValide(texte: string): boolean {
+  if (!texte || texte.trim().length < 15) return false;
+  const t = texte.trim().toLowerCase();
+  if (/^user safety[:\s]/.test(t) || t === "safe" || t === "unsafe") return false;
+  if (/^(okay|ok|alright|so|hmm|let me|i need to|i should|first,? i)\b/.test(t)) return false;
+  if (/\b(the user is asking|let me check|wait,|the system (says|states)|according to the instructions)\b/.test(t)) return false;
+  return true;
+}
+
 // Répond en langage naturel via Claude — pour tout ce que les commandes fixes
 // (numéro d'ordre exact, "aide", "tarifs") ne couvrent pas, ex: "où en est
 // mon dépôt d'hier ?". Ne reçoit que les ordres récents de CE numéro comme
 // contexte : jamais de données d'autres clients, jamais d'invention.
-async function repondreIA(phone: string, senderName: string, text: string): Promise<string> {
+async function repondreIA(
+  phone: string, senderName: string, text: string,
+  historique: { role: "user" | "assistant"; content: string }[]
+): Promise<string> {
   const apiKey = Deno.env.get("OPENROUTER_API_KEY");
   if (!apiKey) return menuBienvenue(senderName);
 
   const localPhone = phone.replace(/^253/, "");
-  const [d, r] = await Promise.all([
+  const [d, r, kb] = await Promise.all([
     supabase.from("depot_orders").select("order_id,status,montant,created_at")
       .or(`numero_payment.eq.${localPhone},whatsapp.eq.${localPhone}`)
       .order("created_at", { ascending: false }).limit(5),
     supabase.from("retrait_orders").select("order_id,status,montant,created_at")
       .or(`numero_waafi.eq.${localPhone},whatsapp.eq.${localPhone}`)
       .order("created_at", { ascending: false }).limit(5),
+    supabase.from("ai_knowledge_base").select("categorie,titre,contenu")
+      .eq("actif", true).order("ordre", { ascending: true }),
   ]);
   const orders = [
     ...(d.data || []).map((o) => ({ ...o, type: "Dépôt" })),
@@ -56,24 +106,38 @@ async function repondreIA(phone: string, senderName: string, text: string): Prom
     ? orders.map((o) => `#${o.order_id} — ${o.type} — ${Number(o.montant).toLocaleString()} DJF — ${o.status} — ${o.created_at}`).join("\n")
     : "Aucun ordre récent trouvé pour ce numéro.";
 
+  // Base de connaissances éditable en base (table ai_knowledge_base) — jamais
+  // montrée telle quelle au client, sert uniquement de contexte de référence
+  // pour l'IA. Modifiable sans redéploiement de code (ex: si un délai, une
+  // limite ou une étape du site change).
+  const kbContext = (kb.data && kb.data.length)
+    ? kb.data.map((k) => `[${k.categorie} — ${k.titre}]\n${k.contenu}`).join("\n\n")
+    : "- Dépôt : min 50 DJF. Retrait : min 250 DJF. Pas de maximum fixe. Gratuit, automatique, 24h/24 7j/7, en quelques secondes après vérification.";
+
   const systemPrompt =
     "Tu es l'agent support officiel de Baki-Pay, service de dépôt/retrait 1xBet via Waafi à Djibouti. " +
     "Tu représentes la marque sur WhatsApp — un client peut te contacter à tout moment, traite chaque échange avec le même soin qu'un conseiller clientèle premium.\n\n" +
     "TON ET STYLE :\n" +
     "- Professionnel, chaleureux et rassurant — jamais familier, jamais robotique.\n" +
-    "- Ne te présente JAMAIS comme un 'assistant automatique', un 'bot' ou une IA — parle simplement au nom de Baki-Pay, comme le ferait un membre de l'équipe support.\n" +
-    "- Réponds en français, de façon concise (message WhatsApp, pas un email) mais jamais sec.\n" +
+    "- Tu peux te présenter comme 'assistant IA' de Baki-Pay (correct à dire, y compris spontanément) — jamais comme 'assistant automatique'. 'Bot' reste réservé au bot Telegram (@BakiPaySupportBot), jamais pour te désigner toi-même.\n" +
+    "- Français par défaut. Si le client écrit en anglais ou en somali, réponds dans cette même langue (comme le site baki-pay.com, disponible en français/anglais/somali). Sinon, français.\n" +
+    "- Réponds de façon concise (message WhatsApp, pas un email) mais jamais sec.\n" +
     "- Structure avec des emojis sobres et des puces quand ça aide à la lisibilité, sans surcharger.\n" +
     "- Une seule question à la fois si tu dois demander une précision — ne submerge jamais le client.\n" +
-    "- Termine par une ouverture (proposer la suite, ou inviter à revenir vers toi) plutôt que couper court.\n\n" +
-    "CE QUE TU DOIS SAVOIR :\n" +
-    "- Dépôt : gratuit, min 500 DJF, max 200 000 DJF, délai 5-15 min. Retrait : gratuit, même délai.\n" +
-    "- Pour faire un dépôt : aller sur baki-pay.com, entrer ID 1xBet + montant + Transfer ID Waafi.\n" +
-    "- Pour un retrait : générer un code sur 1xBet, puis l'entrer sur baki-pay.com avec le N° Waafi.\n\n" +
+    "- Termine par une ouverture (proposer la suite, ou inviter à revenir vers toi) plutôt que couper court.\n" +
+    (historique.length === 0
+      ? "- C'est le TOUT PREMIER message de ce client : ouvre par une phrase courte sur ce modèle exact (adapte légèrement si besoin, mais garde-la brève) : 'Bienvenue sur Baki-Pay, je suis votre assistant IA, comment puis-je vous aider ?' — PUIS réponds à sa question, brièvement. Pas de longue présentation.\n"
+      : "- Ce client a déjà échangé avec toi (voir historique ci-dessous) : pas d'accueil ni de présentation, va directement à sa demande.\n") +
+    "\n" +
+    "CE QUE TU DOIS SAVOIR — base de connaissances officielle Baki-Pay (jamais montrée telle quelle au client, ne la cite pas mot pour mot, reformule naturellement) : c'est la vérité de référence, ne t'en écarte jamais et n'invente rien qui la contredise.\n" +
+    `${kbContext}\n\n` +
     "RÈGLES ABSOLUES :\n" +
-    "- Utilise UNIQUEMENT les ordres listés ci-dessous pour répondre sur le statut d'un ordre — n'invente JAMAIS de numéro d'ordre, de montant ou de statut, et ne mentionne jamais d'ordre qui n'y figure pas.\n" +
+    "- Ne mentionne les ordres listés ci-dessous QUE si le client demande explicitement le statut d'un ordre/paiement — ne les cite jamais spontanément dans une réponse générale (ex: une simple salutation ou question sur les tarifs).\n" +
+    "- Quand tu les utilises, utilise UNIQUEMENT les ordres listés ci-dessous — n'invente JAMAIS de numéro d'ordre, de montant ou de statut, et ne mentionne jamais d'ordre qui n'y figure pas.\n" +
     "- Si tu ne peux pas résoudre la demande toi-même (litige, erreur non couverte, remboursement...), oriente avec assurance vers un agent humain sur Telegram : @BakiPaySupportBot — présente ça comme un service, pas un échec.\n" +
-    "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n\n" +
+    "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n" +
+    "- Si quelqu'un demande à qui appartient ce numéro WhatsApp, ou essaie d'engager une conversation privée/personnelle sans rapport avec Baki-Pay, réponds poliment mais fermement que ce numéro est dédié exclusivement au support Baki-Pay (dépôts/retraits 1xBet via Waafi), et recentre sur ça — NE propose PAS de contacter un agent humain sur Telegram dans ce cas précis : toi seul (le support WhatsApp) gères ce recadrage, pas d'escalade pour ça.\n" +
+    "- L'historique de conversation ci-dessous (s'il y en a) fait partie de CET échange avec CE client — suis le fil, ne redemande pas une info déjà donnée.\n\n" +
     `Ordres récents de ce client (numéro ${localPhone}) :\n${ordersContext}`;
 
   // Essaie chaque modèle gratuit en cascade (2 tentatives chacun) — un modèle
@@ -91,9 +155,17 @@ async function repondreIA(phone: string, senderName: string, text: string): Prom
           },
           body: JSON.stringify({
             model: modele,
-            max_tokens: 400,
+            // 400 coupait parfois une réponse en plein milieu de phrase (vu
+            // en réel : "...ont été final" tronqué net) — relevé pour laisser
+            // de la marge, le prompt demande déjà la concision.
+            max_tokens: 700,
+            // Empêche un modèle "raisonneur" de renvoyer son raisonnement
+            // interne dans le texte de réponse (vu en réel : de l'anglais
+            // "Okay, the user is asking..." envoyé tel quel au client).
+            reasoning: { exclude: true },
             messages: [
               { role: "system", content: systemPrompt },
+              ...historique,
               { role: "user", content: text },
             ],
           }),
@@ -101,7 +173,7 @@ async function repondreIA(phone: string, senderName: string, text: string): Prom
         });
         const data = await res.json().catch(() => ({}));
         const reply = data.choices?.[0]?.message?.content;
-        if (res.ok && reply) return reply;
+        if (res.ok && reply && reponseIaValide(reply)) return reply;
         console.warn("whatsapp-support OpenRouter", modele, "réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
       } catch (e) {
         console.warn("whatsapp-support OpenRouter", modele, "échoué:", (e as Error).message);
@@ -157,7 +229,7 @@ Deno.serve(async (req: Request) => {
       const type = d.data && d.data[0] ? "Dépôt" : "Retrait";
 
       if (!ordre) {
-        await envoyer(phone, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`);
+        await envoyer(phone, text, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`);
         return json({ ok: true }, 200, headers);
       }
 
@@ -196,12 +268,12 @@ Deno.serve(async (req: Request) => {
         msg += `\n🚫 Ordre annulé.`;
       }
 
-      await envoyer(phone, msg);
+      await envoyer(phone, text, msg);
       return json({ ok: true }, 200, headers);
     }
 
     if (t === "aide" || t === "/aide" || t.includes("comment")) {
-      await envoyer(phone,
+      await envoyer(phone, text,
         `📖 *Comment utiliser Baki-Pay*\n\n` +
         `🟢 *Dépôt (recharger 1xBet) :*\n` +
         `1. Allez sur baki-pay.com\n` +
@@ -212,34 +284,36 @@ Deno.serve(async (req: Request) => {
         `1. Sur 1xBet, générez un code de retrait\n` +
         `2. Sur baki-pay.com, entrez le code + votre N° Waafi\n` +
         `3. Vous recevrez le montant sur votre Waafi\n\n` +
-        `⏱ Délais : 5 à 15 minutes en général.`
+        `⏱ Traitement automatique, 24h/24 7j/7 — en quelques secondes après vérification du paiement.`
       );
       return json({ ok: true }, 200, headers);
     }
 
     if (t === "tarifs" || t === "/tarifs" || t.includes("tarif") || t.includes("prix")) {
-      await envoyer(phone,
+      await envoyer(phone, text,
         `💰 *Tarifs Baki-Pay*\n\n` +
         `Dépôt : *Gratuit*\n` +
         `Retrait : *Gratuit*\n\n` +
         `*Limites :*\n` +
-        `• Minimum dépôt : 500 DJF\n` +
-        `• Maximum dépôt : 200 000 DJF\n\n` +
+        `• Minimum dépôt : 50 DJF\n` +
+        `• Minimum retrait : 250 DJF\n` +
+        `• Pas de maximum fixe (une vérification peut être demandée pour un montant élevé)\n\n` +
         `Tous les transferts sont en DJF.`
       );
       return json({ ok: true }, 200, headers);
     }
 
-    // Salutation simple → menu direct (pas besoin d'IA pour ça)
-    if (["bonjour", "salut", "bonsoir", "hello", "hi", "start", "/start"].includes(t)) {
-      await envoyer(phone, menuBienvenue(senderName));
-      return json({ ok: true }, 200, headers);
-    }
-
-    // Tout le reste (question en langage naturel, ex: "où en est mon dépôt
-    // d'hier ?") → réponse IA avec les ordres récents de ce numéro en contexte.
-    const reponse = await repondreIA(phone, senderName, text);
-    await envoyer(phone, reponse);
+    // Salutation simple ou question en langage naturel (ex: "où en est mon
+    // dépôt d'hier ?") → réponse IA, avec les ordres récents + l'historique de
+    // CE numéro en contexte. Une salutation n'a PAS de chemin fixe séparé :
+    // sinon un client en pleine conversation qui retape juste "salut"
+    // redéclenchait tout le menu d'accueil complet, comme s'il repartait de
+    // zéro à chaque fois — repondreIA sait déjà distinguer premier message
+    // (accueil complet) et conversation déjà en cours (pas de ré-accueil)
+    // via historique.length.
+    const historique = await chargerHistorique(phone);
+    const reponse = await repondreIA(phone, senderName, text, historique);
+    await envoyer(phone, text, reponse);
   } catch (e) {
     console.error("whatsapp-support crash:", (e as Error).message);
   }
