@@ -116,7 +116,8 @@ async function repondreIA(
     "- Une seule question à la fois si tu dois demander une précision — ne submerge jamais le client.\n" +
     "- Termine par une ouverture (proposer la suite, ou inviter à revenir vers toi) plutôt que couper court.\n\n" +
     "CE QUE TU DOIS SAVOIR :\n" +
-    "- Dépôt : gratuit, min 500 DJF, max 200 000 DJF, délai 5-15 min. Retrait : gratuit, même délai.\n" +
+    "- Dépôt : gratuit, min 500 DJF, max 200 000 DJF. Retrait : gratuit, même limites.\n" +
+    "- Traitement entièrement automatique, 24h/24 et 7j/7 — l'ordre est traité en quelques secondes après vérification du paiement (jamais '5-15 min' ni une autre estimation en minutes).\n" +
     "- Pour faire un dépôt : aller sur baki-pay.com, entrer ID 1xBet + montant + Transfer ID Waafi.\n" +
     "- Pour un retrait : générer un code sur 1xBet, puis l'entrer sur baki-pay.com avec le N° Waafi.\n\n" +
     "RÈGLES ABSOLUES :\n" +
@@ -268,7 +269,7 @@ Deno.serve(async (req: Request) => {
         `1. Sur 1xBet, générez un code de retrait\n` +
         `2. Sur baki-pay.com, entrez le code + votre N° Waafi\n` +
         `3. Vous recevrez le montant sur votre Waafi\n\n` +
-        `⏱ Délais : 5 à 15 minutes en général.`
+        `⏱ Traitement automatique, 24h/24 7j/7 — en quelques secondes après vérification du paiement.`
       );
       return json({ ok: true }, 200, headers);
     }
