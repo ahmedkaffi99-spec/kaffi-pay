@@ -6,11 +6,12 @@ import { json, cors, logAudit } from "../_shared/utils.ts";
 // projet paris sportifs d'Ahmed (analyser_et_envoyer.py), déjà validée en usage réel.
 const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "poolside/laguna-xs-2.1:free"];
 
-// Seul modèle gratuit d'OpenRouter capable de lire une image ou d'écouter un
-// vocal (multimodal texte+image+vidéo+audio → texte). Utilisé UNIQUEMENT pour
-// transformer une photo/un vocal en texte (voir decrireMedia) — jamais mis
-// dans la cascade OPENROUTER_MODELS ci-dessus, car sa disponibilité mesurée
-// (~75% sur 3 jours) est trop instable pour porter toutes les conversations.
+// Modèle gratuit d'OpenRouter capable de lire une image (voir decrirePhoto).
+// Jamais mis dans la cascade OPENROUTER_MODELS ci-dessus, car sa
+// disponibilité mesurée (~75% sur 3 jours) est trop instable pour porter
+// toutes les conversations. Pas utilisé pour l'audio : OpenRouter exige un
+// solde minimum de 0,50$ pour tout contenu audio (voir transcrireVocalGroq,
+// qui utilise Groq/Whisper à la place — réellement gratuit).
 const MODELE_OMNI = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
 
 // Text-to-speech gratuit — utilisé UNIQUEMENT en réponse symétrique quand LE
@@ -141,34 +142,50 @@ function reponseIaValide(texte: string): boolean {
   return true;
 }
 
-// Transforme une photo ou un vocal WhatsApp en texte via le modèle omni —
-// pour une image : description factuelle (reçu Waafi, capture d'erreur...) ;
-// pour un vocal : transcription fidèle (traduite en français si besoin).
+// Transcrit un vocal WhatsApp via Whisper (Groq, gratuit sans solde minimum —
+// contrairement à l'audio d'OpenRouter qui exige 0,50$ de crédit, voir
+// decrireMedia). Groq attend un vrai multipart/form-data, pas du base64 JSON.
+async function transcrireVocalGroq(downloadUrl: string): Promise<string | null> {
+  const apiKey = Deno.env.get("GROQ_API_KEY");
+  if (!apiKey) return null;
+  try {
+    const audioRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(15000) });
+    if (!audioRes.ok) {
+      logAudit("transcrireVocalGroq_debug", { etape: "fetch_audio", status: audioRes.status });
+      return null;
+    }
+    const blob = await audioRes.blob();
+    const form = new FormData();
+    form.append("file", blob, "vocal.ogg");
+    form.append("model", "whisper-large-v3-turbo");
+
+    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.text && data.text.trim().length > 0) return data.text.trim();
+    logAudit("transcrireVocalGroq_debug", { etape: "reponse_groq", status: res.status, corps: JSON.stringify(data).substring(0, 500) });
+    console.warn("whatsapp-support: transcrireVocalGroq réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
+    return null;
+  } catch (e) {
+    logAudit("transcrireVocalGroq_debug", { etape: "exception", erreur: (e as Error).message });
+    console.warn("whatsapp-support: transcrireVocalGroq échoué:", (e as Error).message);
+    return null;
+  }
+}
+
+// Décrit une photo WhatsApp via le modèle omni OpenRouter (gratuit, l'image
+// n'est pas soumise à l'exigence de solde minimum qui touche l'audio).
 // Retourne null si le modèle échoue (indisponibilité connue, voir MODELE_OMNI)
 // — l'appelant doit alors prévenir le client plutôt que de rester silencieux.
-async function decrireMedia(type: "image" | "audio", downloadUrl: string, caption: string, mimeType: string): Promise<string | null> {
+async function decrirePhoto(downloadUrl: string, caption: string): Promise<string | null> {
   const apiKey = Deno.env.get("OPENROUTER_API_KEY");
   if (!apiKey) return null;
   try {
-    let contentPart: Record<string, unknown>;
-    if (type === "image") {
-      contentPart = { type: "image_url", image_url: { url: downloadUrl } };
-    } else {
-      const audioRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(15000) });
-      if (!audioRes.ok) {
-        logAudit("decrireMedia_debug", { etape: "fetch_audio", status: audioRes.status });
-        return null;
-      }
-      const bytes = new Uint8Array(await audioRes.arrayBuffer());
-      let binaire = "";
-      for (const b of bytes) binaire += String.fromCharCode(b);
-      const format = (mimeType.split("/")[1] || "ogg").split(";")[0];
-      contentPart = { type: "input_audio", input_audio: { data: btoa(binaire), format } };
-      logAudit("decrireMedia_debug", { etape: "audio_prepare", tailleOctets: bytes.length, mimeType, format });
-    }
-    const instruction = type === "image"
-      ? `Décris cette image en français, en te concentrant sur tout élément utile pour un support de paiement Waafi/1xBet (reçu de transfert, capture d'écran d'erreur, numéro, montant, statut). Sois factuel et précis, pas de supposition.${caption ? ` Le client a ajouté ce texte avec l'image : "${caption}"` : ""}`
-      : `Transcris fidèlement ce message vocal (traduis-le en français s'il est dans une autre langue), mot pour mot, sans reformuler ni résumer.`;
+    const instruction = `Décris cette image en français, en te concentrant sur tout élément utile pour un support de paiement Waafi/1xBet (reçu de transfert, capture d'écran d'erreur, numéro, montant, statut). Sois factuel et précis, pas de supposition.${caption ? ` Le client a ajouté ce texte avec l'image : "${caption}"` : ""}`;
 
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -182,19 +199,17 @@ async function decrireMedia(type: "image" | "audio", downloadUrl: string, captio
         model: MODELE_OMNI,
         max_tokens: 500,
         reasoning: { exclude: true },
-        messages: [{ role: "user", content: [{ type: "text", text: instruction }, contentPart] }],
+        messages: [{ role: "user", content: [{ type: "text", text: instruction }, { type: "image_url", image_url: { url: downloadUrl } }] }],
       }),
       signal: AbortSignal.timeout(25000),
     });
     const data = await res.json().catch(() => ({}));
     const reply = data.choices?.[0]?.message?.content;
     if (res.ok && reply && reponseIaValide(reply)) return reply.trim();
-    logAudit("decrireMedia_debug", { etape: "reponse_omni", type, status: res.status, corps: JSON.stringify(data).substring(0, 800) });
-    console.warn("whatsapp-support: decrireMedia réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
+    console.warn("whatsapp-support: decrirePhoto réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
     return null;
   } catch (e) {
-    logAudit("decrireMedia_debug", { etape: "exception", type, erreur: (e as Error).message });
-    console.warn("whatsapp-support: decrireMedia échoué:", (e as Error).message);
+    console.warn("whatsapp-support: decrirePhoto échoué:", (e as Error).message);
     return null;
   }
 }
@@ -336,12 +351,12 @@ Deno.serve(async (req: Request) => {
       ""
     ).trim();
 
-    // Photo ou vocal (pas de texte direct) → on les fait lire par le modèle
-    // omni (voir decrireMedia) puis on continue EXACTEMENT le même flux que
-    // pour un message texte normal (suivi d'ordre, aide, tarifs, IA...).
-    // clientAEnvoyeVocal reste vrai pour TOUT le reste du traitement de ce
-    // message : si le client a parlé, le bot répond aussi en vocal, quelle
-    // que soit la branche qui produit finalement la réponse.
+    // Photo ou vocal (pas de texte direct) → transcrits/décrits en texte
+    // (voir transcrireVocalGroq / decrirePhoto) puis on continue EXACTEMENT
+    // le même flux que pour un message texte normal (suivi d'ordre, aide,
+    // tarifs, IA...). clientAEnvoyeVocal reste vrai pour TOUT le reste du
+    // traitement de ce message : si le client a parlé, le bot répond aussi
+    // en vocal, quelle que soit la branche qui produit la réponse finale.
     const typeMessage = body.messageData?.typeMessage || "";
     const clientAEnvoyeVocal = typeMessage === "audioMessage";
     if (!text && (typeMessage === "imageMessage" || clientAEnvoyeVocal)) {
@@ -349,7 +364,9 @@ Deno.serve(async (req: Request) => {
       const downloadUrl = fileData.downloadUrl;
       const estVocal = clientAEnvoyeVocal;
       if (downloadUrl) {
-        const resultat = await decrireMedia(estVocal ? "audio" : "image", downloadUrl, fileData.caption || "", fileData.mimeType || "");
+        const resultat = estVocal
+          ? await transcrireVocalGroq(downloadUrl)
+          : await decrirePhoto(downloadUrl, fileData.caption || "");
         if (resultat) {
           text = estVocal ? resultat : (fileData.caption ? `${fileData.caption}\n[Photo envoyée — description: ${resultat}]` : `[Photo envoyée — description: ${resultat}]`);
         } else {
