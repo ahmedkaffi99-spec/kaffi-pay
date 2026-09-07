@@ -1,5 +1,5 @@
 import { supabase } from "../_shared/db.ts";
-import { sendWhatsAppToChatId } from "../_shared/whatsapp.ts";
+import { sendWhatsAppToChatId, sendWhatsAppAudioToChatId } from "../_shared/whatsapp.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
 
 // Modèles gratuits OpenRouter, en cascade — même liste et même ordre que dans le
@@ -12,6 +12,13 @@ const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "po
 // dans la cascade OPENROUTER_MODELS ci-dessus, car sa disponibilité mesurée
 // (~75% sur 3 jours) est trop instable pour porter toutes les conversations.
 const MODELE_OMNI = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
+
+// Text-to-speech gratuit — utilisé UNIQUEMENT en réponse symétrique quand LE
+// CLIENT LUI-MÊME a envoyé un vocal (voir clientAEnvoyeVocal plus bas) : s'il
+// écrit en texte, la réponse reste en texte. Voix nativement anglaise —
+// acceptable pour un test, à revoir si la prononciation française est mauvaise.
+const MODELE_TTS = "deepgram/flux-tts:free";
+const VOIX_TTS = "flux-alexis-en";
 
 // sendWhatsAppToChatId() renvoie {ok, reason} sans jamais lever d'exception —
 // un appel non vérifié laisse un échec Green API (session déconnectée, quota,
@@ -39,6 +46,58 @@ async function envoyer(phone: string, userText: string, message: string) {
     { phone, role: "assistant", content: message },
   ]);
   return res;
+}
+
+// Convertit un texte de réponse en audio via le TTS gratuit — retourne null
+// si la synthèse échoue (l'appelant doit alors se replier sur du texte,
+// jamais laisser le client sans réponse). Les astérisques (mise en forme
+// WhatsApp *gras*) n'ont aucun sens à l'oral — retirés avant synthèse.
+async function genererVocal(texte: string): Promise<Uint8Array | null> {
+  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+  if (!apiKey) return null;
+  try {
+    const texteOral = texte.replace(/\*/g, "");
+    const res = await fetch("https://openrouter.ai/api/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://baki-pay.com",
+        "X-Title": "Baki-Pay Support",
+      },
+      body: JSON.stringify({ model: MODELE_TTS, input: texteOral, voice: VOIX_TTS }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) {
+      console.warn("whatsapp-support: genererVocal échoué:", res.status, await res.text().catch(() => ""));
+      return null;
+    }
+    return new Uint8Array(await res.arrayBuffer());
+  } catch (e) {
+    console.warn("whatsapp-support: genererVocal échoué:", (e as Error).message);
+    return null;
+  }
+}
+
+// Point d'envoi unique pour toutes les réponses du bot (suivi d'ordre, aide,
+// tarifs, IA) — si CE client a lui-même écrit en vocal, on répond en vocal
+// (symétrique) ; sinon en texte, comme avant. Si la synthèse vocale échoue,
+// repli automatique sur le texte plutôt que de laisser le client sans rien.
+async function repondreAuClient(phone: string, userText: string, message: string, vocal: boolean) {
+  if (vocal) {
+    const audio = await genererVocal(message);
+    if (audio) {
+      const res = await sendWhatsAppAudioToChatId(`${phone}@c.us`, audio, "reponse.mp3", "audio/mpeg");
+      if (!res.ok) console.error("whatsapp-support: envoi vocal échoué vers", phone, "-", res.reason);
+      await supabase.from("whatsapp_conversations").insert([
+        { phone, role: "user", content: userText },
+        { phone, role: "assistant", content: message },
+      ]);
+      return res;
+    }
+    console.warn("whatsapp-support: repli texte après échec TTS pour", phone);
+  }
+  return envoyer(phone, userText, message);
 }
 
 // Derniers échanges de CE numéro — jamais ceux d'un autre client. Limité à
@@ -274,11 +333,15 @@ Deno.serve(async (req: Request) => {
     // Photo ou vocal (pas de texte direct) → on les fait lire par le modèle
     // omni (voir decrireMedia) puis on continue EXACTEMENT le même flux que
     // pour un message texte normal (suivi d'ordre, aide, tarifs, IA...).
+    // clientAEnvoyeVocal reste vrai pour TOUT le reste du traitement de ce
+    // message : si le client a parlé, le bot répond aussi en vocal, quelle
+    // que soit la branche qui produit finalement la réponse.
     const typeMessage = body.messageData?.typeMessage || "";
-    if (!text && (typeMessage === "imageMessage" || typeMessage === "audioMessage")) {
+    const clientAEnvoyeVocal = typeMessage === "audioMessage";
+    if (!text && (typeMessage === "imageMessage" || clientAEnvoyeVocal)) {
       const fileData = body.messageData?.fileMessageData || {};
       const downloadUrl = fileData.downloadUrl;
-      const estVocal = typeMessage === "audioMessage";
+      const estVocal = clientAEnvoyeVocal;
       if (downloadUrl) {
         const resultat = await decrireMedia(estVocal ? "audio" : "image", downloadUrl, fileData.caption || "", fileData.mimeType || "");
         if (resultat) {
@@ -311,7 +374,7 @@ Deno.serve(async (req: Request) => {
       const type = d.data && d.data[0] ? "Dépôt" : "Retrait";
 
       if (!ordre) {
-        await envoyer(phone, text, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`);
+        await repondreAuClient(phone, text, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`, clientAEnvoyeVocal);
         return json({ ok: true }, 200, headers);
       }
 
@@ -350,12 +413,12 @@ Deno.serve(async (req: Request) => {
         msg += `\n🚫 Ordre annulé.`;
       }
 
-      await envoyer(phone, text, msg);
+      await repondreAuClient(phone, text, msg, clientAEnvoyeVocal);
       return json({ ok: true }, 200, headers);
     }
 
     if (t === "aide" || t === "/aide" || t.includes("comment")) {
-      await envoyer(phone, text,
+      await repondreAuClient(phone, text,
         `📖 *Comment utiliser Baki-Pay*\n\n` +
         `🟢 *Dépôt (recharger 1xBet) :*\n` +
         `1. Allez sur baki-pay.com\n` +
@@ -366,13 +429,14 @@ Deno.serve(async (req: Request) => {
         `1. Sur 1xBet, générez un code de retrait\n` +
         `2. Sur baki-pay.com, entrez le code + votre N° Waafi\n` +
         `3. Vous recevrez le montant sur votre Waafi\n\n` +
-        `⏱ Traitement automatique, 24h/24 7j/7 — en quelques secondes après vérification du paiement.`
+        `⏱ Traitement automatique, 24h/24 7j/7 — en quelques secondes après vérification du paiement.`,
+        clientAEnvoyeVocal
       );
       return json({ ok: true }, 200, headers);
     }
 
     if (t === "tarifs" || t === "/tarifs" || t.includes("tarif") || t.includes("prix")) {
-      await envoyer(phone, text,
+      await repondreAuClient(phone, text,
         `💰 *Tarifs Baki-Pay*\n\n` +
         `Dépôt : *Gratuit*\n` +
         `Retrait : *Gratuit*\n\n` +
@@ -380,7 +444,8 @@ Deno.serve(async (req: Request) => {
         `• Minimum dépôt : 50 DJF\n` +
         `• Minimum retrait : 250 DJF\n` +
         `• Pas de maximum fixe (une vérification peut être demandée pour un montant élevé)\n\n` +
-        `Tous les transferts sont en DJF.`
+        `Tous les transferts sont en DJF.`,
+        clientAEnvoyeVocal
       );
       return json({ ok: true }, 200, headers);
     }
@@ -395,7 +460,7 @@ Deno.serve(async (req: Request) => {
     // via historique.length.
     const historique = await chargerHistorique(phone);
     const reponse = await repondreIA(phone, senderName, text, historique);
-    await envoyer(phone, text, reponse);
+    await repondreAuClient(phone, text, reponse, clientAEnvoyeVocal);
   } catch (e) {
     console.error("whatsapp-support crash:", (e as Error).message);
   }
