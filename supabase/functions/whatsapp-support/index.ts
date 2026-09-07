@@ -1,4 +1,3 @@
-import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.32.1";
 import { supabase } from "../_shared/db.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
@@ -19,7 +18,7 @@ function menuBienvenue(senderName: string): string {
 // mon dépôt d'hier ?". Ne reçoit que les ordres récents de CE numéro comme
 // contexte : jamais de données d'autres clients, jamais d'invention.
 async function repondreIA(phone: string, senderName: string, text: string): Promise<string> {
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
   if (!apiKey) return menuBienvenue(senderName);
 
   const localPhone = phone.replace(/^253/, "");
@@ -40,26 +39,44 @@ async function repondreIA(phone: string, senderName: string, text: string): Prom
     ? orders.map((o) => `#${o.order_id} — ${o.type} — ${Number(o.montant).toLocaleString()} DJF — ${o.status} — ${o.created_at}`).join("\n")
     : "Aucun ordre récent trouvé pour ce numéro.";
 
+  const systemPrompt =
+    "Tu es l'assistant support automatique de Baki-Pay, un service de dépôt/retrait 1xBet via Waafi à Djibouti.\n" +
+    "Règles :\n" +
+    "- Réponds en français, de façon brève et claire (message WhatsApp, pas un email).\n" +
+    "- Dépôt : gratuit, min 500 DJF, max 200 000 DJF, délai 5-15 min. Retrait : gratuit, même délai.\n" +
+    "- Pour faire un dépôt : aller sur baki-pay.com, entrer ID 1xBet + montant + Transfer ID Waafi.\n" +
+    "- Pour un retrait : générer un code sur 1xBet, puis l'entrer sur baki-pay.com avec le N° Waafi.\n" +
+    "- Utilise UNIQUEMENT les ordres listés ci-dessous pour répondre sur le statut d'un ordre — n'invente JAMAIS de numéro d'ordre, de montant ou de statut, et ne mentionne jamais d'ordre qui n'y figure pas.\n" +
+    "- Si tu ne peux pas résoudre la demande (litige, erreur non couverte, remboursement...), oriente vers un agent humain sur Telegram : @BakiPaySupportBot.\n" +
+    "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n\n" +
+    `Ordres récents de ce client (numéro ${localPhone}) :\n${ordersContext}`;
+
   try {
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: "claude-opus-5",
-      max_tokens: 400,
-      system:
-        "Tu es l'assistant support automatique de Baki-Pay, un service de dépôt/retrait 1xBet via Waafi à Djibouti.\n" +
-        "Règles :\n" +
-        "- Réponds en français, de façon brève et claire (message WhatsApp, pas un email).\n" +
-        "- Dépôt : gratuit, min 500 DJF, max 200 000 DJF, délai 5-15 min. Retrait : gratuit, même délai.\n" +
-        "- Pour faire un dépôt : aller sur baki-pay.com, entrer ID 1xBet + montant + Transfer ID Waafi.\n" +
-        "- Pour un retrait : générer un code sur 1xBet, puis l'entrer sur baki-pay.com avec le N° Waafi.\n" +
-        "- Utilise UNIQUEMENT les ordres listés ci-dessous pour répondre sur le statut d'un ordre — n'invente JAMAIS de numéro d'ordre, de montant ou de statut, et ne mentionne jamais d'ordre qui n'y figure pas.\n" +
-        "- Si tu ne peux pas résoudre la demande (litige, erreur non couverte, remboursement...), oriente vers un agent humain sur Telegram : @BakiPaySupportBot.\n" +
-        "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n\n" +
-        `Ordres récents de ce client (numéro ${localPhone}) :\n${ordersContext}`,
-      messages: [{ role: "user", content: text }],
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://baki-pay.com",
+        "X-Title": "Baki-Pay Support",
+      },
+      body: JSON.stringify({
+        model: "anthropic/claude-sonnet-4.5",
+        max_tokens: 400,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: text },
+        ],
+      }),
+      signal: AbortSignal.timeout(20000),
     });
-    const block = response.content.find((b) => b.type === "text");
-    return (block && "text" in block && block.text) || menuBienvenue(senderName);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("whatsapp-support OpenRouter erreur:", res.status, JSON.stringify(data));
+      return menuBienvenue(senderName);
+    }
+    const reply = data.choices?.[0]?.message?.content;
+    return reply || menuBienvenue(senderName);
   } catch (e) {
     console.error("whatsapp-support IA erreur:", (e as Error).message);
     return menuBienvenue(senderName);
