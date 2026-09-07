@@ -6,6 +6,19 @@ import { json, cors, logAudit } from "../_shared/utils.ts";
 // projet paris sportifs d'Ahmed (analyser_et_envoyer.py), déjà validée en usage réel.
 const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "poolside/laguna-xs-2.1:free"];
 
+// sendWhatsApp() renvoie {ok, reason} sans jamais lever d'exception — un appel
+// non vérifié laisse un échec Green API (session déconnectée, quota, etc.)
+// totalement invisible : le client ne reçoit rien et rien ne le signale nulle
+// part. C'est exactement ce qui s'est produit (aucune erreur dans les logs
+// alors qu'aucune réponse n'arrivait) avant l'ajout de ce log.
+async function envoyer(phone: string, message: string) {
+  const res = await sendWhatsApp(phone, message);
+  if (!res.ok) {
+    console.error("whatsapp-support: envoi échoué vers", phone, "-", res.reason);
+  }
+  return res;
+}
+
 function menuBienvenue(senderName: string): string {
   return `👋 *Bienvenue sur Baki-Pay Support*${senderName ? `, ${senderName}` : ""}\n\n` +
     `Comment pouvons-nous vous aider pour votre dépôt ou retrait 1xBet via Waafi ?\n\n` +
@@ -144,7 +157,7 @@ Deno.serve(async (req: Request) => {
       const type = d.data && d.data[0] ? "Dépôt" : "Retrait";
 
       if (!ordre) {
-        await sendWhatsApp(phone, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`);
+        await envoyer(phone, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`);
         return json({ ok: true }, 200, headers);
       }
 
@@ -183,12 +196,12 @@ Deno.serve(async (req: Request) => {
         msg += `\n🚫 Ordre annulé.`;
       }
 
-      await sendWhatsApp(phone, msg);
+      await envoyer(phone, msg);
       return json({ ok: true }, 200, headers);
     }
 
     if (t === "aide" || t === "/aide" || t.includes("comment")) {
-      await sendWhatsApp(phone,
+      await envoyer(phone,
         `📖 *Comment utiliser Baki-Pay*\n\n` +
         `🟢 *Dépôt (recharger 1xBet) :*\n` +
         `1. Allez sur baki-pay.com\n` +
@@ -205,7 +218,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (t === "tarifs" || t === "/tarifs" || t.includes("tarif") || t.includes("prix")) {
-      await sendWhatsApp(phone,
+      await envoyer(phone,
         `💰 *Tarifs Baki-Pay*\n\n` +
         `Dépôt : *Gratuit*\n` +
         `Retrait : *Gratuit*\n\n` +
@@ -219,14 +232,14 @@ Deno.serve(async (req: Request) => {
 
     // Salutation simple → menu direct (pas besoin d'IA pour ça)
     if (["bonjour", "salut", "bonsoir", "hello", "hi", "start", "/start"].includes(t)) {
-      await sendWhatsApp(phone, menuBienvenue(senderName));
+      await envoyer(phone, menuBienvenue(senderName));
       return json({ ok: true }, 200, headers);
     }
 
     // Tout le reste (question en langage naturel, ex: "où en est mon dépôt
     // d'hier ?") → réponse IA avec les ordres récents de ce numéro en contexte.
     const reponse = await repondreIA(phone, senderName, text);
-    await sendWhatsApp(phone, reponse);
+    await envoyer(phone, reponse);
   } catch (e) {
     console.error("whatsapp-support crash:", (e as Error).message);
   }
