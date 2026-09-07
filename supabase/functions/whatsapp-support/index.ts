@@ -114,7 +114,11 @@ async function repondreIA(
     "- Réponds de façon concise (message WhatsApp, pas un email) mais jamais sec.\n" +
     "- Structure avec des emojis sobres et des puces quand ça aide à la lisibilité, sans surcharger.\n" +
     "- Une seule question à la fois si tu dois demander une précision — ne submerge jamais le client.\n" +
-    "- Termine par une ouverture (proposer la suite, ou inviter à revenir vers toi) plutôt que couper court.\n\n" +
+    "- Termine par une ouverture (proposer la suite, ou inviter à revenir vers toi) plutôt que couper court.\n" +
+    (historique.length === 0
+      ? "- C'est le TOUT PREMIER message de ce client : commence par l'accueillir chaleureusement, te présenter brièvement au nom de Baki-Pay, et demander comment tu peux l'aider — avant ou en même temps que tu réponds à sa question.\n"
+      : "- Ce client a déjà échangé avec toi (voir historique ci-dessous) : ne répète pas l'accueil/la présentation, va directement à sa demande.\n") +
+    "\n" +
     "CE QUE TU DOIS SAVOIR :\n" +
     "- Dépôt : gratuit, min 500 DJF, max 200 000 DJF. Retrait : gratuit, même limites.\n" +
     "- Traitement entièrement automatique, 24h/24 et 7j/7 — l'ordre est traité en quelques secondes après vérification du paiement (jamais '5-15 min' ni une autre estimation en minutes).\n" +
