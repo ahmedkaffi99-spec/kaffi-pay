@@ -155,12 +155,16 @@ async function decrireMedia(type: "image" | "audio", downloadUrl: string, captio
       contentPart = { type: "image_url", image_url: { url: downloadUrl } };
     } else {
       const audioRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(15000) });
-      if (!audioRes.ok) return null;
+      if (!audioRes.ok) {
+        logAudit("decrireMedia_debug", { etape: "fetch_audio", status: audioRes.status });
+        return null;
+      }
       const bytes = new Uint8Array(await audioRes.arrayBuffer());
       let binaire = "";
       for (const b of bytes) binaire += String.fromCharCode(b);
       const format = (mimeType.split("/")[1] || "ogg").split(";")[0];
       contentPart = { type: "input_audio", input_audio: { data: btoa(binaire), format } };
+      logAudit("decrireMedia_debug", { etape: "audio_prepare", tailleOctets: bytes.length, mimeType, format });
     }
     const instruction = type === "image"
       ? `Décris cette image en français, en te concentrant sur tout élément utile pour un support de paiement Waafi/1xBet (reçu de transfert, capture d'écran d'erreur, numéro, montant, statut). Sois factuel et précis, pas de supposition.${caption ? ` Le client a ajouté ce texte avec l'image : "${caption}"` : ""}`
@@ -185,9 +189,11 @@ async function decrireMedia(type: "image" | "audio", downloadUrl: string, captio
     const data = await res.json().catch(() => ({}));
     const reply = data.choices?.[0]?.message?.content;
     if (res.ok && reply && reponseIaValide(reply)) return reply.trim();
+    logAudit("decrireMedia_debug", { etape: "reponse_omni", type, status: res.status, corps: JSON.stringify(data).substring(0, 800) });
     console.warn("whatsapp-support: decrireMedia réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
     return null;
   } catch (e) {
+    logAudit("decrireMedia_debug", { etape: "exception", type, erreur: (e as Error).message });
     console.warn("whatsapp-support: decrireMedia échoué:", (e as Error).message);
     return null;
   }
