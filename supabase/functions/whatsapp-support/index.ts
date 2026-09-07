@@ -72,11 +72,16 @@ async function genererVocal(texte: string): Promise<Uint8Array | null> {
       signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) {
-      console.warn("whatsapp-support: genererVocal échoué:", res.status, await res.text().catch(() => ""));
+      const corps = await res.text().catch(() => "");
+      logAudit("genererVocal_debug", { status: res.status, corps: corps.substring(0, 500) });
+      console.warn("whatsapp-support: genererVocal échoué:", res.status, corps);
       return null;
     }
-    return new Uint8Array(await res.arrayBuffer());
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    logAudit("genererVocal_debug", { etape: "ok", contentType: res.headers.get("content-type"), tailleOctets: bytes.length });
+    return bytes;
   } catch (e) {
+    logAudit("genererVocal_debug", { etape: "exception", erreur: (e as Error).message });
     console.warn("whatsapp-support: genererVocal échoué:", (e as Error).message);
     return null;
   }
@@ -91,14 +96,22 @@ async function repondreAuClient(phone: string, userText: string, message: string
     const audio = await genererVocal(message);
     if (audio) {
       const res = await sendWhatsAppAudioToChatId(`${phone}@c.us`, audio, "reponse.mp3", "audio/mpeg");
-      if (!res.ok) console.error("whatsapp-support: envoi vocal échoué vers", phone, "-", res.reason);
-      await supabase.from("whatsapp_conversations").insert([
-        { phone, role: "user", content: userText },
-        { phone, role: "assistant", content: message },
-      ]);
-      return res;
+      if (res.ok) {
+        await supabase.from("whatsapp_conversations").insert([
+          { phone, role: "user", content: userText },
+          { phone, role: "assistant", content: message },
+        ]);
+        return res;
+      }
+      // Envoi du fichier échoué (Green API a rejeté/n'a pas pu livrer l'audio
+      // généré) — sans ce repli, la synthèse réussie masquait un échec
+      // d'envoi et le client ne recevait STRICTEMENT rien (bug réel constaté
+      // avec Fish Audio : TTS ok, envoi échoué, silence total).
+      logAudit("repondreAuClient_debug", { etape: "envoi_audio", reason: res.reason });
+      console.error("whatsapp-support: envoi vocal échoué vers", phone, "-", res.reason);
+    } else {
+      console.warn("whatsapp-support: repli texte après échec TTS pour", phone);
     }
-    console.warn("whatsapp-support: repli texte après échec TTS pour", phone);
   }
   return envoyer(phone, userText, message);
 }
