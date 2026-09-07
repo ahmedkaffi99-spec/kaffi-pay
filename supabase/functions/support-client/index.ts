@@ -191,7 +191,7 @@ Deno.serve(async (req: Request) => {
         `1. Sur 1xBet, générez un code de retrait\n` +
         `2. Sur baki-pay.com, entrez le code + votre N° Waafi\n` +
         `3. Vous recevrez le montant sur votre Waafi\n\n` +
-        `<b>⏱ Délais :</b> 5 à 15 minutes en général.`
+        `<b>⏱ Traitement :</b> automatique, 24h/24 7j/7 — en quelques secondes après vérification du paiement.`
       );
       return json({ ok: true }, 200, headers);
     }
