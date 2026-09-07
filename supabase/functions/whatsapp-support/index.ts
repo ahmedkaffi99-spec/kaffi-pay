@@ -19,12 +19,30 @@ const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "po
 // 8 chiffres et lui colle 253 devant — ce qui cassait les réponses aux
 // numéros étrangers (ex: 251726087929 → envoyé vers 253251726087929, chatId
 // invalide). On reconstruit ici le chatId d'origine tel quel, sans y toucher.
-async function envoyer(phone: string, message: string) {
+async function envoyer(phone: string, userText: string, message: string) {
   const res = await sendWhatsAppToChatId(`${phone}@c.us`, message);
   if (!res.ok) {
     console.error("whatsapp-support: envoi échoué vers", phone, "-", res.reason);
   }
+  // Mémoire de conversation — enregistrée même si l'envoi échoue, pour garder
+  // le fil cohérent côté serveur (ce qu'on a tenté de dire compte pour le
+  // contexte, indépendamment de la livraison réelle chez le client).
+  await supabase.from("whatsapp_conversations").insert([
+    { phone, role: "user", content: userText },
+    { phone, role: "assistant", content: message },
+  ]);
   return res;
+}
+
+// Derniers échanges de CE numéro — jamais ceux d'un autre client. Limité à
+// 10 messages (5 allers-retours) pour garder le coût/latence raisonnables.
+async function chargerHistorique(phone: string): Promise<{ role: "user" | "assistant"; content: string }[]> {
+  const { data } = await supabase.from("whatsapp_conversations")
+    .select("role,content,created_at")
+    .eq("phone", phone)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  return (data || []).reverse().map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 }
 
 function menuBienvenue(senderName: string): string {
@@ -42,7 +60,10 @@ function menuBienvenue(senderName: string): string {
 // (numéro d'ordre exact, "aide", "tarifs") ne couvrent pas, ex: "où en est
 // mon dépôt d'hier ?". Ne reçoit que les ordres récents de CE numéro comme
 // contexte : jamais de données d'autres clients, jamais d'invention.
-async function repondreIA(phone: string, senderName: string, text: string): Promise<string> {
+async function repondreIA(
+  phone: string, senderName: string, text: string,
+  historique: { role: "user" | "assistant"; content: string }[]
+): Promise<string> {
   const apiKey = Deno.env.get("OPENROUTER_API_KEY");
   if (!apiKey) return menuBienvenue(senderName);
 
@@ -81,7 +102,8 @@ async function repondreIA(phone: string, senderName: string, text: string): Prom
     "RÈGLES ABSOLUES :\n" +
     "- Utilise UNIQUEMENT les ordres listés ci-dessous pour répondre sur le statut d'un ordre — n'invente JAMAIS de numéro d'ordre, de montant ou de statut, et ne mentionne jamais d'ordre qui n'y figure pas.\n" +
     "- Si tu ne peux pas résoudre la demande toi-même (litige, erreur non couverte, remboursement...), oriente avec assurance vers un agent humain sur Telegram : @BakiPaySupportBot — présente ça comme un service, pas un échec.\n" +
-    "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n\n" +
+    "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n" +
+    "- L'historique de conversation ci-dessous (s'il y en a) fait partie de CET échange avec CE client — suis le fil, ne redemande pas une info déjà donnée.\n\n" +
     `Ordres récents de ce client (numéro ${localPhone}) :\n${ordersContext}`;
 
   // Essaie chaque modèle gratuit en cascade (2 tentatives chacun) — un modèle
@@ -102,6 +124,7 @@ async function repondreIA(phone: string, senderName: string, text: string): Prom
             max_tokens: 400,
             messages: [
               { role: "system", content: systemPrompt },
+              ...historique,
               { role: "user", content: text },
             ],
           }),
@@ -165,7 +188,7 @@ Deno.serve(async (req: Request) => {
       const type = d.data && d.data[0] ? "Dépôt" : "Retrait";
 
       if (!ordre) {
-        await envoyer(phone, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`);
+        await envoyer(phone, text, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`);
         return json({ ok: true }, 200, headers);
       }
 
@@ -204,12 +227,12 @@ Deno.serve(async (req: Request) => {
         msg += `\n🚫 Ordre annulé.`;
       }
 
-      await envoyer(phone, msg);
+      await envoyer(phone, text, msg);
       return json({ ok: true }, 200, headers);
     }
 
     if (t === "aide" || t === "/aide" || t.includes("comment")) {
-      await envoyer(phone,
+      await envoyer(phone, text,
         `📖 *Comment utiliser Baki-Pay*\n\n` +
         `🟢 *Dépôt (recharger 1xBet) :*\n` +
         `1. Allez sur baki-pay.com\n` +
@@ -226,7 +249,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (t === "tarifs" || t === "/tarifs" || t.includes("tarif") || t.includes("prix")) {
-      await envoyer(phone,
+      await envoyer(phone, text,
         `💰 *Tarifs Baki-Pay*\n\n` +
         `Dépôt : *Gratuit*\n` +
         `Retrait : *Gratuit*\n\n` +
@@ -240,14 +263,16 @@ Deno.serve(async (req: Request) => {
 
     // Salutation simple → menu direct (pas besoin d'IA pour ça)
     if (["bonjour", "salut", "bonsoir", "hello", "hi", "start", "/start"].includes(t)) {
-      await envoyer(phone, menuBienvenue(senderName));
+      await envoyer(phone, text, menuBienvenue(senderName));
       return json({ ok: true }, 200, headers);
     }
 
     // Tout le reste (question en langage naturel, ex: "où en est mon dépôt
-    // d'hier ?") → réponse IA avec les ordres récents de ce numéro en contexte.
-    const reponse = await repondreIA(phone, senderName, text);
-    await envoyer(phone, reponse);
+    // d'hier ?") → réponse IA avec les ordres récents + l'historique de CE
+    // numéro en contexte.
+    const historique = await chargerHistorique(phone);
+    const reponse = await repondreIA(phone, senderName, text, historique);
+    await envoyer(phone, text, reponse);
   } catch (e) {
     console.error("whatsapp-support crash:", (e as Error).message);
   }
