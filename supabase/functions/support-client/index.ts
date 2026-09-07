@@ -203,8 +203,9 @@ Deno.serve(async (req: Request) => {
         `Dépôt : <b>Gratuit</b>\n` +
         `Retrait : <b>Gratuit</b>\n\n` +
         `<b>Limites :</b>\n` +
-        `• Minimum dépôt : 500 DJF\n` +
-        `• Maximum dépôt : 200 000 DJF\n\n` +
+        `• Minimum dépôt : 50 DJF\n` +
+        `• Minimum retrait : 250 DJF\n` +
+        `• Pas de maximum fixe (une vérification peut être demandée pour un montant élevé)\n\n` +
         `Tous les transferts sont en DJF (Franc Djiboutien).`
       );
       return json({ ok: true }, 200, headers);

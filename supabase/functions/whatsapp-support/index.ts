@@ -120,7 +120,7 @@ async function repondreIA(
       : "- Ce client a déjà échangé avec toi (voir historique ci-dessous) : pas d'accueil ni de présentation, va directement à sa demande.\n") +
     "\n" +
     "CE QUE TU DOIS SAVOIR :\n" +
-    "- Dépôt : gratuit, min 500 DJF, max 200 000 DJF. Retrait : gratuit, même limites.\n" +
+    "- Dépôt : gratuit, min 50 DJF. Retrait : gratuit, min 250 DJF. Pas de maximum fixe pour les deux, mais un ordre élevé peut nécessiter une vérification supplémentaire.\n" +
     "- Traitement entièrement automatique, 24h/24 et 7j/7 — l'ordre est traité en quelques secondes après vérification du paiement (jamais '5-15 min' ni une autre estimation en minutes).\n" +
     "- Pour faire un dépôt : aller sur baki-pay.com, entrer ID 1xBet + montant + Transfer ID Waafi.\n" +
     "- Pour un retrait : générer un code sur 1xBet, puis l'entrer sur baki-pay.com avec le N° Waafi.\n\n" +
@@ -288,8 +288,9 @@ Deno.serve(async (req: Request) => {
         `Dépôt : *Gratuit*\n` +
         `Retrait : *Gratuit*\n\n` +
         `*Limites :*\n` +
-        `• Minimum dépôt : 500 DJF\n` +
-        `• Maximum dépôt : 200 000 DJF\n\n` +
+        `• Minimum dépôt : 50 DJF\n` +
+        `• Minimum retrait : 250 DJF\n` +
+        `• Pas de maximum fixe (une vérification peut être demandée pour un montant élevé)\n\n` +
         `Tous les transferts sont en DJF.`
       );
       return json({ ok: true }, 200, headers);
