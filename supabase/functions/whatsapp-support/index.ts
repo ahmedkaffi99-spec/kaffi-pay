@@ -2,6 +2,10 @@ import { supabase } from "../_shared/db.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
 
+// Modèles gratuits OpenRouter, en cascade — même liste et même ordre que dans le
+// projet paris sportifs d'Ahmed (analyser_et_envoyer.py), déjà validée en usage réel.
+const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "poolside/laguna-xs-2.1:free"];
+
 function menuBienvenue(senderName: string): string {
   return `👋 *Bienvenue sur Baki-Pay Support*${senderName ? `, ${senderName}` : ""}\n\n` +
     `Je suis votre assistant automatique pour les dépôts et retraits 1xBet via Waafi.\n\n` +
@@ -51,36 +55,41 @@ async function repondreIA(phone: string, senderName: string, text: string): Prom
     "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n\n" +
     `Ordres récents de ce client (numéro ${localPhone}) :\n${ordersContext}`;
 
-  try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://baki-pay.com",
-        "X-Title": "Baki-Pay Support",
-      },
-      body: JSON.stringify({
-        model: "anthropic/claude-sonnet-4.5",
-        max_tokens: 400,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: text },
-        ],
-      }),
-      signal: AbortSignal.timeout(20000),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.error("whatsapp-support OpenRouter erreur:", res.status, JSON.stringify(data));
-      return menuBienvenue(senderName);
+  // Essaie chaque modèle gratuit en cascade (2 tentatives chacun) — un modèle
+  // gratuit OpenRouter peut être temporairement saturé/indisponible.
+  for (const modele of OPENROUTER_MODELS) {
+    for (let tentative = 0; tentative < 2; tentative++) {
+      try {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+            "HTTP-Referer": "https://baki-pay.com",
+            "X-Title": "Baki-Pay Support",
+          },
+          body: JSON.stringify({
+            model: modele,
+            max_tokens: 400,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: text },
+            ],
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        const data = await res.json().catch(() => ({}));
+        const reply = data.choices?.[0]?.message?.content;
+        if (res.ok && reply) return reply;
+        console.warn("whatsapp-support OpenRouter", modele, "réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
+      } catch (e) {
+        console.warn("whatsapp-support OpenRouter", modele, "échoué:", (e as Error).message);
+      }
     }
-    const reply = data.choices?.[0]?.message?.content;
-    return reply || menuBienvenue(senderName);
-  } catch (e) {
-    console.error("whatsapp-support IA erreur:", (e as Error).message);
-    return menuBienvenue(senderName);
   }
+
+  console.error("whatsapp-support: tous les modèles OpenRouter ont échoué");
+  return menuBienvenue(senderName);
 }
 
 // Reçoit les webhooks entrants Green API (typeWebhook: "incomingMessageReceived")
