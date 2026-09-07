@@ -1,18 +1,26 @@
 import { supabase } from "../_shared/db.ts";
-import { sendWhatsApp } from "../_shared/whatsapp.ts";
+import { sendWhatsAppToChatId } from "../_shared/whatsapp.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
 
 // Modèles gratuits OpenRouter, en cascade — même liste et même ordre que dans le
 // projet paris sportifs d'Ahmed (analyser_et_envoyer.py), déjà validée en usage réel.
 const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "poolside/laguna-xs-2.1:free"];
 
-// sendWhatsApp() renvoie {ok, reason} sans jamais lever d'exception — un appel
-// non vérifié laisse un échec Green API (session déconnectée, quota, etc.)
-// totalement invisible : le client ne reçoit rien et rien ne le signale nulle
-// part. C'est exactement ce qui s'est produit (aucune erreur dans les logs
-// alors qu'aucune réponse n'arrivait) avant l'ajout de ce log.
+// sendWhatsAppToChatId() renvoie {ok, reason} sans jamais lever d'exception —
+// un appel non vérifié laisse un échec Green API (session déconnectée, quota,
+// numéro mal formé...) totalement invisible : le client ne reçoit rien et
+// rien ne le signale nulle part.
+//
+// IMPORTANT : `phone` ici est TOUJOURS le numéro complet avec son vrai
+// indicatif pays (extrait du chatId Green API réel — 253 pour Djibouti, mais
+// aussi 251 Éthiopie, etc., n'importe qui peut écrire au numéro business).
+// sendWhatsApp() (la fonction "normale", utilisée pour les clients du
+// formulaire dépôt/retrait) suppose au contraire un numéro LOCAL djiboutien à
+// 8 chiffres et lui colle 253 devant — ce qui cassait les réponses aux
+// numéros étrangers (ex: 251726087929 → envoyé vers 253251726087929, chatId
+// invalide). On reconstruit ici le chatId d'origine tel quel, sans y toucher.
 async function envoyer(phone: string, message: string) {
-  const res = await sendWhatsApp(phone, message);
+  const res = await sendWhatsAppToChatId(`${phone}@c.us`, message);
   if (!res.ok) {
     console.error("whatsapp-support: envoi échoué vers", phone, "-", res.reason);
   }
