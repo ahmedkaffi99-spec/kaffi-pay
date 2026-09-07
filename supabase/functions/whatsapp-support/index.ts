@@ -6,6 +6,13 @@ import { json, cors, logAudit } from "../_shared/utils.ts";
 // projet paris sportifs d'Ahmed (analyser_et_envoyer.py), déjà validée en usage réel.
 const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "poolside/laguna-xs-2.1:free"];
 
+// Seul modèle gratuit d'OpenRouter capable de lire une image ou d'écouter un
+// vocal (multimodal texte+image+vidéo+audio → texte). Utilisé UNIQUEMENT pour
+// transformer une photo/un vocal en texte (voir decrireMedia) — jamais mis
+// dans la cascade OPENROUTER_MODELS ci-dessus, car sa disponibilité mesurée
+// (~75% sur 3 jours) est trop instable pour porter toutes les conversations.
+const MODELE_OMNI = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
+
 // sendWhatsAppToChatId() renvoie {ok, reason} sans jamais lever d'exception —
 // un appel non vérifié laisse un échec Green API (session déconnectée, quota,
 // numéro mal formé...) totalement invisible : le client ne reçoit rien et
@@ -73,6 +80,58 @@ function reponseIaValide(texte: string): boolean {
   if (/^(okay|ok|alright|so|hmm|let me|i need to|i should|first,? i)\b/.test(t)) return false;
   if (/\b(the user is asking|let me check|wait,|the system (says|states)|according to the instructions)\b/.test(t)) return false;
   return true;
+}
+
+// Transforme une photo ou un vocal WhatsApp en texte via le modèle omni —
+// pour une image : description factuelle (reçu Waafi, capture d'erreur...) ;
+// pour un vocal : transcription fidèle (traduite en français si besoin).
+// Retourne null si le modèle échoue (indisponibilité connue, voir MODELE_OMNI)
+// — l'appelant doit alors prévenir le client plutôt que de rester silencieux.
+async function decrireMedia(type: "image" | "audio", downloadUrl: string, caption: string, mimeType: string): Promise<string | null> {
+  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+  if (!apiKey) return null;
+  try {
+    let contentPart: Record<string, unknown>;
+    if (type === "image") {
+      contentPart = { type: "image_url", image_url: { url: downloadUrl } };
+    } else {
+      const audioRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(15000) });
+      if (!audioRes.ok) return null;
+      const bytes = new Uint8Array(await audioRes.arrayBuffer());
+      let binaire = "";
+      for (const b of bytes) binaire += String.fromCharCode(b);
+      const format = (mimeType.split("/")[1] || "ogg").split(";")[0];
+      contentPart = { type: "input_audio", input_audio: { data: btoa(binaire), format } };
+    }
+    const instruction = type === "image"
+      ? `Décris cette image en français, en te concentrant sur tout élément utile pour un support de paiement Waafi/1xBet (reçu de transfert, capture d'écran d'erreur, numéro, montant, statut). Sois factuel et précis, pas de supposition.${caption ? ` Le client a ajouté ce texte avec l'image : "${caption}"` : ""}`
+      : `Transcris fidèlement ce message vocal (traduis-le en français s'il est dans une autre langue), mot pour mot, sans reformuler ni résumer.`;
+
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://baki-pay.com",
+        "X-Title": "Baki-Pay Support",
+      },
+      body: JSON.stringify({
+        model: MODELE_OMNI,
+        max_tokens: 500,
+        reasoning: { exclude: true },
+        messages: [{ role: "user", content: [{ type: "text", text: instruction }, contentPart] }],
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+    const data = await res.json().catch(() => ({}));
+    const reply = data.choices?.[0]?.message?.content;
+    if (res.ok && reply && reponseIaValide(reply)) return reply.trim();
+    console.warn("whatsapp-support: decrireMedia réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
+    return null;
+  } catch (e) {
+    console.warn("whatsapp-support: decrireMedia échoué:", (e as Error).message);
+    return null;
+  }
 }
 
 // Répond en langage naturel via Claude — pour tout ce que les commandes fixes
@@ -206,11 +265,34 @@ Deno.serve(async (req: Request) => {
     if (!chatId || !chatId.endsWith("@c.us")) return json({ ok: true }, 200, headers);
 
     const phone = chatId.replace("@c.us", "");
-    const text = (
+    let text = (
       body.messageData?.textMessageData?.textMessage ||
       body.messageData?.extendedTextMessageData?.text ||
       ""
     ).trim();
+
+    // Photo ou vocal (pas de texte direct) → on les fait lire par le modèle
+    // omni (voir decrireMedia) puis on continue EXACTEMENT le même flux que
+    // pour un message texte normal (suivi d'ordre, aide, tarifs, IA...).
+    const typeMessage = body.messageData?.typeMessage || "";
+    if (!text && (typeMessage === "imageMessage" || typeMessage === "audioMessage")) {
+      const fileData = body.messageData?.fileMessageData || {};
+      const downloadUrl = fileData.downloadUrl;
+      const estVocal = typeMessage === "audioMessage";
+      if (downloadUrl) {
+        const resultat = await decrireMedia(estVocal ? "audio" : "image", downloadUrl, fileData.caption || "", fileData.mimeType || "");
+        if (resultat) {
+          text = estVocal ? resultat : (fileData.caption ? `${fileData.caption}\n[Photo envoyée — description: ${resultat}]` : `[Photo envoyée — description: ${resultat}]`);
+        } else {
+          await envoyer(phone, estVocal ? "[vocal reçu]" : "[photo reçue]",
+            estVocal
+              ? "🎤 Désolé, je n'ai pas pu écouter votre message vocal pour le moment. Pouvez-vous l'écrire en texte ?"
+              : "📷 Désolé, je n'ai pas pu analyser votre photo pour le moment. Pouvez-vous décrire votre question en texte ?");
+          return json({ ok: true }, 200, headers);
+        }
+      }
+    }
+
     if (!text) return json({ ok: true }, 200, headers);
 
     const t = text.toLowerCase().trim();
