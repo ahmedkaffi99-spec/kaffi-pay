@@ -56,16 +56,22 @@ function menuBienvenue(senderName: string): string {
     `Pour parler à un agent humain, contactez-nous sur Telegram : @BakiPaySupportBot`;
 }
 
-// Garde-fou anti-réponse inutilisable : un modèle gratuit OpenRouter peut
-// renvoyer un texte court hors-sujet (ex: "User Safety: safe", un artefact
-// de classification interne du modèle) au lieu d'une vraie réponse — déjà
-// rencontré et documenté dans le projet paris sportifs d'Ahmed
-// (_reponse_ticket_valide). Sans ce filtre, ce texte partait tel quel sur
-// WhatsApp comme si c'était une vraie réponse au client.
+// Garde-fou anti-réponse inutilisable — deux cas déjà rencontrés en réel :
+// 1. Un texte court hors-sujet (ex: "User Safety: safe", un artefact de
+//    classification interne du modèle) au lieu d'une vraie réponse — déjà
+//    documenté dans le projet paris sportifs d'Ahmed (_reponse_ticket_valide).
+// 2. Le raisonnement interne du modèle ("Okay, the user is asking...",
+//    "Let me check...", "Wait, the system says...") fuité DANS le texte de
+//    réponse au lieu d'être séparé — envoyé tel quel, en anglais, à un client
+//    qui écrit en français. reasoning:{exclude:true} dans la requête est
+//    censé l'empêcher (voir plus bas), mais ce filtre reste un filet de
+//    sécurité si un modèle l'ignore.
 function reponseIaValide(texte: string): boolean {
   if (!texte || texte.trim().length < 15) return false;
   const t = texte.trim().toLowerCase();
   if (/^user safety[:\s]/.test(t) || t === "safe" || t === "unsafe") return false;
+  if (/^(okay|ok|alright|so|hmm|let me|i need to|i should|first,? i)\b/.test(t)) return false;
+  if (/\b(the user is asking|let me check|wait,|the system (says|states)|according to the instructions)\b/.test(t)) return false;
   return true;
 }
 
@@ -135,6 +141,10 @@ async function repondreIA(
           body: JSON.stringify({
             model: modele,
             max_tokens: 400,
+            // Empêche un modèle "raisonneur" de renvoyer son raisonnement
+            // interne dans le texte de réponse (vu en réel : de l'anglais
+            // "Okay, the user is asking..." envoyé tel quel au client).
+            reasoning: { exclude: true },
             messages: [
               { role: "system", content: systemPrompt },
               ...historique,
