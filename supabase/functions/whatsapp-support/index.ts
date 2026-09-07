@@ -87,13 +87,15 @@ async function repondreIA(
   if (!apiKey) return menuBienvenue(senderName);
 
   const localPhone = phone.replace(/^253/, "");
-  const [d, r] = await Promise.all([
+  const [d, r, kb] = await Promise.all([
     supabase.from("depot_orders").select("order_id,status,montant,created_at")
       .or(`numero_payment.eq.${localPhone},whatsapp.eq.${localPhone}`)
       .order("created_at", { ascending: false }).limit(5),
     supabase.from("retrait_orders").select("order_id,status,montant,created_at")
       .or(`numero_waafi.eq.${localPhone},whatsapp.eq.${localPhone}`)
       .order("created_at", { ascending: false }).limit(5),
+    supabase.from("ai_knowledge_base").select("categorie,titre,contenu")
+      .eq("actif", true).order("ordre", { ascending: true }),
   ]);
   const orders = [
     ...(d.data || []).map((o) => ({ ...o, type: "Dépôt" })),
@@ -103,6 +105,14 @@ async function repondreIA(
   const ordersContext = orders.length
     ? orders.map((o) => `#${o.order_id} — ${o.type} — ${Number(o.montant).toLocaleString()} DJF — ${o.status} — ${o.created_at}`).join("\n")
     : "Aucun ordre récent trouvé pour ce numéro.";
+
+  // Base de connaissances éditable en base (table ai_knowledge_base) — jamais
+  // montrée telle quelle au client, sert uniquement de contexte de référence
+  // pour l'IA. Modifiable sans redéploiement de code (ex: si un délai, une
+  // limite ou une étape du site change).
+  const kbContext = (kb.data && kb.data.length)
+    ? kb.data.map((k) => `[${k.categorie} — ${k.titre}]\n${k.contenu}`).join("\n\n")
+    : "- Dépôt : min 50 DJF. Retrait : min 250 DJF. Pas de maximum fixe. Gratuit, automatique, 24h/24 7j/7, en quelques secondes après vérification.";
 
   const systemPrompt =
     "Tu es l'agent support officiel de Baki-Pay, service de dépôt/retrait 1xBet via Waafi à Djibouti. " +
@@ -119,13 +129,8 @@ async function repondreIA(
       ? "- C'est le TOUT PREMIER message de ce client : ouvre par une phrase courte sur ce modèle exact (adapte légèrement si besoin, mais garde-la brève) : 'Bienvenue sur Baki-Pay, je suis votre assistant IA, comment puis-je vous aider ?' — PUIS réponds à sa question, brièvement. Pas de longue présentation.\n"
       : "- Ce client a déjà échangé avec toi (voir historique ci-dessous) : pas d'accueil ni de présentation, va directement à sa demande.\n") +
     "\n" +
-    "CE QUE TU DOIS SAVOIR — copié mot pour mot de la FAQ officielle du site baki-pay.com, c'est la vérité de référence, ne t'en écarte jamais et ne réponds pas différemment :\n" +
-    "- Comment faire un dépôt 1xBet : saisissez le montant, votre ID 1xBet et le Transfer ID Waafi. Envoyez d'abord votre paiement au numéro Waafi indiqué, puis soumettez le formulaire. Votre compte sera crédité après vérification.\n" +
-    "- Comment faire un retrait : générez un code de retrait sur 1xBet, puis entrez-le sur baki-pay.com avec votre numéro Waafi. Vous recevrez le montant sur votre Waafi.\n" +
-    "- Délais de traitement : entièrement automatique, 24h/24 et 7j/7. L'ordre est traité en quelques secondes après vérification du paiement (jamais '5-15 min' ni une autre estimation en minutes).\n" +
-    "- Frais : aucun frais supplémentaire. Le montant envoyé correspond exactement au montant crédité.\n" +
-    "- Paiement non confirmé : vérifiez que le Transfer ID Waafi saisi est correct. Si l'ordre reste en attente plus de 30 minutes, orientez vers le support avec le numéro d'ordre.\n" +
-    "- Montant minimum et maximum : minimum 50 DJF pour un dépôt, 250 DJF pour un retrait. Pas de maximum fixe, mais un ordre élevé peut nécessiter une vérification supplémentaire.\n\n" +
+    "CE QUE TU DOIS SAVOIR — base de connaissances officielle Baki-Pay (jamais montrée telle quelle au client, ne la cite pas mot pour mot, reformule naturellement) : c'est la vérité de référence, ne t'en écarte jamais et n'invente rien qui la contredise.\n" +
+    `${kbContext}\n\n` +
     "RÈGLES ABSOLUES :\n" +
     "- Ne mentionne les ordres listés ci-dessous QUE si le client demande explicitement le statut d'un ordre/paiement — ne les cite jamais spontanément dans une réponse générale (ex: une simple salutation ou question sur les tarifs).\n" +
     "- Quand tu les utilises, utilise UNIQUEMENT les ordres listés ci-dessous — n'invente JAMAIS de numéro d'ordre, de montant ou de statut, et ne mentionne jamais d'ordre qui n'y figure pas.\n" +
