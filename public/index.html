@@ -235,6 +235,8 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 .spinner{width:14px;height:14px;border:2px solid rgba(10,18,32,.3);border-top-color:#07101e;border-radius:50%;animation:spin .7s linear infinite;display:none;}
 .support-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:14px;padding:11px;border-radius:999px;border:1px solid rgba(37,211,102,.25);background:rgba(37,211,102,.05);color:#25d366;font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:600;text-decoration:none;transition:all .2s;}
 .support-btn:hover{background:rgba(37,211,102,.1);}
+.support-btn-tg{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:8px;padding:11px;border-radius:999px;border:1px solid rgba(42,171,238,.25);background:rgba(42,171,238,.05);color:#29a8eb;font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:600;text-decoration:none;transition:all .2s;}
+.support-btn-tg:hover{background:rgba(42,171,238,.1);}
 
 /* ── ADMIN TOPBAR ── */
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 0 12px;border-bottom:1px solid rgba(255,215,0,.07);margin-bottom:14px;}
@@ -635,8 +637,11 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
     </div>
   </div>
 
-  <a class="support-btn" href="https://t.me/kaffipay_support_bot" target="_blank" data-i18n="support-btn">
-    💬 Support Baki-Pay
+  <a class="support-btn" href="https://wa.me/25377275572?text=Bonjour" target="_blank" data-i18n="support-btn-wa">
+    💬 Support WhatsApp
+  </a>
+  <a class="support-btn-tg" href="https://t.me/kaffipay_support_bot" target="_blank" data-i18n="support-btn">
+    💬 Support Telegram
   </a>
 
   <!-- ══ FAQ ══ -->
@@ -977,9 +982,13 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
   <button id="suivi-whatsapp-btn" onclick="sendRecapWhatsApp()" style="display:none;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.3);background:rgba(37,211,102,0.06);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;cursor:pointer;box-sizing:border-box;margin-bottom:8px;" data-i18n="btn-whatsapp-details">
     📲 Recevoir les détails sur WhatsApp
   </button>
+  <a id="suivi-whatsapp-support-btn" href="https://wa.me/25377275572?text=Bonjour" target="_blank"
+    style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(37,211,102,0.25);background:rgba(37,211,102,0.05);color:#25d366;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;text-decoration:none;box-sizing:border-box;margin-bottom:8px;">
+    💬 Support WhatsApp
+  </a>
   <a id="suivi-wa-btn" href="https://t.me/kaffipay_support_bot" target="_blank"
     style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;border-radius:999px;border:1px solid rgba(42,171,238,0.25);background:rgba(42,171,238,0.05);color:#29a8eb;font-family:'DM Sans',sans-serif;font-size:0.8rem;font-weight:600;text-decoration:none;box-sizing:border-box;margin-bottom:8px;">
-    💬 Support Baki-Pay
+    💬 Support Telegram
   </a>
 </div>
 </div>
@@ -3060,6 +3069,11 @@ function renderSuivi(){
 
   document.getElementById('suivi-wa-btn').href =
     'https://t.me/kaffipay_support_bot?start=ordre_'+ encodeURIComponent(tx.orderId||tx.ref||'');
+  var suiviWaBtn = document.getElementById('suivi-whatsapp-support-btn');
+  if (suiviWaBtn) {
+    suiviWaBtn.href = 'https://wa.me/25377275572?text='+
+      encodeURIComponent('Suivi de l\'ordre #'+(tx.orderId||tx.ref||''));
+  }
 }
 
 function copyPayNum(num, btn){
@@ -4024,7 +4038,8 @@ var KP_LANGS = {
     'label-waafi-retrait': '📞 Votre numéro Waafi',
     'label-amount-retrait':'💵 Montant (min. 250 DJF)',
     'label-whatsapp-retrait':'💬 Votre numéro WhatsApp',
-    'support-btn':         '💬 Support Baki-Pay',
+    'support-btn':         '💬 Support Telegram',
+    'support-btn-wa':      '💬 Support WhatsApp',
     'faq-q1': 'Comment effectuer un dépôt 1xBet ?',
     'faq-a1': 'Saisissez le montant, votre ID 1xBet et le Transfer ID Waafi. Envoyez d\'abord votre paiement au numéro Waafi indiqué, puis soumettez le formulaire. Votre compte sera crédité après vérification.',
     'faq-q2': 'Quels sont les délais de traitement ?',
@@ -4119,7 +4134,8 @@ var KP_LANGS = {
     'label-waafi-retrait': '📞 Your Waafi number',
     'label-amount-retrait':'💵 Amount (min. 250 DJF)',
     'label-whatsapp-retrait':'💬 Your WhatsApp number',
-    'support-btn':         '💬 Baki-Pay Support',
+    'support-btn':         '💬 Telegram Support',
+    'support-btn-wa':      '💬 WhatsApp Support',
     'faq-q1': 'How to make a 1xBet deposit?',
     'faq-a1': 'Enter the amount, your 1xBet ID and the Waafi Transfer ID. First send your payment to the indicated Waafi number, then submit the form. Your account will be credited after verification.',
     'faq-q2': 'What are the processing times?',
@@ -4214,7 +4230,8 @@ var KP_LANGS = {
     'label-waafi-retrait': '📞 Lambarka Waafi',
     'label-amount-retrait':'💵 Xaddiga (ugu yaraan 250 DJF)',
     'label-whatsapp-retrait':'💬 Lambarka WhatsApp',
-    'support-btn':         '💬 Taageerada Baki-Pay',
+    'support-btn':         '💬 Taageerada Telegram',
+    'support-btn-wa':      '💬 Taageerada WhatsApp',
     'faq-q1': 'Sidee loo sameeya gelinta 1xBet?',
     'faq-a1': 'Gali xaddiga, ID-gaaga 1xBet iyo Transfer ID Waafi. Marka hore lacagta u dir lambarka Waafi ee la siiyay, ka dibna codsiga gudbi. Xisaabkaaga waxaa lagu xidid ka dib xaqiijinta.',
     'faq-q2': 'Waa maxay waqtiga hawlgalka?',
