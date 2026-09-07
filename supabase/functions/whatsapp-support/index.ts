@@ -1,6 +1,70 @@
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.32.1";
 import { supabase } from "../_shared/db.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
+
+function menuBienvenue(senderName: string): string {
+  return `👋 *Bienvenue sur Baki-Pay Support*${senderName ? `, ${senderName}` : ""}\n\n` +
+    `Je suis votre assistant automatique pour les dépôts et retraits 1xBet via Waafi.\n\n` +
+    `Écrivez :\n` +
+    `• Votre *numéro d'ordre* (ex: 082626) — pour suivre son statut\n` +
+    `• *aide* — comment faire un dépôt ou retrait\n` +
+    `• *tarifs* — tarifs et limites\n` +
+    `• ou posez votre question directement, en langage naturel\n\n` +
+    `Pour parler à un agent humain, contactez-nous sur Telegram : @BakiPaySupportBot`;
+}
+
+// Répond en langage naturel via Claude — pour tout ce que les commandes fixes
+// (numéro d'ordre exact, "aide", "tarifs") ne couvrent pas, ex: "où en est
+// mon dépôt d'hier ?". Ne reçoit que les ordres récents de CE numéro comme
+// contexte : jamais de données d'autres clients, jamais d'invention.
+async function repondreIA(phone: string, senderName: string, text: string): Promise<string> {
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) return menuBienvenue(senderName);
+
+  const localPhone = phone.replace(/^253/, "");
+  const [d, r] = await Promise.all([
+    supabase.from("depot_orders").select("order_id,status,montant,created_at")
+      .or(`numero_payment.eq.${localPhone},whatsapp.eq.${localPhone}`)
+      .order("created_at", { ascending: false }).limit(5),
+    supabase.from("retrait_orders").select("order_id,status,montant,created_at")
+      .or(`numero_waafi.eq.${localPhone},whatsapp.eq.${localPhone}`)
+      .order("created_at", { ascending: false }).limit(5),
+  ]);
+  const orders = [
+    ...(d.data || []).map((o) => ({ ...o, type: "Dépôt" })),
+    ...(r.data || []).map((o) => ({ ...o, type: "Retrait" })),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 5);
+
+  const ordersContext = orders.length
+    ? orders.map((o) => `#${o.order_id} — ${o.type} — ${Number(o.montant).toLocaleString()} DJF — ${o.status} — ${o.created_at}`).join("\n")
+    : "Aucun ordre récent trouvé pour ce numéro.";
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
+      model: "claude-opus-5",
+      max_tokens: 400,
+      system:
+        "Tu es l'assistant support automatique de Baki-Pay, un service de dépôt/retrait 1xBet via Waafi à Djibouti.\n" +
+        "Règles :\n" +
+        "- Réponds en français, de façon brève et claire (message WhatsApp, pas un email).\n" +
+        "- Dépôt : gratuit, min 500 DJF, max 200 000 DJF, délai 5-15 min. Retrait : gratuit, même délai.\n" +
+        "- Pour faire un dépôt : aller sur baki-pay.com, entrer ID 1xBet + montant + Transfer ID Waafi.\n" +
+        "- Pour un retrait : générer un code sur 1xBet, puis l'entrer sur baki-pay.com avec le N° Waafi.\n" +
+        "- Utilise UNIQUEMENT les ordres listés ci-dessous pour répondre sur le statut d'un ordre — n'invente JAMAIS de numéro d'ordre, de montant ou de statut, et ne mentionne jamais d'ordre qui n'y figure pas.\n" +
+        "- Si tu ne peux pas résoudre la demande (litige, erreur non couverte, remboursement...), oriente vers un agent humain sur Telegram : @BakiPaySupportBot.\n" +
+        "- Ne donne jamais d'information sur d'autres clients ni sur les finances internes de l'entreprise.\n\n" +
+        `Ordres récents de ce client (numéro ${localPhone}) :\n${ordersContext}`,
+      messages: [{ role: "user", content: text }],
+    });
+    const block = response.content.find((b) => b.type === "text");
+    return (block && "text" in block && block.text) || menuBienvenue(senderName);
+  } catch (e) {
+    console.error("whatsapp-support IA erreur:", (e as Error).message);
+    return menuBienvenue(senderName);
+  }
+}
 
 // Reçoit les webhooks entrants Green API (typeWebhook: "incomingMessageReceived")
 // et répond automatiquement — FAQ + suivi de statut d'ordre. Pas d'escalade
@@ -119,16 +183,16 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true }, 200, headers);
     }
 
-    // Salutation / message non reconnu → menu
-    await sendWhatsApp(phone,
-      `👋 *Bienvenue sur Baki-Pay Support*${senderName ? `, ${senderName}` : ""}\n\n` +
-      `Je suis votre assistant automatique pour les dépôts et retraits 1xBet via Waafi.\n\n` +
-      `Écrivez :\n` +
-      `• Votre *numéro d'ordre* (ex: 082626) — pour suivre son statut\n` +
-      `• *aide* — comment faire un dépôt ou retrait\n` +
-      `• *tarifs* — tarifs et limites\n\n` +
-      `Pour parler à un agent humain, contactez-nous sur Telegram : @BakiPaySupportBot`
-    );
+    // Salutation simple → menu direct (pas besoin d'IA pour ça)
+    if (["bonjour", "salut", "bonsoir", "hello", "hi", "start", "/start"].includes(t)) {
+      await sendWhatsApp(phone, menuBienvenue(senderName));
+      return json({ ok: true }, 200, headers);
+    }
+
+    // Tout le reste (question en langage naturel, ex: "où en est mon dépôt
+    // d'hier ?") → réponse IA avec les ordres récents de ce numéro en contexte.
+    const reponse = await repondreIA(phone, senderName, text);
+    await sendWhatsApp(phone, reponse);
   } catch (e) {
     console.error("whatsapp-support crash:", (e as Error).message);
   }
