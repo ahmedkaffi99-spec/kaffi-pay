@@ -70,14 +70,11 @@ async function genererVocal(texte: string): Promise<Uint8Array | null> {
       signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) {
-      const corps = await res.text().catch(() => "");
-      logAudit("genererVocal_debug", { status: res.status, corps: corps.substring(0, 500) });
-      console.warn("whatsapp-support: genererVocal échoué:", res.status, corps);
+      console.warn("whatsapp-support: genererVocal échoué:", res.status, await res.text().catch(() => ""));
       return null;
     }
     return new Uint8Array(await res.arrayBuffer());
   } catch (e) {
-    logAudit("genererVocal_debug", { etape: "exception", erreur: (e as Error).message });
     console.warn("whatsapp-support: genererVocal échoué:", (e as Error).message);
     return null;
   }
@@ -153,10 +150,7 @@ async function transcrireVocalGroq(downloadUrl: string): Promise<string | null> 
   if (!apiKey) return null;
   try {
     const audioRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(15000) });
-    if (!audioRes.ok) {
-      logAudit("transcrireVocalGroq_debug", { etape: "fetch_audio", status: audioRes.status });
-      return null;
-    }
+    if (!audioRes.ok) return null;
     const blob = await audioRes.blob();
     const form = new FormData();
     form.append("file", blob, "vocal.ogg");
@@ -170,11 +164,9 @@ async function transcrireVocalGroq(downloadUrl: string): Promise<string | null> 
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.text && data.text.trim().length > 0) return data.text.trim();
-    logAudit("transcrireVocalGroq_debug", { etape: "reponse_groq", status: res.status, corps: JSON.stringify(data).substring(0, 500) });
     console.warn("whatsapp-support: transcrireVocalGroq réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
     return null;
   } catch (e) {
-    logAudit("transcrireVocalGroq_debug", { etape: "exception", erreur: (e as Error).message });
     console.warn("whatsapp-support: transcrireVocalGroq échoué:", (e as Error).message);
     return null;
   }
