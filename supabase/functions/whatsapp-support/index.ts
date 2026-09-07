@@ -147,7 +147,10 @@ async function repondreIA(
           },
           body: JSON.stringify({
             model: modele,
-            max_tokens: 400,
+            // 400 coupait parfois une réponse en plein milieu de phrase (vu
+            // en réel : "...ont été final" tronqué net) — relevé pour laisser
+            // de la marge, le prompt demande déjà la concision.
+            max_tokens: 700,
             // Empêche un modèle "raisonneur" de renvoyer son raisonnement
             // interne dans le texte de réponse (vu en réel : de l'anglais
             // "Okay, the user is asking..." envoyé tel quel au client).
@@ -291,15 +294,14 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true }, 200, headers);
     }
 
-    // Salutation simple → menu direct (pas besoin d'IA pour ça)
-    if (["bonjour", "salut", "bonsoir", "hello", "hi", "start", "/start"].includes(t)) {
-      await envoyer(phone, text, menuBienvenue(senderName));
-      return json({ ok: true }, 200, headers);
-    }
-
-    // Tout le reste (question en langage naturel, ex: "où en est mon dépôt
-    // d'hier ?") → réponse IA avec les ordres récents + l'historique de CE
-    // numéro en contexte.
+    // Salutation simple ou question en langage naturel (ex: "où en est mon
+    // dépôt d'hier ?") → réponse IA, avec les ordres récents + l'historique de
+    // CE numéro en contexte. Une salutation n'a PAS de chemin fixe séparé :
+    // sinon un client en pleine conversation qui retape juste "salut"
+    // redéclenchait tout le menu d'accueil complet, comme s'il repartait de
+    // zéro à chaque fois — repondreIA sait déjà distinguer premier message
+    // (accueil complet) et conversation déjà en cours (pas de ré-accueil)
+    // via historique.length.
     const historique = await chargerHistorique(phone);
     const reponse = await repondreIA(phone, senderName, text, historique);
     await envoyer(phone, text, reponse);
