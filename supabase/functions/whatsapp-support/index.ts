@@ -16,10 +16,12 @@ const MODELE_OMNI = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
 
 // Text-to-speech gratuit — utilisé UNIQUEMENT en réponse symétrique quand LE
 // CLIENT LUI-MÊME a envoyé un vocal (voir clientAEnvoyeVocal plus bas) : s'il
-// écrit en texte, la réponse reste en texte. Voix nativement anglaise —
-// acceptable pour un test, à revoir si la prononciation française est mauvaise.
-const MODELE_TTS = "deepgram/flux-tts:free";
-const VOIX_TTS = "flux-alexis-en";
+// écrit en texte, la réponse reste en texte. deepgram/flux-tts:free a été
+// testé en réel en premier mais sa voix est nativement anglaise — un client
+// francophone recevait un français lu avec un accent anglais, pas naturel.
+// Fish Audio S2.1 Pro Free est un modèle multilingue (pas de paramètre voix
+// à fixer), remplace Deepgram pour ça.
+const MODELE_TTS = "fish-audio/s2.1-pro-free:free";
 
 // sendWhatsAppToChatId() renvoie {ok, reason} sans jamais lever d'exception —
 // un appel non vérifié laisse un échec Green API (session déconnectée, quota,
@@ -66,7 +68,7 @@ async function genererVocal(texte: string): Promise<Uint8Array | null> {
         "HTTP-Referer": "https://baki-pay.com",
         "X-Title": "Baki-Pay Support",
       },
-      body: JSON.stringify({ model: MODELE_TTS, input: texteOral, voice: VOIX_TTS }),
+      body: JSON.stringify({ model: MODELE_TTS, input: texteOral }),
       signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) {
