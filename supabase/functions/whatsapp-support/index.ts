@@ -51,8 +51,38 @@ async function envoyer(phone: string, userText: string, message: string) {
   return res;
 }
 
-// Convertit un texte de réponse en audio via le TTS gratuit — retourne null
-// si la synthèse échoue (l'appelant doit alors se replier sur du texte,
+// Fish Audio (voir MODELE_TTS) renvoie du PCM brut (pas de conteneur), quel
+// que soit le format demandé — confirmé en réel : Green API acceptait l'envoi
+// sans erreur, mais WhatsApp ne pouvait rien lire (fichier .mp3 en réalité du
+// PCM nu), silence total côté client. On enveloppe donc nous-mêmes le PCM
+// dans un en-tête WAV (44 octets), lisible nativement par WhatsApp.
+function pcmVersWav(pcm: Uint8Array, sampleRate: number, channels: number, bitsParEchantillon: number): Uint8Array {
+  const blockAlign = channels * bitsParEchantillon / 8;
+  const byteRate = sampleRate * blockAlign;
+  const header = new ArrayBuffer(44);
+  const v = new DataView(header);
+  const ecrireStr = (offset: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i)); };
+  ecrireStr(0, "RIFF");
+  v.setUint32(4, 36 + pcm.length, true);
+  ecrireStr(8, "WAVE");
+  ecrireStr(12, "fmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, channels, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, byteRate, true);
+  v.setUint16(32, blockAlign, true);
+  v.setUint16(34, bitsParEchantillon, true);
+  ecrireStr(36, "data");
+  v.setUint32(40, pcm.length, true);
+  const out = new Uint8Array(44 + pcm.length);
+  out.set(new Uint8Array(header), 0);
+  out.set(pcm, 44);
+  return out;
+}
+
+// Convertit un texte de réponse en audio (WAV) via le TTS gratuit — retourne
+// null si la synthèse échoue (l'appelant doit alors se replier sur du texte,
 // jamais laisser le client sans réponse). Les astérisques (mise en forme
 // WhatsApp *gras*) n'ont aucun sens à l'oral — retirés avant synthèse.
 async function genererVocal(texte: string): Promise<Uint8Array | null> {
@@ -72,16 +102,15 @@ async function genererVocal(texte: string): Promise<Uint8Array | null> {
       signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) {
-      const corps = await res.text().catch(() => "");
-      logAudit("genererVocal_debug", { status: res.status, corps: corps.substring(0, 500) });
-      console.warn("whatsapp-support: genererVocal échoué:", res.status, corps);
+      console.warn("whatsapp-support: genererVocal échoué:", res.status, await res.text().catch(() => ""));
       return null;
     }
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    logAudit("genererVocal_debug", { etape: "ok", contentType: res.headers.get("content-type"), tailleOctets: bytes.length });
-    return bytes;
+    const pcm = new Uint8Array(await res.arrayBuffer());
+    const contentType = res.headers.get("content-type") || "";
+    const rate = parseInt(contentType.match(/rate=(\d+)/)?.[1] || "44100");
+    const channels = parseInt(contentType.match(/channels=(\d+)/)?.[1] || "1");
+    return pcmVersWav(pcm, rate, channels, 16);
   } catch (e) {
-    logAudit("genererVocal_debug", { etape: "exception", erreur: (e as Error).message });
     console.warn("whatsapp-support: genererVocal échoué:", (e as Error).message);
     return null;
   }
@@ -95,7 +124,7 @@ async function repondreAuClient(phone: string, userText: string, message: string
   if (vocal) {
     const audio = await genererVocal(message);
     if (audio) {
-      const res = await sendWhatsAppAudioToChatId(`${phone}@c.us`, audio, "reponse.mp3", "audio/mpeg");
+      const res = await sendWhatsAppAudioToChatId(`${phone}@c.us`, audio, "reponse.wav", "audio/wav");
       if (res.ok) {
         await supabase.from("whatsapp_conversations").insert([
           { phone, role: "user", content: userText },
@@ -105,9 +134,7 @@ async function repondreAuClient(phone: string, userText: string, message: string
       }
       // Envoi du fichier échoué (Green API a rejeté/n'a pas pu livrer l'audio
       // généré) — sans ce repli, la synthèse réussie masquait un échec
-      // d'envoi et le client ne recevait STRICTEMENT rien (bug réel constaté
-      // avec Fish Audio : TTS ok, envoi échoué, silence total).
-      logAudit("repondreAuClient_debug", { etape: "envoi_audio", reason: res.reason });
+      // d'envoi et le client ne recevait STRICTEMENT rien.
       console.error("whatsapp-support: envoi vocal échoué vers", phone, "-", res.reason);
     } else {
       console.warn("whatsapp-support: repli texte après échec TTS pour", phone);
