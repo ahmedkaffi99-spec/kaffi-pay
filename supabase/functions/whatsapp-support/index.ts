@@ -197,7 +197,14 @@ async function appellerWhisper(apiKey: string, blob: Blob, langue?: string): Pro
   // (voir transcrireVocalGroq).
   form.append("model", "whisper-large-v3-turbo");
   form.append("response_format", "verbose_json");
-  if (langue) form.append("language", langue);
+  if (langue) {
+    form.append("language", langue);
+    // "prompt" amorce le modèle avec du vocabulaire somali réel — le simple
+    // paramètre "language" seul ne suffisait pas (constaté en réel : encore
+    // halluciné en japonais malgré language=so), cette astuce guide mieux un
+    // modèle Whisper faible sur les langues peu représentées.
+    if (langue === "so") form.append("prompt", "Salaan, Baki-Pay waxay kaa caawin kartaa dhigista iyo bixinta lacagta si degdeg ah.");
+  }
 
   const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
     method: "POST",
