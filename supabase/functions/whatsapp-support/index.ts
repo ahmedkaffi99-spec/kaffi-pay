@@ -184,9 +184,43 @@ function reponseIaValide(texte: string): boolean {
   return true;
 }
 
+// Un seul appel Whisper à Groq, avec ou sans langue forcée — factorisé car
+// transcrireVocalGroq() a besoin de deux passes (voir plus bas).
+async function appellerWhisper(apiKey: string, blob: Blob, langue?: string): Promise<{ texte: string; langueDetectee: string } | null> {
+  const form = new FormData();
+  form.append("file", blob, "vocal.ogg");
+  // whisper-large-v3-turbo confondait le somali avec l'espagnol/le chinois
+  // (constaté en réel) — le modèle complet (non distillé) est plus lent
+  // mais nettement plus fiable sur les langues peu représentées.
+  form.append("model", "whisper-large-v3");
+  form.append("response_format", "verbose_json");
+  if (langue) form.append("language", langue);
+
+  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${apiKey}` },
+    body: form,
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok && data.text && data.text.trim().length > 0) {
+    return { texte: data.text.trim(), langueDetectee: data.language || "" };
+  }
+  console.warn("whatsapp-support: appellerWhisper réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
+  return null;
+}
+
 // Transcrit un vocal WhatsApp via Whisper (Groq, gratuit sans solde minimum —
 // contrairement à l'audio d'OpenRouter qui exige 0,50$ de crédit, voir
 // decrireMedia). Groq attend un vrai multipart/form-data, pas du base64 JSON.
+//
+// Baki-Pay ne sert que français/anglais/somali (voir systemPrompt). Le
+// somali, langue peu représentée dans l'entraînement de Whisper, a été
+// confondu en réel avec l'espagnol puis le chinois lors de la détection
+// automatique — pas juste un accent approximatif, une langue totalement
+// fausse. Si la détection automatique ne tombe ni sur fr ni sur en, on
+// suppose que c'est du somali mal détecté et on relance UNE fois avec
+// `language: "so"` forcé, qui guide correctement le modèle.
 async function transcrireVocalGroq(downloadUrl: string): Promise<string | null> {
   const apiKey = Deno.env.get("GROQ_API_KEY");
   if (!apiKey) return null;
@@ -194,23 +228,15 @@ async function transcrireVocalGroq(downloadUrl: string): Promise<string | null> 
     const audioRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(15000) });
     if (!audioRes.ok) return null;
     const blob = await audioRes.blob();
-    const form = new FormData();
-    form.append("file", blob, "vocal.ogg");
-    // whisper-large-v3-turbo confondait le somali avec l'espagnol/le chinois
-    // (constaté en réel) — le modèle complet (non distillé) est plus lent
-    // mais nettement plus fiable sur les langues peu représentées.
-    form.append("model", "whisper-large-v3");
 
-    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}` },
-      body: form,
-      signal: AbortSignal.timeout(20000),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.text && data.text.trim().length > 0) return data.text.trim();
-    console.warn("whatsapp-support: transcrireVocalGroq réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
-    return null;
+    const premierEssai = await appellerWhisper(apiKey, blob);
+    if (!premierEssai) return null;
+    if (premierEssai.langueDetectee === "french" || premierEssai.langueDetectee === "english") {
+      return premierEssai.texte;
+    }
+
+    const essaiSomali = await appellerWhisper(apiKey, blob, "so");
+    return essaiSomali ? essaiSomali.texte : premierEssai.texte;
   } catch (e) {
     console.warn("whatsapp-support: transcrireVocalGroq échoué:", (e as Error).message);
     return null;
