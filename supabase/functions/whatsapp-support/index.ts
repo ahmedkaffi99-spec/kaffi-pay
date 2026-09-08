@@ -196,7 +196,10 @@ async function transcrireVocalGroq(downloadUrl: string): Promise<string | null> 
     const blob = await audioRes.blob();
     const form = new FormData();
     form.append("file", blob, "vocal.ogg");
-    form.append("model", "whisper-large-v3-turbo");
+    // whisper-large-v3-turbo confondait le somali avec l'espagnol/le chinois
+    // (constaté en réel) — le modèle complet (non distillé) est plus lent
+    // mais nettement plus fiable sur les langues peu représentées.
+    form.append("model", "whisper-large-v3");
 
     const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",
