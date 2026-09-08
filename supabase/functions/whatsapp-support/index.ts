@@ -189,10 +189,13 @@ function reponseIaValide(texte: string): boolean {
 async function appellerWhisper(apiKey: string, blob: Blob, langue?: string): Promise<{ texte: string; langueDetectee: string } | null> {
   const form = new FormData();
   form.append("file", blob, "vocal.ogg");
-  // whisper-large-v3-turbo confondait le somali avec l'espagnol/le chinois
-  // (constaté en réel) — le modèle complet (non distillé) est plus lent
-  // mais nettement plus fiable sur les langues peu représentées.
-  form.append("model", "whisper-large-v3");
+  // Le modèle complet whisper-large-v3 est bloqué par défaut au niveau du
+  // projet Groq (403 model_permission_blocked_project, confirmé en réel) —
+  // -turbo reste le seul modèle Whisper accessible sans configuration
+  // supplémentaire côté Groq. La confusion de langue qu'il produisait sur le
+  // somali est corrigée autrement, via le second essai avec langue forcée
+  // (voir transcrireVocalGroq).
+  form.append("model", "whisper-large-v3-turbo");
   form.append("response_format", "verbose_json");
   if (langue) form.append("language", langue);
 
