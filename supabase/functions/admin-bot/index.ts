@@ -164,22 +164,29 @@ Deno.serve(async (req: Request) => {
         if (!ordre) { await sendTelegram(token, fromId, `❓ Ordre <b>#${ordreId}</b> introuvable.`); return json({ ok: true }, 200, headers); }
         const id1xbet = ordre.user_id_1xbet || ordre.id1x || "";
         const montantVal = ordre.montant || 0;
+        // montantVal reste le DJF (matching/affichage) ; le cashdesk MobCash
+        // à utiliser et le montant à lui soumettre dépendent de la devise
+        // réelle de l'ordre (voir submit-depot/submit-retrait).
+        const deviseOrdre = ordre.devise === "USD" ? "USD" : "DJF";
+        const montantUsdOrdre = deviseOrdre === "USD" ? Number(ordre.montant_usd || 0) : null;
+        const montantMobcashVal = deviseOrdre === "USD" ? (montantUsdOrdre || 0) : montantVal;
+        const montantAfficheRelance = deviseOrdre === "USD" ? `${montantVal.toLocaleString()} DJF (${montantUsdOrdre}$)` : `${Number(montantVal).toLocaleString()} DJF`;
         if (!id1xbet) { await sendTelegram(token, fromId, `⚠️ ID 1xBet manquant pour <b>#${ordreId}</b>.`); return json({ ok: true }, 200, headers); }
         await sendTelegram(token, fromId, `🔄 Relance MobCash — <b>#${ordreId}</b> | <code>${id1xbet}</code>…`);
         try {
           if ((ordre.type || "Dépôt") === "Retrait") {
-            await callMobcash("Retrait", id1xbet, montantVal, ordre.withdrawal_code || "");
+            await callMobcash("Retrait", id1xbet, montantMobcashVal, ordre.withdrawal_code || "", deviseOrdre as "DJF" | "USD");
           } else {
-            await callMobcashDepot(id1xbet, montantVal);
+            await callMobcashDepot(id1xbet, montantMobcashVal, deviseOrdre as "DJF" | "USD");
           }
           const newStatus = ordre.type === "Retrait" ? "Code Validé" : "Crédité avec succès";
           await updateOrder(ordre._table, ordre.id, { status: newStatus, webhook_status: "ok", webhook_at: new Date().toISOString() });
-          logAudit("recharge_agent_paiement_ok", { ordreId, agentId: fromId, id1xbet });
+          logAudit("recharge_agent_paiement_ok", { ordreId, agentId: fromId, id1xbet, devise: deviseOrdre });
           await sendTelegram(token, fromId,
-            `✅ <b>Recharge réussie !</b>\n#${ordreId} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
+            `✅ <b>Recharge réussie !</b>\n#${ordreId} | <code>${id1xbet}</code> | ${montantAfficheRelance}`);
           const nomPay = await nomActeur(fromId, adminId);
           await diffuserAction(token, adminId, fromId,
-            `👤 <b>${nomPay}</b> a relancé et crédité <b>#${ordreId}</b> (bouton) — ${Number(montantVal).toLocaleString()} DJF.`);
+            `👤 <b>${nomPay}</b> a relancé et crédité <b>#${ordreId}</b> (bouton) — ${montantAfficheRelance}.`);
         } catch (e: unknown) {
           const errMsg = (e as Error).message || "";
           const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
@@ -187,9 +194,9 @@ Deno.serve(async (req: Request) => {
             webhook_status: webhookStatus, webhook_err: errMsg, webhook_at: new Date().toISOString(),
           });
           const hint = webhookStatus === "echec_permanent"
-            ? "\n<i>Compte probablement en devise étrangère — utilisez <code>recharge " + ordreId + " NOUVEL_ID</code>.</i>"
+            ? `\n<i>Compte probablement pas en ${deviseOrdre} — utilisez <code>recharge ${ordreId} NOUVEL_ID</code>.</i>`
             : webhookStatus === "echec_solde"
-            ? "\n<i>Solde cashdesk insuffisant — rechargez puis relancez.</i>"
+            ? `\n<i>Solde cashdesk ${deviseOrdre} insuffisant — rechargez puis relancez.</i>`
             : "";
           await sendTelegram(token, fromId, `❌ Échec MobCash : <code>${errMsg}</code>${hint}`);
           const nomPayEchec = await nomActeur(fromId, adminId);
@@ -253,14 +260,21 @@ Deno.serve(async (req: Request) => {
         if (!transitionValide(ordre.status, "Paiement Reçu")) {
           await sendTelegram(token, replyId, `⛔ Impossible de confirmer — statut : <b>${ordre.status}</b>.`); return json({ ok: true }, 200, headers);
         }
+        // montantVal (DJF payé via Waafi) sert au matching et à l'affichage ;
+        // le crédit MobCash réel utilise montant_usd sur le cashdesk USD si
+        // l'ordre est en USD (voir devise plus bas) — jamais montantVal.
+        const devise = ordre.devise === "USD" ? "USD" : "DJF";
+        const montantUsdOrdre = devise === "USD" ? Number(ordre.montant_usd || 0) : null;
+        const montantACrediter = devise === "USD" ? (montantUsdOrdre || 0) : montantVal;
+        const montantAfficheConf = devise === "USD" ? `${montantVal.toLocaleString()} DJF (crédit : ${montantUsdOrdre}$)` : `${montantVal.toLocaleString()} DJF`;
         await updateOrder(ordre._table, ordre.id, { status: "Paiement Reçu", confirmed_by: "admin_telegram", confirmed_at: new Date().toISOString() });
-        await sendTelegram(token, replyId, `✅ Dépôt <b>#${num}</b> confirmé — ${montantVal.toLocaleString()} DJF\n🔄 MobCash en cours...`);
+        await sendTelegram(token, replyId, `✅ Dépôt <b>#${num}</b> confirmé — ${montantAfficheConf}\n🔄 MobCash en cours...`);
         const clientWa = (ordre.whatsapp || "") as string;
         const vtSuffix = ordre.view_token ? `-${ordre.view_token}` : "";
         if (clientWa) {
           sendWhatsApp(clientWa,
             `💳 *Baki-Pay — Paiement reçu* ✅\n\n` +
-            `Votre paiement *#${num}* de *${montantVal.toLocaleString()} DJF* a bien été reçu.\n\n` +
+            `Votre paiement *#${num}* de *${montantAfficheConf}* a bien été reçu.\n\n` +
             `⏳ Crédit de votre compte 1xBet en cours...\n` +
             `📲 baki-pay.com/#suivi-${num}${vtSuffix}`
           ).catch(() => {});
@@ -277,29 +291,29 @@ Deno.serve(async (req: Request) => {
             `👤 <b>${nomConf}</b> a confirmé <b>#${num}</b> — ID 1xBet manquant, crédit impossible sans <code>recharge ${num} NOUVEL_ID</code>.`);
         } else {
           try {
-            await callMobcashDepot(id1xbet, montantVal);
+            await callMobcashDepot(id1xbet, montantACrediter, devise as "DJF" | "USD");
             await updateOrder(ordre._table, ordre.id, { status: "Crédité avec succès", webhook_status: "ok", webhook_at: new Date().toISOString() });
-            const creditMsg = `✅ <b>Dépôt crédité avec succès</b>\n#${num} — ${montantVal.toLocaleString()} DJF`;
+            const creditMsg = `✅ <b>Dépôt crédité avec succès</b>\n#${num} — ${montantAfficheConf}`;
             await sendTelegram(token, replyId, creditMsg);
             await notifyPaiementAgents(token, creditMsg).catch(() => {});
             if (clientWa) {
               sendWhatsApp(clientWa,
                 `🎉 *Baki-Pay — Compte 1xBet crédité !*\n\n` +
-                `Votre dépôt *#${num}* de *${montantVal.toLocaleString()} DJF* a été traité avec succès.\n\n` +
+                `Votre dépôt *#${num}* de *${montantAfficheConf}* a été traité avec succès.\n\n` +
                 `✅ *Crédité avec succès*\n\nVotre compte 1xBet est rechargé. Bonne chance ! 🎮`
               ).catch(() => {});
             }
-            logAudit("confirme_admin_telegram_mobcash_ok", { num, adminId: chatId, id1xbet });
+            logAudit("confirme_admin_telegram_mobcash_ok", { num, adminId: chatId, id1xbet, devise });
             await diffuserAction(token, adminId, chatId,
-              `👤 <b>${nomConf}</b> a confirmé et crédité le dépôt <b>#${num}</b> — ${montantVal.toLocaleString()} DJF.`);
+              `👤 <b>${nomConf}</b> a confirmé et crédité le dépôt <b>#${num}</b> — ${montantAfficheConf}.`);
           } catch (e: unknown) {
             const errMsg = (e as Error).message || "";
             const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
             await updateOrder(ordre._table, ordre.id, { webhook_status: webhookStatus, webhook_err: errMsg, webhook_at: new Date().toISOString() });
             const hint = webhookStatus === "echec_permanent"
-              ? `\n<i>Compte probablement en devise étrangère — <code>recharge ${num} NOUVEL_ID</code> avec un ID DJF.</i>`
+              ? `\n<i>Compte probablement pas en ${devise} — <code>recharge ${num} NOUVEL_ID</code> avec un ID de la bonne devise.</i>`
               : webhookStatus === "echec_solde"
-              ? "\n<i>Solde cashdesk insuffisant — rechargez puis <code>recharge " + num + "</code>.</i>"
+              ? `\n<i>Solde cashdesk ${devise} insuffisant — rechargez puis <code>recharge ${num}</code>.</i>`
               : "";
             await sendTelegram(token, replyId, `❌ MobCash échoué — #${num}\n<code>${errMsg}</code>${hint}`);
             logAudit("confirme_admin_telegram_mobcash_echec", { num, adminId: chatId, errMsg, webhookStatus });
@@ -508,32 +522,39 @@ Deno.serve(async (req: Request) => {
       }
       const id1xbet = nouvelId || ordre.user_id_1xbet || ordre.id1x || "";
       const montantVal = ordre.montant || 0;
+      // Le "nouvel ID" fourni par l'admin est dans la MÊME devise que l'ordre
+      // d'origine (celle choisie par le client sur le formulaire) — cette
+      // commande ne change pas de cashdesk, elle corrige juste un ID erroné.
+      const deviseRecharge = ordre.devise === "USD" ? "USD" : "DJF";
+      const montantUsdRecharge = deviseRecharge === "USD" ? Number(ordre.montant_usd || 0) : null;
+      const montantMobcashRecharge = deviseRecharge === "USD" ? (montantUsdRecharge || 0) : montantVal;
+      const montantAfficheRecharge = deviseRecharge === "USD" ? `${Number(montantVal).toLocaleString()} DJF (${montantUsdRecharge}$)` : `${Number(montantVal).toLocaleString()} DJF`;
       if (!id1xbet) { await sendTelegram(token, replyId, `⚠️ ID 1xBet manquant pour <b>#${num}</b>.`); return json({ ok: true }, 200, headers); }
       await sendTelegram(token, replyId, `🔄 Relance MobCash — <b>#${num}</b> | <code>${id1xbet}</code>…`);
       try {
         if ((ordre.type || "Dépôt") === "Retrait") {
-          await callMobcash("Retrait", id1xbet, montantVal, ordre.withdrawal_code || "");
+          await callMobcash("Retrait", id1xbet, montantMobcashRecharge, ordre.withdrawal_code || "", deviseRecharge as "DJF" | "USD");
         } else {
-          await callMobcashDepot(id1xbet, montantVal);
+          await callMobcashDepot(id1xbet, montantMobcashRecharge, deviseRecharge as "DJF" | "USD");
         }
         await updateOrder(ordre._table, ordre.id, {
           status: "Crédité avec succès", webhook_status: "ok", webhook_at: new Date().toISOString(), recharge_admin: true,
           ...(nouvelId ? { user_id_1xbet: nouvelId } : {}),
         });
-        logAudit("recharge_manuelle_ok", { num, adminId: chatId, id1xbet });
+        logAudit("recharge_manuelle_ok", { num, adminId: chatId, id1xbet, devise: deviseRecharge });
         await sendTelegram(token, replyId,
-          `✅ <b>Recharge réussie !</b>\n#${num} | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF`);
+          `✅ <b>Recharge réussie !</b>\n#${num} | <code>${id1xbet}</code> | ${montantAfficheRecharge}`);
         const clientWaRecharge = (ordre.whatsapp || "") as string;
         if (clientWaRecharge && (ordre.type || "Dépôt") !== "Retrait") {
           sendWhatsApp(clientWaRecharge,
             `🎉 *Baki-Pay — Compte 1xBet crédité !*\n\n` +
-            `Votre dépôt *#${num}* de *${Number(montantVal).toLocaleString()} DJF* a été traité avec succès.\n\n` +
+            `Votre dépôt *#${num}* de *${montantAfficheRecharge}* a été traité avec succès.\n\n` +
             `✅ *Crédité avec succès*`
           ).catch(() => {});
         }
         const nomRecOk = await nomActeur(chatId, adminId);
         await diffuserAction(token, adminId, chatId,
-          `👤 <b>${nomRecOk}</b> a relancé et crédité <b>#${num}</b> | <code>${id1xbet}</code> | ${Number(montantVal).toLocaleString()} DJF.`);
+          `👤 <b>${nomRecOk}</b> a relancé et crédité <b>#${num}</b> | <code>${id1xbet}</code> | ${montantAfficheRecharge}.`);
       } catch (e: unknown) {
         const errMsg = (e as Error).message || "";
         const webhookStatus = webhookStatusPourErreurMobcash(errMsg);
@@ -542,7 +563,7 @@ Deno.serve(async (req: Request) => {
           ...(nouvelId ? { user_id_1xbet: nouvelId } : {}),
         });
         const hint = webhookStatus === "echec_permanent"
-          ? "\n<i>Compte probablement en devise étrangère — <code>recharge " + num + " NOUVEL_ID</code> avec un ID DJF.</i>"
+          ? `\n<i>Compte probablement pas en ${deviseRecharge} — <code>recharge ${num} NOUVEL_ID</code> avec un ID de la bonne devise.</i>`
           : webhookStatus === "echec_solde"
           ? "\n<i>Solde cashdesk insuffisant — rechargez puis relancez.</i>"
           : "";

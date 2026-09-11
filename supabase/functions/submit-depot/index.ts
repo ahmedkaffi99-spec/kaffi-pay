@@ -3,7 +3,7 @@ import { sendTelegram, notifyPaiementAgents } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { scorerCorrespondance, mismatchToRaison } from "../_shared/scoring.ts";
 import { confirmerDepot } from "../_shared/confirmer.ts";
-import { json, cors, logAudit, genToken } from "../_shared/utils.ts";
+import { json, cors, logAudit, genToken, TAUX_DEPOT_USD } from "../_shared/utils.ts";
 
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
@@ -15,20 +15,30 @@ Deno.serve(async (req: Request) => {
   const adminId = Deno.env.get("TELEGRAM_ADMIN_CHAT_ID")!;
 
   const ordreId = body.order_id as string;
-  const montant = Number(body.montant || 0);
+  // Devise du compte 1xBet crédité — jamais fait confiance à un montant DJF
+  // envoyé par le client pour un ordre USD : recalculé ici depuis montant_usd
+  // au taux fixe (TAUX_DEPOT_USD), pour que le matching Waafi (montant) reste
+  // fiable même si le client altère la requête.
+  const devise = body.devise === "USD" ? "USD" : "DJF";
+  const montantUsd = devise === "USD" ? Number(body.montant_usd || 0) : null;
+  const montant = devise === "USD" ? Math.round((montantUsd || 0) * TAUX_DEPOT_USD) : Number(body.montant || 0);
   const transferId = (body.waafi_transfert_id || body.hash || "").trim();
   const phone = (body.numero_payment || "").trim();
   const userId1xbet = (body.user_id_1xbet || body.id1x || "").trim();
   const whatsapp = (body.whatsapp || "").trim();
   const viewToken = (body.view_token || genToken()) as string;
 
-  if (!ordreId || !montant) return json({ error: "order_id et montant requis" }, 400, headers);
+  if (!ordreId || !montant || (devise === "USD" && !montantUsd)) {
+    return json({ error: "order_id et montant requis" }, 400, headers);
+  }
 
   // Insérer l'ordre en base
   const { data: ordre, error: insertErr } = await supabase.from("depot_orders").insert({
     order_id: ordreId,
     status: "En attente",
     montant,
+    devise,
+    montant_usd: montantUsd,
     user_id_1xbet: userId1xbet || null,
     id1x: userId1xbet || null,
     waafi_transfert_id: transferId || null,
@@ -42,7 +52,7 @@ Deno.serve(async (req: Request) => {
 
   if (insertErr) return json({ error: insertErr.message }, 500, headers);
 
-  logAudit("nouvel_depot", { ordreId, montant, phone });
+  logAudit("nouvel_depot", { ordreId, montant, devise, montantUsd, phone });
 
   // Répondre immédiatement au client
   const response = json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
@@ -50,11 +60,17 @@ Deno.serve(async (req: Request) => {
   // Traitement en arrière-plan (maintenu vivant par waitUntil)
   const process = (async () => {
     const vt = viewToken ? `-${viewToken}` : "";
+    // "58 000 DJF" en DJF, ou "58 000 DJF (crédit : 325.84$)" en USD — le
+    // client paie toujours en DJF via Waafi, mais doit voir clairement le
+    // montant USD réellement crédité sur son compte 1xBet.
+    const montantAffiche = devise === "USD"
+      ? `${montant.toLocaleString()} DJF (crédit : ${montantUsd}$)`
+      : `${montant.toLocaleString()} DJF`;
 
     // Telegram admin + agents — nouvel ordre reçu
     const newDepotMsg =
       `📥 <b>Nouvel ordre Dépôt</b> — <code>#${ordreId}</code>\n\n` +
-      `Montant : <b>${montant.toLocaleString()} DJF</b>\n` +
+      `Montant : <b>${montantAffiche}</b>\n` +
       `ID 1xBet : <code>${userId1xbet || "—"}</code>\n` +
       `Transfer-ID : <code>${transferId || "—"}</code>\n` +
       `N° Waafi : <code>${phone || "—"}</code>\n\n` +
@@ -70,7 +86,7 @@ Deno.serve(async (req: Request) => {
         `🧾 *Baki-Pay — Ordre reçu* ✅\n\n` +
         `Votre ordre *#${ordreId}* a bien été soumis.\n\n` +
         `📥 *Dépôt 1xBet*\n` +
-        `Montant : *${montant.toLocaleString()} DJF*\n` +
+        `Montant : *${montantAffiche}*\n` +
         `ID 1xBet : ${userId1xbet || "—"}\n` +
         `Waafi Transfer ID : ${transferId || "—"}\n` +
         `N° expéditeur : ${phone || "—"}\n\n` +

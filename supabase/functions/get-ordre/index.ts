@@ -16,10 +16,10 @@ Deno.serve(async (req: Request) => {
 
   const [d, r] = await Promise.all([
     supabase.from("depot_orders")
-      .select("order_id,status,montant,montant_notif,user_id_1xbet,id1x,waafi_transfert_id,hash,numero_payment,whatsapp,view_token,flag_raison,confirmed_at,created_at,webhook_status")
+      .select("order_id,status,montant,montant_notif,devise,montant_usd,user_id_1xbet,id1x,waafi_transfert_id,hash,numero_payment,whatsapp,view_token,flag_raison,confirmed_at,created_at,webhook_status")
       .eq("order_id", orderId).limit(1),
     supabase.from("retrait_orders")
-      .select("order_id,status,montant,montant_mobcash,user_id_1xbet,id1x,withdrawal_code,code,numero_waafi,whatsapp,view_token,flag_raison,confirmed_at,created_at,webhook_status")
+      .select("order_id,status,montant,montant_mobcash,devise,montant_usd,user_id_1xbet,id1x,withdrawal_code,code,numero_waafi,whatsapp,view_token,flag_raison,confirmed_at,created_at,webhook_status")
       .eq("order_id", orderId).limit(1),
   ]);
 
@@ -46,6 +46,8 @@ Deno.serve(async (req: Request) => {
     status: ordre.status,
     montant: ordre.montant,
     montant_final: ordre.montant_notif || ordre.montant_mobcash || ordre.montant,
+    devise: ordre.devise || "DJF",
+    montant_usd: ordre.montant_usd || null,
     user_id_1xbet: ordre.user_id_1xbet || ordre.id1x || null,
     waafi_transfert_id: ordre.waafi_transfert_id || ordre.hash || null,
     numero_payment: ordre.numero_payment || null,

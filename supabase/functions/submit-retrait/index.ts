@@ -2,7 +2,7 @@ import { supabase } from "../_shared/db.ts";
 import { sendTelegram, notifyPaiementAgents, sendTelegramKeyboard } from "../_shared/telegram.ts";
 import { sendWhatsApp } from "../_shared/whatsapp.ts";
 import { callMobcash } from "../_shared/mobcash.ts";
-import { json, cors, logAudit, genToken } from "../_shared/utils.ts";
+import { json, cors, logAudit, genToken, TAUX_RETRAIT_USD } from "../_shared/utils.ts";
 
 Deno.serve(async (req: Request) => {
   const headers = cors(req);
@@ -14,7 +14,13 @@ Deno.serve(async (req: Request) => {
   const adminId = Deno.env.get("TELEGRAM_ADMIN_CHAT_ID")!;
 
   const ordreId = body.order_id as string;
-  const montant = Number(body.montant || 0);
+  // Pour un retrait USD, le code 1xBet encode un montant en dollars — montant
+  // (DJF) n'est calculé qu'après validation MobCash (voir montantMobcash plus
+  // bas), car c'est MobCash qui fait foi sur la vraie valeur du code, jamais
+  // une valeur envoyée par le client.
+  const devise = body.devise === "USD" ? "USD" : "DJF";
+  const montantUsd = devise === "USD" ? Number(body.montant_usd || 0) : null;
+  const montant = devise === "USD" ? Math.round((montantUsd || 0) * TAUX_RETRAIT_USD) : Number(body.montant || 0);
   const withdrawalCode = (body.withdrawal_code || "").trim();
   const waafiNum = (body.numero_waafi || body.tel || body.whatsapp || "")
     .replace(/\s/g, "").replace(/^\+?253/, "");
@@ -22,13 +28,17 @@ Deno.serve(async (req: Request) => {
   const whatsapp = (body.whatsapp || "").trim();
   const viewToken = (body.view_token || genToken()) as string;
 
-  if (!ordreId || !montant) return json({ error: "order_id et montant requis" }, 400, headers);
+  if (!ordreId || !montant || (devise === "USD" && !montantUsd)) {
+    return json({ error: "order_id et montant requis" }, 400, headers);
+  }
 
   // Insérer l'ordre en base
   const { data: ordre, error: insertErr } = await supabase.from("retrait_orders").insert({
     order_id: ordreId,
     status: "En attente",
     montant,
+    devise,
+    montant_usd: montantUsd,
     user_id_1xbet: userId1xbet || null,
     id1x: userId1xbet || null,
     withdrawal_code: withdrawalCode || null,
@@ -39,17 +49,19 @@ Deno.serve(async (req: Request) => {
 
   if (insertErr) return json({ error: insertErr.message }, 500, headers);
 
-  logAudit("nouvel_retrait", { ordreId, montant, waafiNum });
+  logAudit("nouvel_retrait", { ordreId, montant, devise, montantUsd, waafiNum });
 
   // Répondre au client immédiatement
   const response = json({ success: true, order_id: ordreId, view_token: viewToken }, 200, headers);
 
   // Traitement asynchrone
   (async () => {
+    const montantAffiche = devise === "USD" ? `${montant.toLocaleString()} DJF (${montantUsd}$ attendus)` : `${montant.toLocaleString()} DJF`;
+
     // Telegram admin + agents — accusé de réception
     const newRetraitMsg =
       `📤 <b>Nouvel ordre Retrait</b> — <code>#${ordreId}</code>\n\n` +
-      `Montant : <b>${montant.toLocaleString()} DJF</b>\n` +
+      `Montant : <b>${montantAffiche}</b>\n` +
       `N° Waafi : <code>${waafiNum || "—"}</code>\n` +
       `Code retrait : <code>${withdrawalCode || "—"}</code>\n` +
       `ID 1xBet : <code>${userId1xbet || "—"}</code>\n\n` +
@@ -63,7 +75,7 @@ Deno.serve(async (req: Request) => {
     if (whatsapp) {
       await sendWhatsApp(whatsapp,
         `🧾 *Baki-Pay — Retrait reçu*\n\n` +
-        `Ordre *#${ordreId}* — *${montant.toLocaleString()} DJF*\n\n` +
+        `Ordre *#${ordreId}* — *${montantAffiche}*\n\n` +
         `📝 *Statut : En attente*\n` +
         `Note : Traitement en cours. Veuillez ne pas annuler le code sur votre application 1xbet.\n\n` +
         `📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
@@ -95,12 +107,16 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
-      const mobcashData = await callMobcash("Retrait", userId1xbet, montant, withdrawalCode);
+      // La valeur soumise à MobCash doit être dans la devise réelle du
+      // cashdesk (USD pour un compte USD) — jamais le montant DJF converti,
+      // que MobCash ne comprendrait pas pour un compte USD.
+      const montantAttendu = devise === "USD" ? (montantUsd || 0) : montant;
+      const mobcashData = await callMobcash("Retrait", userId1xbet, montantAttendu, withdrawalCode, devise as "DJF" | "USD");
       const montantMobcash = Math.abs(Number(
-        mobcashData.Summa ?? mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montant
+        mobcashData.Summa ?? mobcashData.summa ?? mobcashData.amount ?? mobcashData.sum ?? montantAttendu
       ));
 
-      if (montantMobcash !== montant) {
+      if (montantMobcash !== montantAttendu) {
         const note = "Montant incorrect. Le montant saisi ne correspond pas à la valeur du code sur 1xbet.";
         await supabase.from("retrait_orders").update({
           status: "Code Invalide",
@@ -109,38 +125,46 @@ Deno.serve(async (req: Request) => {
           flagged_at: new Date().toISOString(),
           auto_notified: true,
         }).eq("id", ordre.id);
+        const uniteAttendu = devise === "USD" ? "$" : "DJF";
         const mMontantInc = `❌ <b>Retrait — Code Invalide</b>\nOrdre : <code>#${ordreId}</code>\n${note}\n` +
-          `Soumis : ${montant.toLocaleString()} DJF | MobCash : ${montantMobcash.toLocaleString()} DJF`;
+          `Soumis : ${montantAttendu.toLocaleString()}${uniteAttendu} | MobCash : ${montantMobcash.toLocaleString()}${uniteAttendu}`;
         await Promise.allSettled([sendTelegram(token, adminId, mMontantInc), notifyPaiementAgents(token, mMontantInc)]);
         if (whatsapp) {
           await sendWhatsApp(whatsapp,
             `❌ *Baki-Pay — Code Invalide*\n\nOrdre *#${ordreId}* :\n\n📝 ${note}\n\n📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
           ).catch(() => {});
         }
-        logAudit("retrait_montant_incorrect", { ordreId, montant, montantMobcash });
+        logAudit("retrait_montant_incorrect", { ordreId, devise, montantAttendu, montantMobcash });
         return;
       }
+
+      // Montant réellement à transférer via Waafi (toujours en DJF) — pour un
+      // retrait USD, converti au taux de retrait depuis le montant validé par
+      // MobCash (jamais le montant DJF pré-calculé côté client).
+      const montantAPayer = devise === "USD" ? Math.round(montantMobcash * TAUX_RETRAIT_USD) : montantMobcash;
+      const montantPayeAffiche = devise === "USD" ? `${montantAPayer.toLocaleString()} DJF (${montantMobcash}$)` : `${montantAPayer.toLocaleString()} DJF`;
 
       // Succès MobCash → Code Validé
       await supabase.from("retrait_orders").update({
         status: "Code Validé",
         mobcash_at: new Date().toISOString(),
         montant_mobcash: montantMobcash,
+        montant: montantAPayer,
       }).eq("id", ordre.id);
 
       if (whatsapp) {
         await sendWhatsApp(whatsapp,
-          `✅ *Baki-Pay — Code Validé*\n\nOrdre *#${ordreId}* — *${montantMobcash.toLocaleString()} DJF*\n\n` +
+          `✅ *Baki-Pay — Code Validé*\n\nOrdre *#${ordreId}* — *${montantPayeAffiche}*\n\n` +
           `📝 *Statut : Code Validé*\n` +
           `Note : Fonds retirés avec succès depuis 1xbet. Votre transfert Waafi arrive dans un instant.\n\n` +
           `📲 baki-pay.com/#suivi-${ordreId}-${viewToken}`
         ).catch(() => {});
       }
 
-      const ussd = `*200*${waafiNum}*${montantMobcash}#`;
+      const ussd = `*200*${waafiNum}*${montantAPayer}#`;
       const retraitMsg =
         `📤 <b>Retrait à payer — #${ordreId}</b>\n\n` +
-        `Montant : <b>${montantMobcash.toLocaleString()} DJF</b>\n` +
+        `Montant : <b>${montantPayeAffiche}</b>\n` +
         `N° Waafi : <code>${waafiNum}</code>\n` +
         `Code retrait : <code>${withdrawalCode}</code>\n\n` +
         `📱 USSD : <code>${ussd}</code>\n\n` +

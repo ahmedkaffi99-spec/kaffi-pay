@@ -8,16 +8,30 @@ async function hexDigest(algorithm: string, input: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Un compte 1xBet a une devise fixée à sa création (DJF ou USD) — MobCash ne
+// convertit rien : chaque cashdesk (hash+cashierpass+cashdeskid) est lié à
+// UNE devise chez 1xBet, et ne peut créditer/débiter qu'un compte de cette
+// même devise ("currency does not match" sinon, voir ERREURS_PERMANENTES).
+// Chaque cashdesk a son PROPRE hash — un essai réel avec le hash DJF sur le
+// cashdesk USD a été rejeté (401 Unauthorized par MobCash), confirmé par
+// Ahmed : les deux cashdesks ont chacun leurs 3 identifiants indépendants.
 export async function callMobcash(
   type: "Dépôt" | "Retrait",
   userId1xbet: string,
   montant: number,
-  withdrawalCode: string
+  withdrawalCode: string,
+  devise: "DJF" | "USD" = "DJF"
 ) {
-  const hash = Deno.env.get("MOBCASH_HASH")!;
-  const cashierpass = Deno.env.get("MOBCASH_CASHIERPASS")!;
-  const cashdeskId = Deno.env.get("MOBCASH_CASHDESKID")!;
-  if (!hash || !cashierpass || !cashdeskId) throw new Error("Secrets MobCash non configurés");
+  const hash = devise === "USD"
+    ? Deno.env.get("MOBCASH_HASH_USD")!
+    : Deno.env.get("MOBCASH_HASH")!;
+  const cashierpass = devise === "USD"
+    ? Deno.env.get("MOBCASH_CASHIERPASS_USD")!
+    : Deno.env.get("MOBCASH_CASHIERPASS")!;
+  const cashdeskId = devise === "USD"
+    ? Deno.env.get("MOBCASH_CASHDESKID_USD")!
+    : Deno.env.get("MOBCASH_CASHDESKID")!;
+  if (!hash || !cashierpass || !cashdeskId) throw new Error(`Secrets MobCash (${devise}) non configurés`);
 
   const userId = String(userId1xbet);
   const lng = "en";
@@ -61,15 +75,18 @@ export async function callMobcash(
 // Ce n'est pas une erreur du client ni un souci de solde — un seul DJF de
 // plus suffit à distinguer la transaction, donc on le fait nous-mêmes plutôt
 // que de bloquer l'ordre ou de solliciter l'admin.
-export async function callMobcashDepot(userId1xbet: string, montant: number) {
+export async function callMobcashDepot(userId1xbet: string, montant: number, devise: "DJF" | "USD" = "DJF") {
+  // +1 DJF est négligeable, mais +1$ doublerait presque un petit dépôt USD
+  // (ex: 1$ → 2$) — l'ajustement anti-doublon reste un centime en USD.
+  const ajustement = devise === "USD" ? 0.01 : 1;
   try {
-    return await callMobcash("Dépôt", userId1xbet, montant, "");
+    return await callMobcash("Dépôt", userId1xbet, montant, "", devise);
   } catch (e) {
     const err = e as Error;
     if (!estDoublonMontant(err.message || "")) throw e;
     logAudit("mobcash_doublon_montant_ajuste", {
-      userId1xbet, montantOriginal: montant, montantEnvoye: montant + 1, err: err.message,
+      userId1xbet, devise, montantOriginal: montant, montantEnvoye: montant + ajustement, err: err.message,
     });
-    return await callMobcash("Dépôt", userId1xbet, montant + 1, "");
+    return await callMobcash("Dépôt", userId1xbet, montant + ajustement, "", devise);
   }
 }

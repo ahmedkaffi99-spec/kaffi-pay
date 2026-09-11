@@ -9,6 +9,14 @@ export function logAudit(action: string, data: Record<string, unknown> = {}) {
   supabase.from("audit_logs").insert({ action, data, source: "edge-functions" }).then(() => {});
 }
 
+// Taux fixes donnés par Ahmed (6 sept. 2026) — pas un taux de marché flottant,
+// c'est le taux réellement appliqué à ses clients. Deux taux différents
+// (spread change) : le client paie plus de DJF par dollar crédité (dépôt) que
+// ce qu'il reçoit en DJF par dollar retiré (retrait) — marge normale d'un
+// bureau de change.
+export const TAUX_DEPOT_USD = 178; // DJF payés via Waafi pour 1$ crédité sur 1xBet
+export const TAUX_RETRAIT_USD = 177; // DJF reçus via Waafi pour 1$ retiré de 1xBet
+
 export const TRANSITIONS_VALIDES: Record<string, string[]> = {
   "En attente": ["Paiement Reçu", "Paiement Non Reçu", "Annulé", "Code Validé", "Code Invalide"],
   "Paiement Reçu": ["Crédité avec succès", "Paiement Non Reçu"],

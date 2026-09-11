@@ -1,10 +1,27 @@
 import { supabase } from "../_shared/db.ts";
-import { sendWhatsAppToChatId } from "../_shared/whatsapp.ts";
+import { sendWhatsAppToChatId, sendWhatsAppAudioToChatId } from "../_shared/whatsapp.ts";
 import { json, cors, logAudit } from "../_shared/utils.ts";
 
 // Modèles gratuits OpenRouter, en cascade — même liste et même ordre que dans le
 // projet paris sportifs d'Ahmed (analyser_et_envoyer.py), déjà validée en usage réel.
 const OPENROUTER_MODELS = ["openrouter/free", "cohere/north-mini-code:free", "poolside/laguna-xs-2.1:free"];
+
+// Modèle gratuit d'OpenRouter capable de lire une image (voir decrirePhoto).
+// Jamais mis dans la cascade OPENROUTER_MODELS ci-dessus, car sa
+// disponibilité mesurée (~75% sur 3 jours) est trop instable pour porter
+// toutes les conversations. Pas utilisé pour l'audio : OpenRouter exige un
+// solde minimum de 0,50$ pour tout contenu audio (voir transcrireVocalGroq,
+// qui utilise Groq/Whisper à la place — réellement gratuit).
+const MODELE_OMNI = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
+
+// Text-to-speech gratuit — utilisé UNIQUEMENT en réponse symétrique quand LE
+// CLIENT LUI-MÊME a envoyé un vocal (voir clientAEnvoyeVocal plus bas) : s'il
+// écrit en texte, la réponse reste en texte. deepgram/flux-tts:free a été
+// testé en réel en premier mais sa voix est nativement anglaise — un client
+// francophone recevait un français lu avec un accent anglais, pas naturel.
+// Fish Audio S2.1 Pro Free est un modèle multilingue (pas de paramètre voix
+// à fixer), remplace Deepgram pour ça.
+const MODELE_TTS = "fish-audio/s2.1-pro-free:free";
 
 // sendWhatsAppToChatId() renvoie {ok, reason} sans jamais lever d'exception —
 // un appel non vérifié laisse un échec Green API (session déconnectée, quota,
@@ -32,6 +49,98 @@ async function envoyer(phone: string, userText: string, message: string) {
     { phone, role: "assistant", content: message },
   ]);
   return res;
+}
+
+// Fish Audio (voir MODELE_TTS) renvoie du PCM brut (pas de conteneur), quel
+// que soit le format demandé — confirmé en réel : Green API acceptait l'envoi
+// sans erreur, mais WhatsApp ne pouvait rien lire (fichier .mp3 en réalité du
+// PCM nu), silence total côté client. On enveloppe donc nous-mêmes le PCM
+// dans un en-tête WAV (44 octets), lisible nativement par WhatsApp.
+function pcmVersWav(pcm: Uint8Array, sampleRate: number, channels: number, bitsParEchantillon: number): Uint8Array {
+  const blockAlign = channels * bitsParEchantillon / 8;
+  const byteRate = sampleRate * blockAlign;
+  const header = new ArrayBuffer(44);
+  const v = new DataView(header);
+  const ecrireStr = (offset: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i)); };
+  ecrireStr(0, "RIFF");
+  v.setUint32(4, 36 + pcm.length, true);
+  ecrireStr(8, "WAVE");
+  ecrireStr(12, "fmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, channels, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, byteRate, true);
+  v.setUint16(32, blockAlign, true);
+  v.setUint16(34, bitsParEchantillon, true);
+  ecrireStr(36, "data");
+  v.setUint32(40, pcm.length, true);
+  const out = new Uint8Array(44 + pcm.length);
+  out.set(new Uint8Array(header), 0);
+  out.set(pcm, 44);
+  return out;
+}
+
+// Convertit un texte de réponse en audio (WAV) via le TTS gratuit — retourne
+// null si la synthèse échoue (l'appelant doit alors se replier sur du texte,
+// jamais laisser le client sans réponse). Les astérisques (mise en forme
+// WhatsApp *gras*) n'ont aucun sens à l'oral — retirés avant synthèse.
+async function genererVocal(texte: string): Promise<Uint8Array | null> {
+  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+  if (!apiKey) return null;
+  try {
+    const texteOral = texte.replace(/\*/g, "");
+    const res = await fetch("https://openrouter.ai/api/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://baki-pay.com",
+        "X-Title": "Baki-Pay Support",
+      },
+      body: JSON.stringify({ model: MODELE_TTS, input: texteOral }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) {
+      console.warn("whatsapp-support: genererVocal échoué:", res.status, await res.text().catch(() => ""));
+      return null;
+    }
+    const pcm = new Uint8Array(await res.arrayBuffer());
+    const contentType = res.headers.get("content-type") || "";
+    const rate = parseInt(contentType.match(/rate=(\d+)/)?.[1] || "44100");
+    const channels = parseInt(contentType.match(/channels=(\d+)/)?.[1] || "1");
+    return pcmVersWav(pcm, rate, channels, 16);
+  } catch (e) {
+    console.warn("whatsapp-support: genererVocal échoué:", (e as Error).message);
+    return null;
+  }
+}
+
+// Point d'envoi unique pour toutes les réponses du bot (suivi d'ordre, aide,
+// tarifs, IA) — si CE client a lui-même écrit en vocal, on répond en vocal
+// (symétrique) ; sinon en texte, comme avant. Si la synthèse vocale échoue,
+// repli automatique sur le texte plutôt que de laisser le client sans rien.
+async function repondreAuClient(phone: string, userText: string, message: string, vocal: boolean) {
+  if (vocal) {
+    const audio = await genererVocal(message);
+    if (audio) {
+      const res = await sendWhatsAppAudioToChatId(`${phone}@c.us`, audio, "reponse.wav", "audio/wav");
+      if (res.ok) {
+        await supabase.from("whatsapp_conversations").insert([
+          { phone, role: "user", content: userText },
+          { phone, role: "assistant", content: message },
+        ]);
+        return res;
+      }
+      // Envoi du fichier échoué (Green API a rejeté/n'a pas pu livrer l'audio
+      // généré) — sans ce repli, la synthèse réussie masquait un échec
+      // d'envoi et le client ne recevait STRICTEMENT rien.
+      console.error("whatsapp-support: envoi vocal échoué vers", phone, "-", res.reason);
+    } else {
+      console.warn("whatsapp-support: repli texte après échec TTS pour", phone);
+    }
+  }
+  return envoyer(phone, userText, message);
 }
 
 // Derniers échanges de CE numéro — jamais ceux d'un autre client. Limité à
@@ -73,6 +182,112 @@ function reponseIaValide(texte: string): boolean {
   if (/^(okay|ok|alright|so|hmm|let me|i need to|i should|first,? i)\b/.test(t)) return false;
   if (/\b(the user is asking|let me check|wait,|the system (says|states)|according to the instructions)\b/.test(t)) return false;
   return true;
+}
+
+// Un seul appel Whisper à Groq, avec ou sans langue forcée — factorisé car
+// transcrireVocalGroq() a besoin de deux passes (voir plus bas).
+async function appellerWhisper(apiKey: string, blob: Blob, langue?: string): Promise<{ texte: string; langueDetectee: string } | null> {
+  const form = new FormData();
+  form.append("file", blob, "vocal.ogg");
+  // Le modèle complet whisper-large-v3 est bloqué par défaut au niveau du
+  // projet Groq (403 model_permission_blocked_project, confirmé en réel) —
+  // -turbo reste le seul modèle Whisper accessible sans configuration
+  // supplémentaire côté Groq. La confusion de langue qu'il produisait sur le
+  // somali est corrigée autrement, via le second essai avec langue forcée
+  // (voir transcrireVocalGroq).
+  form.append("model", "whisper-large-v3-turbo");
+  form.append("response_format", "verbose_json");
+  if (langue) {
+    form.append("language", langue);
+    // "prompt" amorce le modèle avec du vocabulaire somali réel — le simple
+    // paramètre "language" seul ne suffisait pas (constaté en réel : encore
+    // halluciné en japonais malgré language=so), cette astuce guide mieux un
+    // modèle Whisper faible sur les langues peu représentées.
+    if (langue === "so") form.append("prompt", "Salaan, Baki-Pay waxay kaa caawin kartaa dhigista iyo bixinta lacagta si degdeg ah.");
+  }
+
+  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${apiKey}` },
+    body: form,
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok && data.text && data.text.trim().length > 0) {
+    return { texte: data.text.trim(), langueDetectee: data.language || "" };
+  }
+  console.warn("whatsapp-support: appellerWhisper réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
+  return null;
+}
+
+// Transcrit un vocal WhatsApp via Whisper (Groq, gratuit sans solde minimum —
+// contrairement à l'audio d'OpenRouter qui exige 0,50$ de crédit, voir
+// decrireMedia). Groq attend un vrai multipart/form-data, pas du base64 JSON.
+//
+// Baki-Pay ne sert que français/anglais/somali (voir systemPrompt). Le
+// somali, langue peu représentée dans l'entraînement de Whisper, a été
+// confondu en réel avec l'espagnol puis le chinois lors de la détection
+// automatique — pas juste un accent approximatif, une langue totalement
+// fausse. Si la détection automatique ne tombe ni sur fr ni sur en, on
+// suppose que c'est du somali mal détecté et on relance UNE fois avec
+// `language: "so"` forcé, qui guide correctement le modèle.
+async function transcrireVocalGroq(downloadUrl: string): Promise<string | null> {
+  const apiKey = Deno.env.get("GROQ_API_KEY");
+  if (!apiKey) return null;
+  try {
+    const audioRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(15000) });
+    if (!audioRes.ok) return null;
+    const blob = await audioRes.blob();
+
+    const premierEssai = await appellerWhisper(apiKey, blob);
+    if (!premierEssai) return null;
+    if (premierEssai.langueDetectee === "french" || premierEssai.langueDetectee === "english") {
+      return premierEssai.texte;
+    }
+
+    const essaiSomali = await appellerWhisper(apiKey, blob, "so");
+    return essaiSomali ? essaiSomali.texte : premierEssai.texte;
+  } catch (e) {
+    console.warn("whatsapp-support: transcrireVocalGroq échoué:", (e as Error).message);
+    return null;
+  }
+}
+
+// Décrit une photo WhatsApp via le modèle omni OpenRouter (gratuit, l'image
+// n'est pas soumise à l'exigence de solde minimum qui touche l'audio).
+// Retourne null si le modèle échoue (indisponibilité connue, voir MODELE_OMNI)
+// — l'appelant doit alors prévenir le client plutôt que de rester silencieux.
+async function decrirePhoto(downloadUrl: string, caption: string): Promise<string | null> {
+  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+  if (!apiKey) return null;
+  try {
+    const instruction = `Décris cette image en français, en te concentrant sur tout élément utile pour un support de paiement Waafi/1xBet (reçu de transfert, capture d'écran d'erreur, numéro, montant, statut). Sois factuel et précis, pas de supposition.${caption ? ` Le client a ajouté ce texte avec l'image : "${caption}"` : ""}`;
+
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://baki-pay.com",
+        "X-Title": "Baki-Pay Support",
+      },
+      body: JSON.stringify({
+        model: MODELE_OMNI,
+        max_tokens: 500,
+        reasoning: { exclude: true },
+        messages: [{ role: "user", content: [{ type: "text", text: instruction }, { type: "image_url", image_url: { url: downloadUrl } }] }],
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+    const data = await res.json().catch(() => ({}));
+    const reply = data.choices?.[0]?.message?.content;
+    if (res.ok && reply && reponseIaValide(reply)) return reply.trim();
+    console.warn("whatsapp-support: decrirePhoto réponse invalide:", res.status, JSON.stringify(data).substring(0, 200));
+    return null;
+  } catch (e) {
+    console.warn("whatsapp-support: decrirePhoto échoué:", (e as Error).message);
+    return null;
+  }
 }
 
 // Répond en langage naturel via Claude — pour tout ce que les commandes fixes
@@ -206,11 +421,40 @@ Deno.serve(async (req: Request) => {
     if (!chatId || !chatId.endsWith("@c.us")) return json({ ok: true }, 200, headers);
 
     const phone = chatId.replace("@c.us", "");
-    const text = (
+    let text = (
       body.messageData?.textMessageData?.textMessage ||
       body.messageData?.extendedTextMessageData?.text ||
       ""
     ).trim();
+
+    // Photo ou vocal (pas de texte direct) → transcrits/décrits en texte
+    // (voir transcrireVocalGroq / decrirePhoto) puis on continue EXACTEMENT
+    // le même flux que pour un message texte normal (suivi d'ordre, aide,
+    // tarifs, IA...). clientAEnvoyeVocal reste vrai pour TOUT le reste du
+    // traitement de ce message : si le client a parlé, le bot répond aussi
+    // en vocal, quelle que soit la branche qui produit la réponse finale.
+    const typeMessage = body.messageData?.typeMessage || "";
+    const clientAEnvoyeVocal = typeMessage === "audioMessage";
+    if (!text && (typeMessage === "imageMessage" || clientAEnvoyeVocal)) {
+      const fileData = body.messageData?.fileMessageData || {};
+      const downloadUrl = fileData.downloadUrl;
+      const estVocal = clientAEnvoyeVocal;
+      if (downloadUrl) {
+        const resultat = estVocal
+          ? await transcrireVocalGroq(downloadUrl)
+          : await decrirePhoto(downloadUrl, fileData.caption || "");
+        if (resultat) {
+          text = estVocal ? resultat : (fileData.caption ? `${fileData.caption}\n[Photo envoyée — description: ${resultat}]` : `[Photo envoyée — description: ${resultat}]`);
+        } else {
+          await envoyer(phone, estVocal ? "[vocal reçu]" : "[photo reçue]",
+            estVocal
+              ? "🎤 Désolé, je n'ai pas pu écouter votre message vocal pour le moment. Pouvez-vous l'écrire en texte ?"
+              : "📷 Désolé, je n'ai pas pu analyser votre photo pour le moment. Pouvez-vous décrire votre question en texte ?");
+          return json({ ok: true }, 200, headers);
+        }
+      }
+    }
+
     if (!text) return json({ ok: true }, 200, headers);
 
     const t = text.toLowerCase().trim();
@@ -229,7 +473,7 @@ Deno.serve(async (req: Request) => {
       const type = d.data && d.data[0] ? "Dépôt" : "Retrait";
 
       if (!ordre) {
-        await envoyer(phone, text, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`);
+        await repondreAuClient(phone, text, `❓ Ordre *#${ordreId}* introuvable.\nVérifiez le numéro et réessayez.`, clientAEnvoyeVocal);
         return json({ ok: true }, 200, headers);
       }
 
@@ -268,12 +512,12 @@ Deno.serve(async (req: Request) => {
         msg += `\n🚫 Ordre annulé.`;
       }
 
-      await envoyer(phone, text, msg);
+      await repondreAuClient(phone, text, msg, clientAEnvoyeVocal);
       return json({ ok: true }, 200, headers);
     }
 
     if (t === "aide" || t === "/aide" || t.includes("comment")) {
-      await envoyer(phone, text,
+      await repondreAuClient(phone, text,
         `📖 *Comment utiliser Baki-Pay*\n\n` +
         `🟢 *Dépôt (recharger 1xBet) :*\n` +
         `1. Allez sur baki-pay.com\n` +
@@ -284,13 +528,14 @@ Deno.serve(async (req: Request) => {
         `1. Sur 1xBet, générez un code de retrait\n` +
         `2. Sur baki-pay.com, entrez le code + votre N° Waafi\n` +
         `3. Vous recevrez le montant sur votre Waafi\n\n` +
-        `⏱ Traitement automatique, 24h/24 7j/7 — en quelques secondes après vérification du paiement.`
+        `⏱ Traitement automatique, 24h/24 7j/7 — en quelques secondes après vérification du paiement.`,
+        clientAEnvoyeVocal
       );
       return json({ ok: true }, 200, headers);
     }
 
     if (t === "tarifs" || t === "/tarifs" || t.includes("tarif") || t.includes("prix")) {
-      await envoyer(phone, text,
+      await repondreAuClient(phone, text,
         `💰 *Tarifs Baki-Pay*\n\n` +
         `Dépôt : *Gratuit*\n` +
         `Retrait : *Gratuit*\n\n` +
@@ -298,7 +543,8 @@ Deno.serve(async (req: Request) => {
         `• Minimum dépôt : 50 DJF\n` +
         `• Minimum retrait : 250 DJF\n` +
         `• Pas de maximum fixe (une vérification peut être demandée pour un montant élevé)\n\n` +
-        `Tous les transferts sont en DJF.`
+        `Tous les transferts sont en DJF.`,
+        clientAEnvoyeVocal
       );
       return json({ ok: true }, 200, headers);
     }
@@ -313,7 +559,7 @@ Deno.serve(async (req: Request) => {
     // via historique.length.
     const historique = await chargerHistorique(phone);
     const reponse = await repondreIA(phone, senderName, text, historique);
-    await envoyer(phone, text, reponse);
+    await repondreAuClient(phone, text, reponse, clientAEnvoyeVocal);
   } catch (e) {
     console.error("whatsapp-support crash:", (e as Error).message);
   }
