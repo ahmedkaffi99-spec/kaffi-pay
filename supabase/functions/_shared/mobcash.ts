@@ -12,8 +12,9 @@ async function hexDigest(algorithm: string, input: string): Promise<string> {
 // convertit rien : chaque cashdesk (hash+cashierpass+cashdeskid) est lié à
 // UNE devise chez 1xBet, et ne peut créditer/débiter qu'un compte de cette
 // même devise ("currency does not match" sinon, voir ERREURS_PERMANENTES).
-// Le hash est partagé entre les deux cashdesks (fourni par Ahmed) ; seuls
-// cashierpass et cashdeskid changent pour le cashdesk USD.
+// Chaque cashdesk a son PROPRE hash — un essai réel avec le hash DJF sur le
+// cashdesk USD a été rejeté (401 Unauthorized par MobCash), confirmé par
+// Ahmed : les deux cashdesks ont chacun leurs 3 identifiants indépendants.
 export async function callMobcash(
   type: "Dépôt" | "Retrait",
   userId1xbet: string,
@@ -21,7 +22,9 @@ export async function callMobcash(
   withdrawalCode: string,
   devise: "DJF" | "USD" = "DJF"
 ) {
-  const hash = Deno.env.get("MOBCASH_HASH")!;
+  const hash = devise === "USD"
+    ? Deno.env.get("MOBCASH_HASH_USD")!
+    : Deno.env.get("MOBCASH_HASH")!;
   const cashierpass = devise === "USD"
     ? Deno.env.get("MOBCASH_CASHIERPASS_USD")!
     : Deno.env.get("MOBCASH_CASHIERPASS")!;
