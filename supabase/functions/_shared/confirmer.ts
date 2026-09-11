@@ -17,6 +17,14 @@ export async function confirmerDepot(
   const userId1xbet = (ordre.user_id_1xbet || ordre.id1x || "") as string;
   const whatsapp = (ordre.whatsapp || "") as string;
   const viewToken = (ordre.view_token || "") as string;
+  // devise/montant_usd déterminent quel cashdesk MobCash créditer et avec
+  // quel montant — montantNotif (DJF) reste le montant réellement payé via
+  // Waafi, utilisé pour le matching et l'affichage, jamais pour le crédit
+  // MobCash d'un ordre USD.
+  const devise = (ordre.devise === "USD" ? "USD" : "DJF") as "DJF" | "USD";
+  const montantUsd = devise === "USD" ? Number(ordre.montant_usd || 0) : null;
+  const montantACrediter = devise === "USD" ? (montantUsd || 0) : montantNotif;
+  const montantAffiche = devise === "USD" ? `${montantNotif.toLocaleString()} DJF (crédit : ${montantUsd}$)` : `${montantNotif.toLocaleString()} DJF`;
 
   // Anti-doublon : insert dans ordre_traite (échoue si TID déjà utilisé)
   const { error: traitErr } = await supabase.from("ordre_traite").insert({
@@ -57,7 +65,7 @@ export async function confirmerDepot(
   const vt = viewToken ? `-${viewToken}` : "";
   const confirmeMsg =
     `💳 <b>Paiement Waafi validé — #${ordreId}</b>\n\n` +
-    `Montant : <b>${montantNotif.toLocaleString()} DJF</b>\n` +
+    `Montant : <b>${montantAffiche}</b>\n` +
     `Transfer-ID : <code>${transferId || "?"}</code> | N° : <code>${numReel}</code>` +
     (whatsapp ? `\nWhatsApp : <code>${whatsapp}</code>` : "") +
     `\n\n<i>⏳ Appel MobCash en cours...</i>`;
@@ -68,7 +76,7 @@ export async function confirmerDepot(
   if (whatsapp) {
     sendWhatsApp(whatsapp,
       `💳 *Baki-Pay — Paiement reçu* ✅\n\n` +
-      `Votre paiement *#${ordreId}* de *${montantNotif.toLocaleString()} DJF* a bien été reçu.\n\n` +
+      `Votre paiement *#${ordreId}* de *${montantAffiche}* a bien été reçu.\n\n` +
       `⏳ Crédit de votre compte 1xBet en cours...\n` +
       `📲 baki-pay.com/#suivi-${ordreId}${vt}`
     ).catch(() => {});
@@ -76,13 +84,13 @@ export async function confirmerDepot(
 
   // MobCash — créditer le compte 1xBet
   if (!userId1xbet) {
-    const m = `⚠️ <b>ID 1xBet manquant — #${ordreId}</b>\n${montantNotif.toLocaleString()} DJF — crédit impossible, vérifiez l'ordre.`;
+    const m = `⚠️ <b>ID 1xBet manquant — #${ordreId}</b>\n${montantAffiche} — crédit impossible, vérifiez l'ordre.`;
     await Promise.allSettled([sendTelegram(token, adminId, m), notifyPaiementAgents(token, m)]);
     return true;
   }
 
   try {
-    await callMobcashDepot(userId1xbet, montantNotif);
+    await callMobcashDepot(userId1xbet, montantACrediter, devise);
 
     // Mettre à jour ordre_traite → "credite"
     await supabase.from("ordre_traite").update({ status: "credite" })
@@ -95,16 +103,16 @@ export async function confirmerDepot(
       webhook_at: new Date().toISOString(),
     }).eq("id", ordre.id);
 
-    logAudit("depot_mobcash_ok", { ordreId, userId1xbet });
+    logAudit("depot_mobcash_ok", { ordreId, userId1xbet, devise, montantACrediter });
 
-    const creditMsg = `✅ <b>Dépôt crédité avec succès</b>\n#${ordreId} — ${montantNotif.toLocaleString()} DJF`;
+    const creditMsg = `✅ <b>Dépôt crédité avec succès</b>\n#${ordreId} — ${montantAffiche}`;
     await sendTelegram(token, adminId, creditMsg);
     await notifyPaiementAgents(token, creditMsg).catch(() => {});
 
     if (whatsapp) {
       sendWhatsApp(whatsapp,
         `🎉 *Baki-Pay — Compte 1xBet crédité !*\n\n` +
-        `Votre dépôt *#${ordreId}* de *${montantNotif.toLocaleString()} DJF* a été traité avec succès.\n\n` +
+        `Votre dépôt *#${ordreId}* de *${montantAffiche}* a été traité avec succès.\n\n` +
         `✅ *Crédité avec succès*\n\n` +
         `Votre compte 1xBet est rechargé. Vous pouvez maintenant jouer ! 🎮`
       ).catch(() => {});
@@ -118,21 +126,31 @@ export async function confirmerDepot(
       webhook_err: errMsg,
     }).eq("id", ordre.id);
 
-    logAudit("depot_mobcash_echec", { ordreId, err: errMsg, webhookStatus });
+    logAudit("depot_mobcash_echec", { ordreId, err: errMsg, webhookStatus, devise });
 
     if (webhookStatus === "echec_permanent") {
-      const m = `🚨 <b>Erreur permanente MobCash — #${ordreId}</b>\n` +
+      // Le cashdesk utilisé (DJF ou USD, voir devise) correspondait déjà à la
+      // devise attendue de l'ordre — un "currency does not match" ici signifie
+      // que le compte 1xBet du client n'est PAS dans la devise qu'il a
+      // sélectionnée sur le formulaire, pas forcément DJF par défaut.
+      const causeProbable = devise === "USD"
+        ? "le compte 1xBet n'est probablement pas en USD (client a sélectionné USD par erreur)."
+        : "compte 1xBet en devise étrangère (USD/EUR).";
+      const actionRequise = devise === "USD"
+        ? "vérifier la vraie devise du compte avec le client, ou créditer manuellement sur le bon cashdesk."
+        : "demander l'ID DJF au client ou créditer manuellement.";
+      const m = `🚨 <b>Erreur permanente MobCash (${devise}) — #${ordreId}</b>\n` +
         `ID 1xBet : <code>${userId1xbet}</code>\n` +
         `<code>${errMsg}</code>\n\n` +
-        `<b>Cause probable :</b> compte 1xBet en devise étrangère (USD/EUR).\n` +
-        `<b>Action requise :</b> demander l'ID DJF au client ou créditer manuellement.`;
+        `<b>Cause probable :</b> ${causeProbable}\n` +
+        `<b>Action requise :</b> ${actionRequise}`;
       await Promise.allSettled([sendTelegram(token, adminId, m), notifyPaiementAgents(token, m)]);
     } else if (webhookStatus === "echec_solde") {
-      const m = `🏦 <b>Solde MobCash insuffisant — #${ordreId}</b>\n` +
-        `ID 1xBet : <code>${userId1xbet}</code> | ${montantNotif.toLocaleString()} DJF\n` +
+      const m = `🏦 <b>Solde MobCash insuffisant (cashdesk ${devise}) — #${ordreId}</b>\n` +
+        `ID 1xBet : <code>${userId1xbet}</code> | ${montantAffiche}\n` +
         `<code>${errMsg}</code>\n\n` +
         `<i>Le client ne voit pas d'échec — sa page affiche "crédit en cours".</i>\n` +
-        `<b>Action requise :</b> rechargez le solde cashdesk puis <code>recharge ${ordreId}</code> sur ce bot.`;
+        `<b>Action requise :</b> rechargez le solde cashdesk ${devise} puis <code>recharge ${ordreId}</code> sur ce bot.`;
       await Promise.allSettled([sendTelegram(token, adminId, m), notifyPaiementAgents(token, m)]);
     } else {
       const m = `⚠️ <b>MobCash Dépôt échoué — #${ordreId}</b>\n` +
