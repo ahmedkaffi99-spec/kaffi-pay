@@ -209,6 +209,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
 .devise-toggle{display:flex;gap:8px;}
 .devise-btn{flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,215,0,0.3);background:rgba(255,215,0,0.05);color:var(--muted);font-weight:700;font-size:.85rem;cursor:pointer;transition:.15s;}
 .devise-btn.active{background:rgba(255,215,0,0.18);border-color:var(--gold);color:var(--gold);}
+.devise-btn:disabled{opacity:.4;cursor:not-allowed;}
 .devise-usd-info{font-size:.68rem;color:var(--muted);margin-top:4px;}
 .payment-box{border-radius:14px;padding:12px;margin-bottom:10px;border:1px solid rgba(255,215,0,.12);background:linear-gradient(135deg,rgba(255,215,0,.04) 0%,transparent 70%);}
 .payment-box-title{font-size:.65rem;color:var(--gold);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:10px;}
@@ -522,7 +523,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-devise">💱 Devise du compte 1xBet</label>
         <div class="devise-toggle" id="depot-devise-toggle">
           <button type="button" class="devise-btn active" data-devise="DJF" onclick="setDeviseDepot('DJF')">DJF</button>
-          <button type="button" class="devise-btn" data-devise="USD" onclick="setDeviseDepot('USD')">USD ($)</button>
+          <button type="button" class="devise-btn" data-devise="USD" onclick="setDeviseDepot('USD')" disabled title="Bientôt disponible">USD ($) — bientôt</button>
         </div>
       </div>
       <div class="field">
@@ -624,7 +625,7 @@ input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus
         <label data-i18n="label-devise">💱 Devise du compte 1xBet</label>
         <div class="devise-toggle" id="retrait-devise-toggle">
           <button type="button" class="devise-btn active" data-devise="DJF" onclick="setDeviseRetrait('DJF')">DJF</button>
-          <button type="button" class="devise-btn" data-devise="USD" onclick="setDeviseRetrait('USD')">USD ($)</button>
+          <button type="button" class="devise-btn" data-devise="USD" onclick="setDeviseRetrait('USD')" disabled title="Bientôt disponible">USD ($) — bientôt</button>
         </div>
       </div>
       <div class="field">
